@@ -1,0 +1,11 @@
+services:
+  - type: web
+    name: api-ml
+    runtime: docker
+    plan: free
+    region: oregon
+    dockerfilePath: ./Dockerfile
+    dockerContext: .
+    dockerTarget: production
+    healthCheckPath: /health
+    autoDeploy: true
