@@ -1,0 +1,18 @@
+services:
+  service_api_ml:
+    build:
+      context: .
+      target: development
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./src:/app/src
+      - ./models:/app/models
+    env_file:
+      - .env
+    networks:
+      - financiar_shared_network
+
+networks:
+  financiar_shared_network:
+    external: true

@@ -1,0 +1,20 @@
+name: Creation of a production enviroment variable
+
+on:
+  push:
+    branches: ["main"]
+
+jobs:
+  deploy:
+    runs-on: ubuntu-latest
+
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Creates the .env file to be used on production
+        run: |
+          touch .env
+          echo "API_PORT=${{ secrets.API_PORT }}" >> .env
+          echo "MODEL_PATH=${{ secrets.MODEL_PATH }}" >> .env
+          echo "DATABASE_URL=${{ secrets.POSGRES_DBURL }}" >> .env
