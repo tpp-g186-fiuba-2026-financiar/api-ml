@@ -16,6 +16,9 @@ install:
 run:
 	uvicorn src.main:app --reload --port 8000
 
+train:
+	python -m src.train
+
 test:
 	pytest
 
