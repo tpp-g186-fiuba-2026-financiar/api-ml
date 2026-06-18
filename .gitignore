@@ -44,5 +44,5 @@ htmlcov/
 models/*.pkl
 models/*.joblib
 models/*.onnx
-models/*.pt
+# models/lstm.pt se commitea a proposito para que el deploy de Render lo tenga.
 !models/.gitkeep
