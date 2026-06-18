@@ -44,4 +44,5 @@ htmlcov/
 models/*.pkl
 models/*.joblib
 models/*.onnx
+models/*.pt
 !models/.gitkeep

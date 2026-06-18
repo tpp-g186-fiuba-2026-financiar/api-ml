@@ -8,3 +8,11 @@ class ModelNotLoadedError(ApiMlError):
 
 class InvalidFeaturesError(ApiMlError):
     pass
+
+
+class DataUnavailableError(ApiMlError):
+    pass
+
+
+class NotEnoughDataError(ApiMlError):
+    pass
