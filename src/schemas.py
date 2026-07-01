@@ -20,10 +20,14 @@ class HealthResponse(BaseModel):
     status: str
     model_loaded: bool
     lstm_loaded: bool = False
+    # Estado de cada modelo de tendencia registrado: nombre -> {loaded, version, is_default}.
+    trend_models: dict[str, dict] = Field(default_factory=dict)
 
 
 class TrendRequest(BaseModel):
     symbol: str = Field(..., min_length=1, max_length=32)
+    # Modelo a usar (ej: "lstm", "xgboost"). None => el default del registro.
+    model: str | None = Field(default=None, max_length=32)
 
 
 class TrendResponse(BaseModel):
@@ -39,4 +43,5 @@ class TrendResponse(BaseModel):
     condition: str  # sobrecompra | sobreventa | neutral | indeterminado
     confidence: float
     as_of: str
+    model: str = "lstm"  # que modelo genero la prediccion
     model_version: str

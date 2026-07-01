@@ -16,3 +16,7 @@ class DataUnavailableError(ApiMlError):
 
 class NotEnoughDataError(ApiMlError):
     pass
+
+
+class UnknownModelError(ApiMlError):
+    pass
