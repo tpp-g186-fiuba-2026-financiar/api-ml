@@ -1,0 +1,65 @@
+"""Entrenamiento del modelo XGBoost de tendencia.
+
+Uso:
+
+    python -m src.train_xgb                       # tickers por defecto del Merval
+    python -m src.train_xgb --tickers GGAL YPFD   # subconjunto
+    python -m src.train_xgb --n-estimators 500 --max-depth 5
+
+Descarga el historico de cada ticker (fuente segun ``settings.data_source``),
+entrena un unico modelo XGBoost y guarda el artefacto en
+``settings.xgb_model_path``. Usa exactamente los mismos features, target y
+tickers que el LSTM, para que las metricas sean comparables.
+"""
+
+from __future__ import annotations
+
+import argparse
+
+from src.config import settings
+from src.data import fetch_history
+from src.lstm import default_merval_tickers, fetch_histories
+from src.xgb_trend import XGBConfig, XGBTrendModel
+
+
+def main() -> None:
+    parser = argparse.ArgumentParser(description="Entrena el modelo XGBoost de tendencia.")
+    parser.add_argument("--tickers", nargs="*", help="Tickers a usar (default: panel Merval).")
+    parser.add_argument("--days", type=int, default=settings.history_days, help="Ruedas a usar.")
+    parser.add_argument("--window", type=int, default=XGBConfig.window)
+    parser.add_argument("--horizon", type=int, default=XGBConfig.horizon)
+    parser.add_argument("--n-estimators", type=int, default=XGBConfig.n_estimators)
+    parser.add_argument("--max-depth", type=int, default=XGBConfig.max_depth)
+    parser.add_argument("--learning-rate", type=float, default=XGBConfig.learning_rate)
+    parser.add_argument("--out", default=settings.xgb_model_path, help="Ruta del artefacto .pkl")
+    args = parser.parse_args()
+
+    tickers = args.tickers or default_merval_tickers()
+    print(f"Fuente de datos: {settings.data_source}")
+    print(f"Descargando historico de {len(tickers)} tickers ({args.days} ruedas)...")
+    histories = fetch_histories(tickers, args.days, fetch_history)
+    if not histories:
+        raise SystemExit("No se pudo descargar data de ningun ticker. Abortando.")
+
+    config = XGBConfig(
+        window=args.window,
+        horizon=args.horizon,
+        n_estimators=args.n_estimators,
+        max_depth=args.max_depth,
+        learning_rate=args.learning_rate,
+    )
+    model = XGBTrendModel(config=config)
+
+    print(f"\nEntrenando XGBoost con {len(histories)} tickers...")
+    metrics = model.fit(histories)
+
+    model.save(args.out)
+    print("\nMetricas de validacion:")
+    for key, value in metrics.items():
+        print(f"  {key}: {value}")
+    print(f"\nModelo guardado en: {args.out}")
+    print(f"Version: {model.version}")
+
+
+if __name__ == "__main__":
+    main()

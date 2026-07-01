@@ -6,10 +6,27 @@ Merval.
 ## Endpoints
 
 - `GET /` — root
-- `GET /health` — estado + flags de modelos cargados (`model_loaded`, `lstm_loaded`)
+- `GET /health` — estado del servicio + de cada modelo registrado (`trend_models`)
+- `GET /models` — lista los modelos de tendencia y su estado (cargado + versión)
 - `POST /predict` — modelo genérico: recibe `{"symbol": "GGAL", "features": {...}}` y devuelve `{"symbol", "prediction", "model_version"}`
-- `POST /predict/trend` — modelo LSTM de tendencia: recibe `{"symbol": "GGAL"}`
-- `GET /predict/trend/{symbol}` — igual que el anterior pero por path param
+- `POST /predict/trend` — tendencia; el body acepta `{"symbol": "GGAL", "model": "xgboost"}` (`model` opcional, default `lstm`)
+- `GET /predict/trend/{symbol}` — tendencia por path param; query `?model=` elige el modelo (default `lstm`)
+- `GET /predict/trend/compare/{symbol}` — corre **todos** los modelos entrenados y devuelve las predicciones lado a lado
+
+La documentación interactiva (Swagger UI) queda en `http://localhost:8000/docs`.
+
+### Selección de modelo
+
+El servicio mantiene varios modelos cargados en paralelo (ver [Registro de modelos](#registro-de-modelos)).
+Se elige cuál usar en cada request:
+
+```bash
+GET /predict/trend/GGAL                 # usa el default (lstm)
+GET /predict/trend/GGAL?model=xgboost   # fuerza XGBoost
+```
+
+- Modelo desconocido → `404`.
+- Modelo registrado pero sin entrenar → `503` (el resto sigue funcionando).
 
 Ejemplo de respuesta de `/predict/trend`:
 
@@ -25,6 +42,7 @@ Ejemplo de respuesta de `/predict/trend`:
   "condition": "sobrecompra",
   "confidence": 0.585,
   "as_of": "2026-06-17",
+  "model": "lstm",
   "model_version": "lstm-20260618T003942Z"
 }
 ```
@@ -32,6 +50,37 @@ Ejemplo de respuesta de `/predict/trend`:
 - `signal`: tendencia estimada para los próximos `horizon_days` (`alza` / `baja` / `neutral`).
 - `expected_return` / `predicted_close`: retorno y precio de cierre esperados al cabo del horizonte.
 - `rsi` + `condition`: indicador RSI clásico (`sobrecompra` si RSI ≥ 70, `sobreventa` si ≤ 30).
+- `model` / `model_version`: qué modelo generó la predicción.
+
+### Comparar modelos
+
+`GET /predict/trend/compare/{symbol}` descarga el histórico **una sola vez** y corre
+todos los modelos entrenados sobre los mismos datos (comparación justa):
+
+```json
+{
+  "symbol": "GGAL",
+  "as_of": "2026-06-30",
+  "default_model": "lstm",
+  "predictions": {
+    "lstm":    { "signal": "alza",    "expected_return": 0.0264, "confidence": 0.88, "...": "..." },
+    "xgboost": { "signal": "neutral", "expected_return": 0.0041, "confidence": 0.13, "...": "..." }
+  }
+}
+```
+
+## Registro de modelos
+
+Los modelos de tendencia se manejan con un **registro** (`src/registry.py`): todos
+comparten la interfaz `predict_df(df) -> dict` y el mismo post-procesamiento
+(`src/trend_common.py`), de modo que sus salidas son directamente comparables.
+Para **sumar un modelo nuevo**:
+
+1. Escribir su clase con `predict_df`, `version`, `save`, `load` (ver `src/xgb_trend.py` como ejemplo).
+2. Registrarlo con una línea en `build_registry` (`src/registry.py`).
+3. Agregar su `*_model_path` en `src/config.py`.
+
+Endpoints, `/health`, `/models` y `/compare` lo toman automáticamente.
 
 ## Modelo LSTM de tendencia
 
@@ -51,10 +100,11 @@ Código:
 
 - `src/data.py` — descarga del histórico OHLCV (Yahoo Finance directo o `data-colector`).
 - `src/lstm.py` — feature engineering, red, entrenamiento, inferencia y persistencia.
-- `src/train.py` — script CLI de entrenamiento.
-- `src/model.py` — `TrendService`, orquesta fetch + predicción para la API.
+- `src/train.py` — script CLI de entrenamiento del LSTM.
+- `src/trend_common.py` — post-procesamiento compartido (señal, RSI, confianza).
+- `src/registry.py` — registro que orquesta todos los modelos + fetch de datos.
 
-### Entrenar el modelo
+### Entrenar el LSTM
 
 ```bash
 make train
@@ -68,6 +118,30 @@ accuracy direccional).
 
 > El `.pt` no se commitea (está en `.gitignore`). Hay que entrenar al menos una
 > vez para que `/predict/trend` responda; si no existe, el endpoint devuelve 503.
+
+## Modelo XGBoost de tendencia
+
+Modelo tabular (gradient boosting) que resuelve la **misma tarea** que el LSTM
+—predecir el retorno log acumulado a `horizon` días— para poder compararlos:
+
+- **Mismos features base y mismo target** que el LSTM (`src/lstm.py`).
+- Como XGBoost no es secuencial, la ventana de los últimos `window` días se
+  **aplana** a un único vector de features.
+- **Misma salida** (`src/trend_common.py`), así las predicciones son comparables.
+
+Código: `src/xgb_trend.py` (modelo) y `src/train_xgb.py` (entrenamiento).
+
+### Entrenar el XGBoost
+
+```bash
+python -m src.train_xgb
+# o con parámetros:
+python -m src.train_xgb --n-estimators 500 --max-depth 5 --window 30
+```
+
+Guarda el artefacto en `XGB_MODEL_PATH` (default `models/xgb.pkl`). Requiere la
+dependencia `xgboost` (ya está en `requirements.txt`). Igual que el LSTM: si el
+`.pkl` no existe, `?model=xgboost` devuelve `503` hasta que se entrene.
 
 ### Fuente de datos
 
