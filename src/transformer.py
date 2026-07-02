@@ -187,6 +187,7 @@ class TransformerTrendModel:
         optimizer = torch.optim.AdamW(
             self._net.parameters(), lr=cfg.learning_rate, weight_decay=cfg.weight_decay
         )
+
         # Warmup lineal seguido de decaimiento coseno: estandar para entrenar
         # Transformers de forma estable, incluso en modelos chicos como este.
         def lr_lambda(epoch: int) -> float:

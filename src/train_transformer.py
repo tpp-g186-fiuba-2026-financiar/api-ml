@@ -24,9 +24,7 @@ def main() -> None:
         "--dim-feedforward", type=int, default=TransformerTrainConfig.dim_feedforward
     )
     parser.add_argument("--dropout", type=float, default=TransformerTrainConfig.dropout)
-    parser.add_argument(
-        "--warmup-epochs", type=int, default=TransformerTrainConfig.warmup_epochs
-    )
+    parser.add_argument("--warmup-epochs", type=int, default=TransformerTrainConfig.warmup_epochs)
     parser.add_argument(
         "--out", default=settings.transformer_model_path, help="Ruta del artefacto .pt"
     )
