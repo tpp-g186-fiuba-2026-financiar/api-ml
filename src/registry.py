@@ -154,10 +154,12 @@ def build_registry(history_days: int) -> TrendRegistry:
     """
     from src.config import settings
     from src.lstm import TrendModel
+    from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
     registry = TrendRegistry(history_days)
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
+    registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
     return registry
