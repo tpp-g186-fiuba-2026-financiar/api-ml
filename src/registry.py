@@ -123,6 +123,15 @@ def _identity_translator(payload: dict) -> dict:
     return payload
 
 
+# Campos que el equipo decidio sacar del contrato de TrendResponse
+# (expected_return era redundante con predicted_close; confidence saturaba
+# en 1.0 con cualquier retorno > 3%). Los modelos locales ya no los generan,
+# pero las copias en Modal (repo `models`) todavia si -- se filtran aca para
+# que /predict/trend/compare (que no valida contra el schema) sea
+# consistente entre todos los modelos.
+_DROPPED_TREND_FIELDS = ("expected_return", "confidence")
+
+
 class RemoteTrendService:
     """Modelo que corre en otro servicio (Modal) via HTTP, no en este proceso.
 
@@ -164,6 +173,8 @@ class RemoteTrendService:
     def predict(self, symbol: str) -> dict:
         payload = call_modal(self.base_url, symbol, **self._extra_params)
         result = self._translator(payload)
+        for field in _DROPPED_TREND_FIELDS:
+            result.pop(field, None)
         result["symbol"] = symbol.strip().upper()
         result["model"] = self.name
         result.setdefault("model_version", self.version)

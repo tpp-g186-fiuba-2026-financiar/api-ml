@@ -308,17 +308,13 @@ class TrendModel:
         else:
             condition = "neutral"
 
-        confidence = float(min(1.0, abs(expected_return) / 0.03))
-
         return {
             "signal": signal,
             "horizon_days": cfg.horizon,
-            "expected_return": round(expected_return, 6),
             "predicted_close": round(predicted_close, 4),
             "last_close": round(last_close, 4),
             "rsi": round(rsi_value, 2) if rsi_value is not None else None,
             "condition": condition,
-            "confidence": round(confidence, 4),
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
         }
 

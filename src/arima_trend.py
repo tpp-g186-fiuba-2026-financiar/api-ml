@@ -91,16 +91,12 @@ def translate_modal_arima_response(payload: dict) -> dict:
     else:
         signal = "neutral"
 
-    confidence = float(min(1.0, abs(expected_return) / 0.03))
-
     return {
         "signal": signal,
         "horizon_days": horizon,
-        "expected_return": round(expected_return, 6),
         "predicted_close": round(predicted_close, 4),
         "last_close": round(last_close, 4),
         "rsi": None,
         "condition": "indeterminado",
-        "confidence": round(confidence, 4),
         "as_of": dt.date.today().isoformat(),
     }

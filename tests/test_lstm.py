@@ -60,7 +60,7 @@ def test_train_predict_save_load(tmp_path) -> None:
     assert result["signal"] in {"alza", "baja", "neutral"}
     assert result["condition"] in {"sobrecompra", "sobreventa", "neutral", "indeterminado"}
     assert result["horizon_days"] == 5
-    assert 0.0 <= result["confidence"] <= 1.0
+    assert "predicted_close" in result
 
     path = tmp_path / "lstm.pt"
     model.save(path)

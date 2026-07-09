@@ -36,12 +36,10 @@ class TrendResponse(BaseModel):
     symbol: str
     signal: str  # alza | baja | neutral
     horizon_days: int
-    expected_return: float
     last_close: float
     predicted_close: float
     rsi: float | None = None
     condition: str  # sobrecompra | sobreventa | neutral | indeterminado
-    confidence: float
     as_of: str
     model: str = "lstm"  # que modelo genero la prediccion
     model_version: str

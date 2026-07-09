@@ -15,9 +15,6 @@ import pandas as pd
 
 from src.lstm import rsi
 
-# Retorno esperado (en valor absoluto) que satura la confianza en 1.0.
-_CONFIDENCE_SCALE = 0.03
-
 
 def derive_trend_output(
     df: pd.DataFrame,
@@ -28,7 +25,11 @@ def derive_trend_output(
     """Convierte un retorno log predicho en el dict de respuesta de tendencia.
 
     ``log_return`` es la salida cruda del modelo (retorno log acumulado a
-    ``horizon`` dias). El resto se deriva igual para cualquier modelo.
+    ``horizon`` dias), usada internamente para derivar ``signal`` y
+    ``predicted_close``. No se expone en la respuesta (ver `expected_return`
+    y `confidence` sacados del schema por decision del equipo: el retorno
+    esperado se resume en `predicted_close`, y `confidence` saturaba en 1.0
+    demasiado facil como para ser util).
     """
     last_close = float(df["close"].iloc[-1])
     expected_return = float(np.expm1(log_return))
@@ -51,16 +52,12 @@ def derive_trend_output(
     else:
         condition = "neutral"
 
-    confidence = float(min(1.0, abs(expected_return) / _CONFIDENCE_SCALE))
-
     return {
         "signal": signal,
         "horizon_days": horizon,
-        "expected_return": round(expected_return, 6),
         "predicted_close": round(predicted_close, 4),
         "last_close": round(last_close, 4),
         "rsi": round(rsi_value, 2) if rsi_value is not None else None,
         "condition": condition,
-        "confidence": round(confidence, 4),
         "as_of": df.index[-1].strftime("%Y-%m-%d"),
     }
