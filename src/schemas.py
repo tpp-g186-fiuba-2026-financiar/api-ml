@@ -45,3 +45,33 @@ class TrendResponse(BaseModel):
     as_of: str
     model: str = "lstm"  # que modelo genero la prediccion
     model_version: str
+
+
+class DirectionResponse(BaseModel):
+    """Direccion binaria (SVM) para la rueda siguiente. No predice magnitud."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    symbol: str
+    signal: str  # alza | baja
+    horizon_days: int
+    confidence: float
+    last_close: float
+    as_of: str
+    model: str = "svm"
+    model_version: str
+
+
+class VolatilityResponse(BaseModel):
+    """Pronostico de volatilidad (GARCH). No predice direccion, solo magnitud."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    symbol: str
+    horizon_days: int
+    daily_volatility_pct: list[float]
+    cumulative_volatility_pct: float
+    last_close: float
+    as_of: str
+    model: str = "garch"
+    model_version: str

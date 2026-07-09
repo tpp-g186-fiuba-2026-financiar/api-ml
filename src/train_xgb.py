@@ -2,7 +2,7 @@
 
 Uso:
 
-    python -m src.train_xgb                       # tickers por defecto del Merval
+    python -m src.train_xgb                       # todos los tickers disponibles en data-colector
     python -m src.train_xgb --tickers GGAL YPFD   # subconjunto
     python -m src.train_xgb --n-estimators 500 --max-depth 5
 
@@ -17,14 +17,16 @@ from __future__ import annotations
 import argparse
 
 from src.config import settings
-from src.data import fetch_history
-from src.lstm import default_merval_tickers, fetch_histories
+from src.data import fetch_available_tickers, fetch_history
+from src.lstm import fetch_histories
 from src.xgb_trend import XGBConfig, XGBTrendModel
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Entrena el modelo XGBoost de tendencia.")
-    parser.add_argument("--tickers", nargs="*", help="Tickers a usar (default: panel Merval).")
+    parser.add_argument(
+        "--tickers", nargs="*", help="Tickers a usar (default: todos los de data-colector)."
+    )
     parser.add_argument("--days", type=int, default=settings.history_days, help="Ruedas a usar.")
     parser.add_argument("--window", type=int, default=XGBConfig.window)
     parser.add_argument("--horizon", type=int, default=XGBConfig.horizon)
@@ -34,7 +36,7 @@ def main() -> None:
     parser.add_argument("--out", default=settings.xgb_model_path, help="Ruta del artefacto .pkl")
     args = parser.parse_args()
 
-    tickers = args.tickers or default_merval_tickers()
+    tickers = args.tickers or fetch_available_tickers()
     print(f"Fuente de datos: {settings.data_source}")
     print(f"Descargando historico de {len(tickers)} tickers ({args.days} ruedas)...")
     histories = fetch_histories(tickers, args.days, fetch_history)

@@ -76,12 +76,48 @@ class TrendService:
         return self.predict_on(df, symbol)
 
 
+class OnDemandTrendService:
+    """Modelo sin artefacto persistido: se ajusta al vuelo en cada request.
+
+    Para modelos por-ticker que no se pueden "poolear" en un unico artefacto
+    pre-entrenado (ej: ARIMA). Siempre esta `is_loaded`, no hay nada que
+    cargar de disco.
+    """
+
+    def __init__(self, name: str, predictor: TrendPredictor, history_days: int):
+        self.name = name
+        self._predictor = predictor
+        self.history_days = history_days
+
+    def load(self) -> None:
+        pass
+
+    @property
+    def is_loaded(self) -> bool:
+        return True
+
+    @property
+    def version(self) -> str:
+        return self._predictor.version
+
+    def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
+        result = self._predictor.predict_df(df)
+        result["symbol"] = symbol.strip().upper()
+        result["model"] = self.name
+        result["model_version"] = self._predictor.version
+        return result
+
+    def predict(self, symbol: str) -> dict:
+        df = fetch_history(symbol, self.history_days)
+        return self.predict_on(df, symbol)
+
+
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
     def __init__(self, history_days: int):
         self._history_days = history_days
-        self._services: dict[str, TrendService] = {}
+        self._services: dict[str, TrendService | OnDemandTrendService] = {}
         self._default: str | None = None
 
     def register(
@@ -93,11 +129,21 @@ class TrendRegistry:
             self._default = key
         return self
 
+    def register_on_demand(
+        self, name: str, predictor: TrendPredictor, *, default: bool = False
+    ) -> TrendRegistry:
+        """Registra un modelo sin artefacto persistido (se ajusta al vuelo por ticker)."""
+        key = name.strip().lower()
+        self._services[key] = OnDemandTrendService(key, predictor, self._history_days)
+        if default or self._default is None:
+            self._default = key
+        return self
+
     def load_all(self) -> None:
         for service in self._services.values():
             service.load()
 
-    def resolve(self, name: str | None) -> TrendService:
+    def resolve(self, name: str | None) -> TrendService | OnDemandTrendService:
         key = (name or self._default or "").strip().lower()
         if key not in self._services:
             available = ", ".join(self._services) or "(ninguno)"
@@ -152,6 +198,7 @@ def build_registry(history_days: int) -> TrendRegistry:
 
     >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` aca. <<<
     """
+    from src.arima_trend import ArimaTrendModel
     from src.config import settings
     from src.lstm import TrendModel
     from src.xgb_trend import XGBTrendModel
@@ -159,5 +206,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     registry = TrendRegistry(history_days)
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
+    # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
+    registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
     return registry

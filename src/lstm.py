@@ -390,32 +390,6 @@ class TrendModel:
         return model
 
 
-def default_merval_tickers() -> list[str]:
-    """Conjunto representativo de acciones del panel lider (S&P Merval)."""
-    return [
-        "GGAL",
-        "YPFD",
-        "PAMP",
-        "BMA",
-        "ALUA",
-        "TXAR",
-        "CEPU",
-        "TGSU2",
-        "CRES",
-        "LOMA",
-        "COME",
-        "TRAN",
-        "SUPV",
-        "BBAR",
-        "EDN",
-        "VALO",
-        "MIRG",
-        "TGNO4",
-        "CVH",
-        "BYMA",
-    ]
-
-
 def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd.DataFrame]:
     """Descarga el historico de cada simbolo, tolerando fallas individuales."""
     histories: dict[str, pd.DataFrame] = {}

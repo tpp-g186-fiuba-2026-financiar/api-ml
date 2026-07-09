@@ -125,6 +125,31 @@ def fetch_history(symbol: str, days: int | None = None) -> pd.DataFrame:
     return fetch_history_yahoo(symbol, days)
 
 
+def fetch_available_tickers() -> list[str]:
+    """Todos los tickers cacheados en ``data-colector`` (BYMA + CEDEARs + commodities + ETFs).
+
+    Se usa para entrenar los modelos de tendencia con todo lo disponible en
+    vez de una lista fija hardcodeada. ``data-colector`` no distingue el
+    mercado en la respuesta de este endpoint, asi que no se filtra nada aca.
+    """
+    base = settings.data_collector_url
+    if not base:
+        raise DataUnavailableError("data_collector_url no esta configurada")
+
+    url = f"{base.rstrip('/')}/available-tickers"
+    try:
+        resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
+        resp.raise_for_status()
+        payload = resp.json()
+    except (requests.RequestException, ValueError) as exc:
+        raise DataUnavailableError(f"no se pudo obtener el listado de tickers: {exc}") from exc
+
+    tickers = ((payload.get("message") or {}).get("tickers")) or []
+    if not tickers:
+        raise DataUnavailableError("data-colector no devolvio ningun ticker disponible")
+    return list(tickers)
+
+
 def _clean(frame: pd.DataFrame, days: int) -> pd.DataFrame:
     frame = frame[_OHLCV_COLUMNS].apply(pd.to_numeric, errors="coerce")
     frame = frame.dropna(subset=["close"]).sort_index()

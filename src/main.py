@@ -3,6 +3,7 @@ from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Query
 
 from src.config import settings
+from src.data import fetch_history
 from src.errors import (
     ApiMlError,
     DataUnavailableError,
@@ -10,18 +11,24 @@ from src.errors import (
     NotEnoughDataError,
     UnknownModelError,
 )
+from src.garch_volatility import GarchVolatilityModel
 from src.model import PredictionModel
 from src.registry import build_registry
 from src.schemas import (
+    DirectionResponse,
     HealthResponse,
     PredictionRequest,
     PredictionResponse,
     TrendRequest,
     TrendResponse,
+    VolatilityResponse,
 )
+from src.svm_direction import SvmDirectionModel
 
 prediction_model = PredictionModel(settings.model_path)
 trend_registry = build_registry(settings.history_days)
+svm_direction_model = SvmDirectionModel()
+garch_volatility_model = GarchVolatilityModel()
 
 
 @asynccontextmanager
@@ -155,6 +162,61 @@ async def predict_trend_compare(symbol: str) -> dict:
 )
 async def predict_trend_get(
     symbol: str,
-    model: str | None = Query(default=None, description="lstm | xgboost | ... (default: lstm)"),
+    model: str | None = Query(
+        default=None, description="lstm | xgboost | arima | ... (default: lstm)"
+    ),
 ) -> TrendResponse:
     return _trend(symbol, model)
+
+
+@app.get(
+    "/predict/direction/{symbol}",
+    response_model=DirectionResponse,
+    tags=["Predicciones"],
+    summary="Direccion binaria (SVM)",
+    description=(
+        "Clasificador SVM: sube o baja el cierre de la rueda SIGUIENTE (no un "
+        "retorno a horizonte de varios dias como /predict/trend). No predice "
+        "magnitud, por eso no comparte el formato de TrendResponse. Se ajusta "
+        "al vuelo con el historico del ticker pedido."
+    ),
+)
+async def predict_direction(symbol: str) -> DirectionResponse:
+    try:
+        df = fetch_history(symbol, settings.history_days)
+        result = svm_direction_model.predict_df(df)
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result["symbol"] = symbol.strip().upper()
+    result["model"] = "svm"
+    result["model_version"] = svm_direction_model.version
+    return DirectionResponse(**result)
+
+
+@app.get(
+    "/predict/volatility/{symbol}",
+    response_model=VolatilityResponse,
+    tags=["Predicciones"],
+    summary="Volatilidad (GARCH)",
+    description=(
+        "Pronostico GARCH(1,1) de volatilidad a `horizon_days` ruedas. No "
+        "predice direccion (alza/baja), solo la magnitud del movimiento "
+        "esperado. Se ajusta al vuelo con el historico del ticker pedido."
+    ),
+)
+async def predict_volatility(symbol: str) -> VolatilityResponse:
+    try:
+        df = fetch_history(symbol, settings.history_days)
+        result = garch_volatility_model.predict_df(df)
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    result["symbol"] = symbol.strip().upper()
+    result["model"] = "garch"
+    result["model_version"] = garch_volatility_model.version
+    return VolatilityResponse(**result)
