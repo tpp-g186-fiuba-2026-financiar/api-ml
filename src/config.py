@@ -11,6 +11,7 @@ class Settings(BaseSettings):
     lstm_model_path: str = "models/lstm.pt"
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
+    transformer_model_path: str = "models/transformer.pt"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si
