@@ -12,6 +12,7 @@ from src.errors import (
     UnknownModelError,
 )
 from src.garch_volatility import GarchVolatilityModel
+from src.modal_client import call_modal
 from src.model import PredictionModel
 from src.registry import build_registry
 from src.schemas import (
@@ -163,7 +164,11 @@ async def predict_trend_compare(symbol: str) -> dict:
 async def predict_trend_get(
     symbol: str,
     model: str | None = Query(
-        default=None, description="lstm | xgboost | arima | ... (default: lstm)"
+        default=None,
+        description=(
+            "lstm | xgboost | transformer | arima | lstm-modal | xgboost-modal | "
+            "arima-modal | ... (default: lstm)"
+        ),
     ),
 ) -> TrendResponse:
     return _trend(symbol, model)
@@ -220,3 +225,46 @@ async def predict_volatility(symbol: str) -> VolatilityResponse:
     result["model"] = "garch"
     result["model_version"] = garch_volatility_model.version
     return VolatilityResponse(**result)
+
+
+@app.get(
+    "/predict/direction/modal/{symbol}",
+    response_model=dict,
+    tags=["Predicciones"],
+    summary="Direccion binaria (SVM en Modal)",
+    description=(
+        "Corre el svm_model.py deployado en Modal (repo `models`) y devuelve "
+        "su respuesta cruda ({'prediction': 'Buy'|'Sell'}), sin traducir: "
+        "esa version no expone confidence/last_close/as_of, por eso no "
+        "comparte el formato de DirectionResponse."
+    ),
+)
+async def predict_direction_modal(symbol: str) -> dict:
+    if not settings.modal_svm_url:
+        raise HTTPException(status_code=404, detail="modal_svm_url no esta configurada")
+    try:
+        payload = call_modal(settings.modal_svm_url, symbol)
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"symbol": symbol.strip().upper(), "model": "svm-modal", **payload}
+
+
+@app.get(
+    "/predict/volatility/modal/{symbol}",
+    response_model=dict,
+    tags=["Predicciones"],
+    summary="Volatilidad (GARCH en Modal)",
+    description=(
+        "Corre el garch_model.py deployado en Modal (repo `models`) y "
+        "devuelve su respuesta cruda, sin traducir: tiene una forma "
+        "distinta a VolatilityResponse, por eso no se fuerza a ese schema."
+    ),
+)
+async def predict_volatility_modal(symbol: str) -> dict:
+    if not settings.modal_garch_url:
+        raise HTTPException(status_code=404, detail="modal_garch_url no esta configurada")
+    try:
+        payload = call_modal(settings.modal_garch_url, symbol)
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    return {"symbol": symbol.strip().upper(), "model": "garch-modal", **payload}

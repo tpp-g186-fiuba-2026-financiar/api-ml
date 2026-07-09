@@ -16,6 +16,7 @@ formato de respuesta y sea comparable.
 
 from __future__ import annotations
 
+import datetime as dt
 from dataclasses import dataclass
 
 import numpy as np
@@ -60,3 +61,46 @@ class ArimaTrendModel:
         log_return = float(np.log(forecast_close / last_close))
 
         return derive_trend_output(df, log_return, self.horizon, self.neutral_band)
+
+
+def translate_modal_arima_response(payload: dict) -> dict:
+    """Traduce la respuesta del ``arima_model.py`` de Modal (repo `models`,
+    version original del equipo, no la nuestra) al formato de TrendResponse.
+
+    Esa version de Modal usa otros parametros (``predictions``,
+    ``media_movil`` en vez de ``horizon``/``order_ma``) y no manda el
+    historico de cierres -- por eso no se puede calcular RSI/condition ahi
+    (quedan en None/"indeterminado"), y el ``as_of`` es una aproximacion
+    (fecha de hoy), no la fecha real de la ultima rueda que uso Modal.
+    """
+    forecast = payload.get("prediction") or []
+    if not forecast:
+        raise ValueError("Modal (arima) no devolvio pronostico")
+
+    last_close = float(payload["valor_actual"])
+    forecast_close = float(forecast[-1])
+    log_return = float(np.log(forecast_close / last_close))
+    expected_return = float(np.expm1(log_return))
+    predicted_close = float(last_close * np.exp(log_return))
+    horizon = int(payload.get("cant_predicciones") or len(forecast))
+
+    if expected_return > NEUTRAL_BAND:
+        signal = "alza"
+    elif expected_return < -NEUTRAL_BAND:
+        signal = "baja"
+    else:
+        signal = "neutral"
+
+    confidence = float(min(1.0, abs(expected_return) / 0.03))
+
+    return {
+        "signal": signal,
+        "horizon_days": horizon,
+        "expected_return": round(expected_return, 6),
+        "predicted_close": round(predicted_close, 4),
+        "last_close": round(last_close, 4),
+        "rsi": None,
+        "condition": "indeterminado",
+        "confidence": round(confidence, 4),
+        "as_of": dt.date.today().isoformat(),
+    }

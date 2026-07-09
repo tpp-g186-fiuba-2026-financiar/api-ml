@@ -24,6 +24,7 @@ import pandas as pd
 
 from src.data import fetch_history
 from src.errors import ApiMlError, ModelNotLoadedError, UnknownModelError
+from src.modal_client import call_modal
 
 
 @runtime_checkable
@@ -112,12 +113,69 @@ class OnDemandTrendService:
         return self.predict_on(df, symbol)
 
 
+TranslatorFn = Callable[[dict], dict]
+
+
+def _identity_translator(payload: dict) -> dict:
+    """Traductor por defecto: solo renombra 'ticker' a 'symbol' si vino asi."""
+    if "ticker" in payload and "symbol" not in payload:
+        payload["symbol"] = payload.pop("ticker")
+    return payload
+
+
+class RemoteTrendService:
+    """Modelo que corre en otro servicio (Modal) via HTTP, no en este proceso.
+
+    A diferencia de TrendService/OnDemandTrendService, no reusa el ``df`` ya
+    descargado en ``compare()``: Modal baja su propio historico en el
+    momento de la request, asi que el ``as_of`` puede diferir levemente del
+    resto de los modelos en una comparacion.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        base_url: str,
+        history_days: int,
+        *,
+        translator: TranslatorFn = _identity_translator,
+        extra_params: dict | None = None,
+    ):
+        self.name = name
+        self.base_url = base_url
+        self.history_days = history_days
+        self._translator = translator
+        self._extra_params = extra_params or {}
+
+    def load(self) -> None:
+        pass
+
+    @property
+    def is_loaded(self) -> bool:
+        return True
+
+    @property
+    def version(self) -> str:
+        return f"modal:{self.name}"
+
+    def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
+        return self.predict(symbol)
+
+    def predict(self, symbol: str) -> dict:
+        payload = call_modal(self.base_url, symbol, **self._extra_params)
+        result = self._translator(payload)
+        result["symbol"] = symbol.strip().upper()
+        result["model"] = self.name
+        result.setdefault("model_version", self.version)
+        return result
+
+
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
     def __init__(self, history_days: int):
         self._history_days = history_days
-        self._services: dict[str, TrendService | OnDemandTrendService] = {}
+        self._services: dict[str, TrendService | OnDemandTrendService | RemoteTrendService] = {}
         self._default: str | None = None
 
     def register(
@@ -139,11 +197,26 @@ class TrendRegistry:
             self._default = key
         return self
 
+    def register_remote(
+        self,
+        name: str,
+        base_url: str,
+        *,
+        translator: TranslatorFn = _identity_translator,
+        extra_params: dict | None = None,
+    ) -> TrendRegistry:
+        """Registra un modelo que corre en Modal via HTTP. Nunca es el default."""
+        key = name.strip().lower()
+        self._services[key] = RemoteTrendService(
+            key, base_url, self._history_days, translator=translator, extra_params=extra_params
+        )
+        return self
+
     def load_all(self) -> None:
         for service in self._services.values():
             service.load()
 
-    def resolve(self, name: str | None) -> TrendService | OnDemandTrendService:
+    def resolve(self, name: str | None) -> TrendService | OnDemandTrendService | RemoteTrendService:
         key = (name or self._default or "").strip().lower()
         if key not in self._services:
             available = ", ".join(self._services) or "(ninguno)"
@@ -198,7 +271,8 @@ def build_registry(history_days: int) -> TrendRegistry:
 
     >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` aca. <<<
     """
-    from src.arima_trend import ArimaTrendModel
+    from src.arima_trend import HORIZON as ARIMA_HORIZON
+    from src.arima_trend import ArimaTrendModel, translate_modal_arima_response
     from src.config import settings
     from src.lstm import TrendModel
     from src.transformer import TransformerTrendModel
@@ -211,4 +285,21 @@ def build_registry(history_days: int) -> TrendRegistry:
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
+
+    # Alternativas que corren en Modal (repo `models`), independientes de
+    # este proceso. Solo se registran si su URL esta configurada.
+    if settings.modal_lstm_url:
+        registry.register_remote("lstm-modal", settings.modal_lstm_url)
+    if settings.modal_xgboost_url:
+        registry.register_remote("xgboost-modal", settings.modal_xgboost_url)
+    if settings.modal_arima_url:
+        # El arima_model.py de Modal (version del equipo) pide "predictions"
+        # y "media_movil" en vez de horizon/order_ma.
+        registry.register_remote(
+            "arima-modal",
+            settings.modal_arima_url,
+            translator=translate_modal_arima_response,
+            extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
+        )
+
     return registry

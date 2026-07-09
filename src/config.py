@@ -23,6 +23,16 @@ class Settings(BaseSettings):
     # Cantidad de ruedas de historia a pedir para entrenar / predecir.
     history_days: int = 750
 
+    # --- Modelos alternativos deployados en Modal (repo `models`) ---
+    # Ninguno configurado por default: hay que pegar la URL de `modal deploy`
+    # (no la de `modal serve`, que es efimera). Si no estan seteadas, esas
+    # alternativas simplemente no aparecen en el registro.
+    modal_lstm_url: str | None = None
+    modal_xgboost_url: str | None = None
+    modal_arima_url: str | None = None
+    modal_svm_url: str | None = None
+    modal_garch_url: str | None = None
+
     model_config = SettingsConfigDict(
         env_file=".env",
         env_file_encoding="utf-8",
