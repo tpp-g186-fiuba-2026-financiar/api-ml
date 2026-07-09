@@ -129,7 +129,10 @@ def _trend(symbol: str, model: str | None) -> TrendResponse:
     response_model=TrendResponse,
     tags=["Predicciones"],
     summary="Prediccion de tendencia (body)",
-    description="Predice la tendencia de un ticker. `model` elige el modelo (default: lstm).",
+    description=(
+        "Predice la tendencia de un ticker. `model` elige el modelo (ver "
+        "/models para el default vigente)."
+    ),
 )
 async def predict_trend(payload: TrendRequest) -> TrendResponse:
     return _trend(payload.symbol, payload.model)
@@ -159,7 +162,11 @@ async def predict_trend_compare(symbol: str) -> dict:
     response_model=TrendResponse,
     tags=["Predicciones"],
     summary="Prediccion de tendencia (path)",
-    description="Predice la tendencia de un ticker. Query `model` elige el modelo (default: lstm).",
+    description=(
+        "Predice la tendencia de un ticker. Query `model` elige el modelo. "
+        "Default: `lstm-modal` si esta configurado (temporal, mientras el "
+        "LSTM local no se reentrena), sino `lstm`."
+    ),
 )
 async def predict_trend_get(
     symbol: str,
@@ -167,7 +174,7 @@ async def predict_trend_get(
         default=None,
         description=(
             "lstm | xgboost | transformer | arima | lstm-modal | xgboost-modal | "
-            "arima-modal | ... (default: lstm)"
+            "arima-modal | ... (ver /models para el default vigente)"
         ),
     ),
 ) -> TrendResponse:

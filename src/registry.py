@@ -215,12 +215,15 @@ class TrendRegistry:
         *,
         translator: TranslatorFn = _identity_translator,
         extra_params: dict | None = None,
+        default: bool = False,
     ) -> TrendRegistry:
-        """Registra un modelo que corre en Modal via HTTP. Nunca es el default."""
+        """Registra un modelo que corre en Modal via HTTP."""
         key = name.strip().lower()
         self._services[key] = RemoteTrendService(
             key, base_url, self._history_days, translator=translator, extra_params=extra_params
         )
+        if default:
+            self._default = key
         return self
 
     def load_all(self) -> None:
@@ -290,6 +293,8 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.xgb_trend import XGBTrendModel
 
     registry = TrendRegistry(history_days)
+    # OJO: "lstm" (default provisorio) queda pisado mas abajo por "lstm-modal"
+    # si esta configurado -- ver comentario ahi.
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
@@ -300,7 +305,12 @@ def build_registry(history_days: int) -> TrendRegistry:
     # Alternativas que corren en Modal (repo `models`), independientes de
     # este proceso. Solo se registran si su URL esta configurada.
     if settings.modal_lstm_url:
-        registry.register_remote("lstm-modal", settings.modal_lstm_url)
+        # TEMPORAL: mientras el LSTM local no se reentrene con el universo de
+        # tickers nuevo, el default pasa a ser la version de Modal (siempre
+        # fresca, entrena al vuelo) en vez de la precargada (quedo entrenada
+        # el 2026-06-18). Sacar `default=True` de aca cuando se reentrene y
+        # se vuelva a commitear `models/lstm.pt`.
+        registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
     if settings.modal_xgboost_url:
         registry.register_remote("xgboost-modal", settings.modal_xgboost_url)
     if settings.modal_arima_url:
