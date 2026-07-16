@@ -20,3 +20,7 @@ class NotEnoughDataError(ApiMlError):
 
 class UnknownModelError(ApiMlError):
     pass
+
+
+class StaleArtifactError(ApiMlError):
+    """El artefacto persistido se entreno con un feature set distinto al actual."""

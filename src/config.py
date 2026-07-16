@@ -22,6 +22,15 @@ class Settings(BaseSettings):
     market_suffix: str = ".BA"
     # Cantidad de ruedas de historia a pedir para entrenar / predecir.
     history_days: int = 750
+    # Serie macro (tasa de interes) usada como feature exogena en los modelos
+    # de tendencia (ver src.data.fetch_macro_series). Default: rendimiento a
+    # 10 anios del Tesoro de EEUU (afecta el apetito por riesgo emergente,
+    # Merval incluido) via data-colector -> Yahoo. La alternativa local
+    # ("ar", "TPM" = tasa de politica monetaria del BCRA) es mas relevante
+    # para acciones argentinas pero depende de la API del BCRA, que al momento
+    # de agregar esta feature estaba caida del lado de data-colector.
+    macro_rate_source: str = "us"
+    macro_rate_series: str = "TNX"
 
     # --- Modelos alternativos deployados en Modal (repo `models`) ---
     # Ninguno configurado por default: hay que pegar la URL de `modal deploy`

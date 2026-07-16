@@ -15,7 +15,7 @@ from src.errors import NotEnoughDataError
 # Reutilizamos el feature engineering del modelo LSTM tal cual: la parte de
 # "convertir OHLCV en features estacionarias" no cambia por usar otra
 # arquitectura.
-from src.lstm import FEATURE_NAMES, build_features, make_windows
+from src.lstm import FEATURE_NAMES, build_features, check_feature_compatibility, make_windows
 
 # Mismo post-procesamiento (senal / RSI / condicion / confianza) que usan el
 # resto de los modelos del registro (ver XGBTrendModel), para que las salidas
@@ -336,6 +336,7 @@ class TransformerTrendModel:
     @classmethod
     def load(cls, path: str | Path) -> TransformerTrendModel:
         blob = torch.load(Path(path), map_location="cpu", weights_only=False)
+        check_feature_compatibility(blob.get("feature_names"))
         cfg = TransformerTrainConfig(**blob["config"])
         model = cls(
             config=cfg,

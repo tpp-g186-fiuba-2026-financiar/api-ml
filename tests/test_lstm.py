@@ -4,8 +4,16 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.errors import NotEnoughDataError
-from src.lstm import TrainConfig, TrendModel, build_features, make_windows, rsi
+from src.errors import NotEnoughDataError, StaleArtifactError
+from src.lstm import (
+    FEATURE_NAMES,
+    TrainConfig,
+    TrendModel,
+    build_features,
+    check_feature_compatibility,
+    make_windows,
+    rsi,
+)
 
 
 def _synthetic_ohlcv(n: int = 400, seed: int = 0) -> pd.DataFrame:
@@ -26,10 +34,12 @@ def _synthetic_ohlcv(n: int = 400, seed: int = 0) -> pd.DataFrame:
 def test_build_features_shapes() -> None:
     df = _synthetic_ohlcv(100)
     feats, target = build_features(df, horizon=5)
-    assert feats.shape[1] == 3
+    assert feats.shape[1] == len(FEATURE_NAMES)
     assert len(feats) == len(target) == len(df) - 1
     # Las ultimas filas no tienen target futuro completo.
     assert np.isnan(target[-1])
+    # Ninguna feature queda en NaN/inf (se limpian con 0 durante el warmup).
+    assert np.isfinite(feats).all()
 
 
 def test_make_windows_drops_nan_targets() -> None:
@@ -37,9 +47,19 @@ def test_make_windows_drops_nan_targets() -> None:
     feats, target = build_features(df, horizon=5)
     X, y = make_windows(feats, target, window=10)
     assert X.shape[1] == 10
-    assert X.shape[2] == 3
+    assert X.shape[2] == len(FEATURE_NAMES)
     assert len(X) == len(y)
     assert not np.isnan(y).any()
+
+
+def test_check_feature_compatibility_accepts_current_names() -> None:
+    check_feature_compatibility(FEATURE_NAMES)
+    check_feature_compatibility(None)  # artefactos viejos sin el campo: no rompe
+
+
+def test_check_feature_compatibility_rejects_stale_artifact() -> None:
+    with pytest.raises(StaleArtifactError):
+        check_feature_compatibility(["log_return", "log_volume_change", "range_pct"])
 
 
 def test_rsi_bounds() -> None:
@@ -75,3 +95,21 @@ def test_predict_requires_enough_data() -> None:
     model.fit(histories)
     with pytest.raises(NotEnoughDataError):
         model.predict_df(_synthetic_ohlcv(n=10))
+
+
+def test_load_rejects_artifact_with_stale_feature_set(tmp_path) -> None:
+    """Un .pt entrenado antes de cambiar `build_features` no debe cargar en silencio."""
+    import torch
+
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(3)}
+    model = TrendModel(config=TrainConfig(window=20, horizon=5, epochs=3, patience=10))
+    model.fit(histories)
+    path = tmp_path / "lstm.pt"
+    model.save(path)
+
+    blob = torch.load(path, map_location="cpu", weights_only=False)
+    blob["feature_names"] = ["log_return", "log_volume_change", "range_pct"]
+    torch.save(blob, path)
+
+    with pytest.raises(StaleArtifactError):
+        TrendModel.load(path)

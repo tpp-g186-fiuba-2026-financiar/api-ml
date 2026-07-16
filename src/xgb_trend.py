@@ -2,8 +2,9 @@
 
 Comparte todo lo posible con el LSTM para que la comparacion sea justa:
 
-- **Mismos features base** (``build_features`` de ``src.lstm``): retornos log,
-  cambio de volumen y rango porcentual.
+- **Mismos features base** (``build_features``/``FEATURE_NAMES`` de ``src.lstm``):
+  retornos log, cambio de volumen, rango porcentual e indicadores tecnicos
+  (RSI, distancia a la media movil, MACD, momentum).
 - **Mismo target**: retorno log acumulado de los proximos ``horizon`` dias.
 - **Misma ventana**: se toman los ultimos ``window`` dias. Como XGBoost es un
   modelo tabular (no secuencial), la ventana se "aplana" a un unico vector de
@@ -28,7 +29,7 @@ import numpy as np
 import pandas as pd
 
 from src.errors import NotEnoughDataError
-from src.lstm import FEATURE_NAMES, build_features, make_windows
+from src.lstm import FEATURE_NAMES, build_features, check_feature_compatibility, make_windows
 from src.trend_common import derive_trend_output
 
 
@@ -163,6 +164,7 @@ class XGBTrendModel:
     @classmethod
     def load(cls, path: str | Path) -> XGBTrendModel:
         blob = joblib.load(Path(path))
+        check_feature_compatibility(blob.get("feature_names"))
         model = cls(
             config=XGBConfig(**blob["config"]),
             tickers=blob.get("tickers", []),

@@ -27,9 +27,20 @@ import pandas as pd
 import torch
 from torch import nn
 
-from src.errors import NotEnoughDataError
+from src.data import MACRO_COLUMN, attach_macro_feature, fetch_macro_series
+from src.errors import NotEnoughDataError, StaleArtifactError
+from src.indicators import macd_histogram, rsi_series, sma
 
-FEATURE_NAMES = ["log_return", "log_volume_change", "range_pct"]
+FEATURE_NAMES = [
+    "log_return",
+    "log_volume_change",
+    "range_pct",
+    "rsi_norm",
+    "sma20_ratio",
+    "macd_norm",
+    "momentum_10",
+    "macro_rate_chg5",
+]
 
 
 # --------------------------------------------------------------------------- #
@@ -54,7 +65,40 @@ def build_features(df: pd.DataFrame, horizon: int = 5) -> tuple[np.ndarray, np.n
     log_volume_change = np.diff(np.log(safe_vol))
     range_pct = ((high - low) / np.where(close == 0, np.nan, close))[1:]
 
-    feats = np.column_stack([log_return, log_volume_change, range_pct])
+    # Indicadores tecnicos clasicos, normalizados para quedar en la misma
+    # escala relativa que un retorno (y asi generalizar entre tickers de
+    # distinto precio, igual que el resto de las features).
+    rsi_norm = (rsi_series(close) - 50.0) / 50.0  # 0 = neutral, +-1 en los extremos
+    sma20_ratio = close / sma(close, 20) - 1.0  # distancia % a la media de 20 ruedas
+    macd_norm = macd_histogram(close) / np.where(close == 0, np.nan, close)
+    momentum_10 = np.full(len(close), np.nan)
+    momentum_10[10:] = log_close[10:] - log_close[:-10]  # retorno log a 10 ruedas
+
+    # Feature exogena (tasa de interes, ver src.data.attach_macro_feature): se
+    # usa el cambio a 5 ruedas, no el nivel, porque el nivel de una tasa varia
+    # muchisimo en escala a lo largo de anios de historia (no es estacionario)
+    # y ademas asi queda en la misma escala relativa que el resto de las
+    # features. Si la columna no esta (df sintetico, o el fetch macro fallo),
+    # queda en NaN y se limpia a 0 mas abajo -- "sin senal macro" para esa fila.
+    if MACRO_COLUMN in df.columns:
+        macro_rate = df[MACRO_COLUMN].to_numpy(dtype=np.float64)
+    else:
+        macro_rate = np.full(len(close), np.nan)
+    macro_chg5 = np.full(len(close), np.nan)
+    macro_chg5[5:] = macro_rate[5:] - macro_rate[:-5]
+
+    feats = np.column_stack(
+        [
+            log_return,
+            log_volume_change,
+            range_pct,
+            rsi_norm[1:],
+            sma20_ratio[1:],
+            macd_norm[1:],
+            momentum_10[1:],
+            macro_chg5[1:],
+        ]
+    )
 
     # Para la feature j (dia d = j + 1), el target es el retorno acumulado
     # log(close[d + horizon] / close[d]).
@@ -65,7 +109,10 @@ def build_features(df: pd.DataFrame, horizon: int = 5) -> tuple[np.ndarray, np.n
         if d + horizon < len(close):
             target[j] = log_close[d + horizon] - log_close[d]
 
-    # Limpiamos NaN/inf (volumen 0, etc.) rellenando con 0 en las features.
+    # Limpiamos NaN/inf (volumen 0, indicadores sin suficiente historia previa,
+    # etc.) rellenando con 0 -- un valor neutral razonable para todas las
+    # features (ademas de para los retornos, 0 tambien es "en la media" para
+    # sma20_ratio, "sin momentum" para macd/momentum_10 y "RSI 50" para rsi_norm).
     feats = np.nan_to_num(feats, nan=0.0, posinf=0.0, neginf=0.0)
     return feats, target
 
@@ -90,22 +137,28 @@ def make_windows(
     return np.asarray(xs, dtype=np.float32), np.asarray(ys, dtype=np.float32)
 
 
+def check_feature_compatibility(saved_feature_names: list[str] | None) -> None:
+    """Valida que un artefacto persistido se haya entrenado con el feature set actual.
+
+    Si ``build_features`` cambia (se agregan/sacan columnas), un artefacto viejo
+    queda con un ancho de vector incompatible: sin este chequeo, cargarlo tira
+    un error crudo de shape (LSTM/Transformer) o, peor, predicciones sin
+    sentido sin ningun error (XGBoost, que no valida shapes al predecir). Se
+    prefiere fallar temprano con un mensaje claro pidiendo reentrenar.
+    """
+    if saved_feature_names is not None and list(saved_feature_names) != FEATURE_NAMES:
+        raise StaleArtifactError(
+            "artefacto entrenado con un feature set distinto al actual "
+            f"(guardado={list(saved_feature_names)}, actual={FEATURE_NAMES}); hay que reentrenar"
+        )
+
+
 def rsi(close: np.ndarray, period: int = 14) -> float | None:
     """RSI de Wilder sobre el ultimo valor de la serie."""
-    if len(close) < period + 1:
+    series = rsi_series(close, period)
+    if len(series) == 0 or np.isnan(series[-1]):
         return None
-    delta = np.diff(close)
-    gain = np.where(delta > 0, delta, 0.0)
-    loss = np.where(delta < 0, -delta, 0.0)
-    avg_gain = gain[:period].mean()
-    avg_loss = loss[:period].mean()
-    for i in range(period, len(delta)):
-        avg_gain = (avg_gain * (period - 1) + gain[i]) / period
-        avg_loss = (avg_loss * (period - 1) + loss[i]) / period
-    if avg_loss == 0:
-        return 100.0
-    rs = avg_gain / avg_loss
-    return float(100.0 - (100.0 / (1.0 + rs)))
+    return float(series[-1])
 
 
 # --------------------------------------------------------------------------- #
@@ -368,6 +421,7 @@ class TrendModel:
     @classmethod
     def load(cls, path: str | Path) -> TrendModel:
         blob = torch.load(Path(path), map_location="cpu", weights_only=False)
+        check_feature_compatibility(blob.get("feature_names"))
         cfg = TrainConfig(**blob["config"])
         model = cls(
             config=cfg,
@@ -387,7 +441,13 @@ class TrendModel:
 
 
 def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd.DataFrame]:
-    """Descarga el historico de cada simbolo, tolerando fallas individuales."""
+    """Descarga el historico de cada simbolo, tolerando fallas individuales.
+
+    La serie macro (ver ``FEATURE_NAMES``) se descarga una unica vez para
+    todo el batch -- es una serie global, no por ticker -- y se alinea a cada
+    historico antes de sumarlo al dict.
+    """
+    macro = fetch_macro_series(days)
     histories: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
         try:
@@ -398,6 +458,6 @@ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd
         if len(df) < 60:
             print(f"  [skip] {symbol}: pocas ruedas ({len(df)})")
             continue
-        histories[symbol] = df
+        histories[symbol] = attach_macro_feature(df, MACRO_COLUMN, macro)
         print(f"  [ok]   {symbol}: {len(df)} ruedas")
     return histories
