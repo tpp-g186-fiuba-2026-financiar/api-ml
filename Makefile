@@ -16,6 +16,8 @@ train-xgb:
 	python -m src.train_xgb
 train-transformer:
 	python -m src.train_transformer
+backtest:
+	python -m src.backtest
 test:
 	pytest
 lint:

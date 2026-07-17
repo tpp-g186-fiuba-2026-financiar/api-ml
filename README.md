@@ -88,17 +88,41 @@ Red LSTM (PyTorch) que, a partir de una ventana de los últimos días de OHLCV,
 predice el **retorno logarítmico acumulado de los próximos `horizon` días** y de
 ahí deriva la señal de tendencia. Detalles de diseño:
 
-- **Features estacionarias** (retorno log de precio y volumen, rango intradiario
-  relativo) → un único modelo generaliza a todos los tickers sin importar la
-  escala de precios.
-- **Un solo modelo global** entrenado pooleando las ventanas de todo el panel
-  líder del Merval (ver `default_merval_tickers`).
+- **Features estacionarias** (`FEATURE_NAMES` en `src/lstm.py`) → un único modelo
+  generaliza a todos los tickers sin importar la escala de precios:
+  `log_return`, `log_volume_change`, `range_pct`, `rsi_norm` (RSI 14 normalizado
+  a ±1), `sma20_ratio` (distancia % a la media de 20 ruedas), `macd_norm`
+  (histograma MACD normalizado por el precio), `momentum_10` (retorno log a
+  10 ruedas) y `macro_rate_chg5` (cambio a 5 ruedas de una tasa de interés
+  exógena — ver más abajo). Las técnicas se calculan en `src/indicators.py`,
+  la macro en `src/data.py`, todo se combina en `src/lstm.py::build_features`.
+- **Un solo modelo global** entrenado pooleando las ventanas de todos los
+  tickers disponibles en `data-colector` (`fetch_available_tickers`).
 - **Normalización** calculada solo con el set de entrenamiento, **split temporal**
   train/val, **weight decay** y **early stopping** sobre la pérdida de validación.
+
+### Feature exógena: tasa de interés
+
+`src/data.py::fetch_macro_series` descarga una serie de tasas de interés desde
+`data-colector` (`POST /interest-rate/{source}/{series}`) — default
+`macro_rate_source=us` / `macro_rate_series=TNX` (rendimiento a 10 años del
+Tesoro de EEUU, configurable por env var). Es una serie **global** (no por
+ticker), así que se descarga una única vez por corrida de entrenamiento
+(`fetch_histories`) o por request de predicción (`registry.py`), y se alinea
+a cada histórico con `attach_macro_feature` (forward-fill, nunca mira un valor
+futuro — importante para que el backtest walk-forward no haga trampa). Si la
+fuente externa falla (ya pasó con el endpoint de BCRA/`ar`/`TPM`), se loguea
+un warning y esa feature queda en 0 para toda la corrida en vez de romper el
+entrenamiento o la predicción — es enriquecimiento, no un dato crítico.
+
+> Para usar la tasa de referencia del BCRA en vez de la de EEUU (más relevante
+> para acciones argentinas, pero depende de la disponibilidad de la API del
+> BCRA): `MACRO_RATE_SOURCE=ar` y `MACRO_RATE_SERIES=TPM` (o `BADLAR`).
 
 Código:
 
 - `src/data.py` — descarga del histórico OHLCV (Yahoo Finance directo o `data-colector`).
+- `src/indicators.py` — RSI/SMA/EMA/MACD vectorizados, reusados como features y en el post-procesamiento.
 - `src/lstm.py` — feature engineering, red, entrenamiento, inferencia y persistencia.
 - `src/train.py` — script CLI de entrenamiento del LSTM.
 - `src/trend_common.py` — post-procesamiento compartido (señal, RSI, confianza).
@@ -114,10 +138,17 @@ python -m src.train --tickers GGAL YPFD PAMP --epochs 60 --window 30
 
 Esto descarga el histórico, entrena y guarda el artefacto en `LSTM_MODEL_PATH`
 (default `models/lstm.pt`), imprimiendo métricas de validación (MAE del retorno y
-accuracy direccional).
+accuracy direccional). `models/lstm.pt` **sí se commitea** a propósito (ver
+`.gitignore`) para que el deploy de Render lo tenga sin depender de un
+reentrenamiento en el momento del deploy; hay que reentrenar y commitear el
+artefacto nuevo cada vez que cambie el feature set o el código de la red.
 
-> El `.pt` no se commitea (está en `.gitignore`). Hay que entrenar al menos una
-> vez para que `/predict/trend` responda; si no existe, el endpoint devuelve 503.
+> Si el `.pt` no existe, `/predict/trend` devuelve 503 hasta que se entrene.
+> Si existe pero se entrenó con un feature set distinto al actual (`FEATURE_NAMES`
+> cambió), el load falla de forma controlada (`StaleArtifactError`, ver
+> `check_feature_compatibility` en `src/lstm.py`): el modelo queda marcado
+> como no cargado (igual que si nunca se hubiese entrenado) en vez de tirar
+> abajo el arranque del servicio. Mismo mecanismo para XGBoost y Transformer.
 
 ## Modelo XGBoost de tendencia
 
@@ -148,6 +179,28 @@ dependencia `xgboost` (ya está en `requirements.txt`). Igual que el LSTM: si el
 Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
+
+## Backtesting (walk-forward)
+
+Las métricas que guarda cada modelo en su artefacto (`val_mae_logret`,
+`val_directional_accuracy`) salen de un único split calculado al momento de
+entrenar. `src/backtest.py` hace algo más realista: recorre el histórico
+completo con un cutoff móvil, en cada punto le muestra al modelo solo los
+datos hasta ese día y compara la señal contra lo que efectivamente pasó
+`horizon` días después. Sirve para comparar LSTM/XGBoost/Transformer/ARIMA
+en igualdad de condiciones, y para dejar una foto (JSON) que permita decir
+"esta versión mejoró" con números.
+
+```bash
+make backtest
+# o con parámetros:
+python -m src.backtest --tickers GGAL YPFD --models lstm xgboost --step 20
+```
+
+Los modelos remotos (`*-modal`) quedan afuera: su `predict_on` siempre pega
+contra el histórico en vivo, no respeta el cutoff, así que no se pueden
+backtestear con este enfoque. El detalle por ticker y por modelo se guarda en
+`models/backtest_results.json` (gitignored, es un output de cada corrida).
 
 ## Modelo genérico (placeholder)
 

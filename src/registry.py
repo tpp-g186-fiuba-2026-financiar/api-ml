@@ -22,9 +22,15 @@ from typing import Protocol, runtime_checkable
 
 import pandas as pd
 
-from src.data import fetch_history
+from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.errors import ApiMlError, ModelNotLoadedError, UnknownModelError
 from src.modal_client import call_modal
+
+
+def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
+    """Historico OHLCV de un ticker con la feature macro ya alineada (ver ``src.lstm``)."""
+    df = fetch_history(symbol, days)
+    return attach_macro_feature(df, MACRO_COLUMN, fetch_macro_series(days))
 
 
 @runtime_checkable
@@ -49,8 +55,16 @@ class TrendService:
         self._model: TrendPredictor | None = None
 
     def load(self) -> None:
-        if self.model_path.exists():
+        if not self.model_path.exists():
+            return
+        try:
             self._model = self._loader(self.model_path)
+        except ApiMlError as exc:
+            # No corta el arranque del resto de los modelos por uno solo con
+            # problemas (ej: StaleArtifactError si cambio el feature set y
+            # este artefacto todavia no se reentreno) -- se reporta como no
+            # cargado, igual que un modelo sin entrenar.
+            print(f"  [warn] no se pudo cargar el modelo '{self.name}': {exc}")
 
     @property
     def is_loaded(self) -> bool:
@@ -73,7 +87,7 @@ class TrendService:
         return result
 
     def predict(self, symbol: str) -> dict:
-        df = fetch_history(symbol, self.history_days)
+        df = _fetch_history_with_macro(symbol, self.history_days)
         return self.predict_on(df, symbol)
 
 
@@ -251,7 +265,7 @@ class TrendRegistry:
         comparacion es justa (todos ven exactamente los mismos datos). Los
         modelos no entrenados se reportan como no disponibles, sin cortar.
         """
-        df = fetch_history(symbol, self._history_days)
+        df = _fetch_history_with_macro(symbol, self._history_days)
         predictions: dict[str, dict] = {}
         for name, service in self._services.items():
             if not service.is_loaded:
@@ -293,8 +307,6 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.xgb_trend import XGBTrendModel
 
     registry = TrendRegistry(history_days)
-    # OJO: "lstm" (default provisorio) queda pisado mas abajo por "lstm-modal"
-    # si esta configurado -- ver comentario ahi.
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
@@ -305,12 +317,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     # Alternativas que corren en Modal (repo `models`), independientes de
     # este proceso. Solo se registran si su URL esta configurada.
     if settings.modal_lstm_url:
-        # TEMPORAL: mientras el LSTM local no se reentrene con el universo de
-        # tickers nuevo, el default pasa a ser la version de Modal (siempre
-        # fresca, entrena al vuelo) en vez de la precargada (quedo entrenada
-        # el 2026-06-18). Sacar `default=True` de aca cuando se reentrene y
-        # se vuelva a commitear `models/lstm.pt`.
-        registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
+        registry.register_remote("lstm-modal", settings.modal_lstm_url)
     if settings.modal_xgboost_url:
         registry.register_remote("xgboost-modal", settings.modal_xgboost_url)
     if settings.modal_arima_url:
