@@ -112,6 +112,7 @@ def summarize(records: list[dict]) -> dict:
 
     pred_ret = np.array([r["predicted_log_return"] for r in records])
     real_ret = np.array([r["realized_log_return"] for r in records])
+
     def _position(signal: str) -> float:
         if signal == "alza":
             return 1.0
