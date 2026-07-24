@@ -202,6 +202,34 @@ contra el histórico en vivo, no respeta el cutoff, así que no se pueden
 backtestear con este enfoque. El detalle por ticker y por modelo se guarda en
 `models/backtest_results.json` (gitignored, es un output de cada corrida).
 
+## Paper trading (validación en vivo)
+
+`src/paper_trading.py` complementa al backtest: en vez de recorrer el
+histórico una sola vez, está pensado para correr **una vez por día** (cron) y
+va acumulando un historial real de aciertos/errores por modelo a lo largo del
+tiempo. En cada corrida:
+
+1. Resuelve las predicciones pendientes de corridas anteriores cuyo horizonte
+   ya se cumplió, comparándolas contra el cierre real ya conocido.
+2. Registra una predicción nueva de "hoy" por cada ticker/modelo cargado —acá
+   sí entran los modelos remotos (`*-modal`): al no haber cutoff histórico,
+   la predicción de "hoy" es exactamente lo que devuelven en vivo.
+3. Recalcula el resumen acumulado (`directional_accuracy`, `mae_logret`,
+   etc.) por modelo con todo lo resuelto hasta el momento.
+
+```bash
+make paper-trade
+# o con parámetros:
+python -m src.paper_trading --tickers GGAL YPFD --models lstm lstm-modal
+```
+
+El estado (pendientes, resueltas, resumen) se persiste en
+`models/paper_trading_ledger.json`, que **sí se versiona** (a diferencia de
+`backtest_results.json`): es el historial acumulado, no el output
+descartable de una corrida suelta. `.github/workflows/paper-trading.yml`
+corre el job todos los días hábiles después del cierre de BYMA y commitea el
+ledger actualizado automáticamente.
+
 ## Modelo genérico (placeholder)
 
 El servicio también busca un artefacto en `MODEL_PATH` (default `models/model.pkl`).

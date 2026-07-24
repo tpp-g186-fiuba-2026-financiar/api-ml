@@ -18,6 +18,8 @@ train-transformer:
 	python -m src.train_transformer
 backtest:
 	python -m src.backtest
+paper-trade:
+	python -m src.paper_trading
 test:
 	pytest
 lint:

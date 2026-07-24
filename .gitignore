@@ -45,6 +45,9 @@ models/*.pkl
 models/*.joblib
 models/*.onnx
 models/backtest_results.json
+# models/paper_trading_ledger.json SI se commitea: es historial acumulado
+# entre corridas del cron diario (.github/workflows/paper-trading.yml), no
+# el output descartable de una corrida suelta como el backtest.
 # models/lstm.pt se commitea a proposito para que el deploy de Render lo tenga.
 # Idem el artefacto de XGBoost: se versiona para que la imagen de Render lo incluya.
 !models/xgb.pkl
