@@ -27,7 +27,11 @@ jobs:
 
       - name: Correr paper trading
         env:
-          DATA_COLLECTOR_URL: ${{ secrets.DATA_COLLECTOR_URL }}
+          # DATA_COLLECTOR_URL no se pisa: settings.py ya trae un default
+          # (el data-colector deployado). Si el secret no esta seteado,
+          # GitHub lo resuelve como "" y pydantic lo toma como valor
+          # explicito en vez de usar el default -- por eso las URLs de
+          # Modal solo se mandan si de verdad estan configuradas.
           MODAL_LSTM_URL: ${{ secrets.MODAL_LSTM_URL }}
           MODAL_XGBOOST_URL: ${{ secrets.MODAL_XGBOOST_URL }}
           MODAL_ARIMA_URL: ${{ secrets.MODAL_ARIMA_URL }}
