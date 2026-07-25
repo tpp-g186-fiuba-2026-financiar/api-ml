@@ -22,9 +22,11 @@ from src.schemas import (
     PredictionResponse,
     TrendRequest,
     TrendResponse,
+    Usuario,
     VolatilityResponse,
 )
 from src.svm_direction import SvmDirectionModel
+from src.black_litterman.black_litterman import entry
 
 prediction_model = PredictionModel(settings.model_path)
 trend_registry = build_registry(settings.history_days)
@@ -275,3 +277,59 @@ async def predict_volatility_modal(symbol: str) -> dict:
     except DataUnavailableError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     return {"symbol": symbol.strip().upper(), "model": "garch-modal", **payload}
+
+
+def _predict_function(model: str | None):
+    """Arma la funcion (ticker -> TrendResponse) que necesita entry(),
+    usando el trend_registry que main.py ya tiene. Asi black_litterman.py
+    nunca necesita importar nada de main.py.
+    """
+
+    def _predict(ticker: str) -> TrendResponse:
+        service = trend_registry.resolve(model)
+        resultado = service.predict(ticker)
+        return TrendResponse(**resultado)
+
+    return _predict
+
+
+def _predict_function(model: str | None):
+    """Arma la funcion (ticker -> TrendResponse) que necesita entry(),
+    usando el trend_registry que main.py ya tiene. Asi black_litterman.py
+    nunca necesita importar nada de main.py.
+    """
+
+    def _predict(ticker: str) -> TrendResponse:
+        service = trend_registry.resolve(model)
+        resultado = service.predict(ticker)
+        return TrendResponse(**resultado)
+
+    return _predict
+
+
+@app.post(
+    "/portfolio/recomendacion",
+    response_model=dict,
+    tags=["Predicciones"],
+    summary="Recomendacion de cartera (Black-Litterman)",
+    description=(
+        "Arma Q y Omega con las predicciones de tendencia de cada ticker "
+        "(placeholder: confidence=1 para todos), Pi a partir de la cartera "
+        "actual del usuario, y devuelve los pesos optimos recomendados."
+    ),
+)
+async def portfolio_recomendacion(usuario: Usuario, model: str | None = None) -> dict:
+    try:
+        tickers, pesos = entry(usuario, _predict_function(model))
+    except UnknownModelError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelNotLoadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except ValueError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+
+    return {"pesos_recomendados": dict(zip(tickers, pesos.tolist()))}
