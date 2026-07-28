@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-07-27T22:03:47Z",
+  "updated_at": "2026-07-28T22:00:15Z",
   "pending": [
     {
       "symbol": "PAMP",
@@ -11,17 +11,6 @@
       "last_close": 5630.0,
       "predicted_close": 5659.3254,
       "predicted_log_return": 0.005195255680972454
-    },
-    {
-      "symbol": "YPFD",
-      "model": "lstm",
-      "model_version": "lstm-20260716T233804Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 82500.0,
-      "predicted_close": 82257.2469,
-      "predicted_log_return": -0.0029467993697671483
     },
     {
       "symbol": "COME",
@@ -66,17 +55,6 @@
       "last_close": 9995.0,
       "predicted_close": 10090.9554,
       "predicted_log_return": 0.009554549740259098
-    },
-    {
-      "symbol": "TGNO4",
-      "model": "lstm",
-      "model_version": "lstm-20260716T233804Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4197.5,
-      "predicted_close": 4220.2226,
-      "predicted_log_return": 0.005398765502357707
     },
     {
       "symbol": "CEPU",
@@ -189,17 +167,6 @@
       "predicted_log_return": 0.007305893903738355
     },
     {
-      "symbol": "BYMA",
-      "model": "lstm",
-      "model_version": "lstm-20260716T233804Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 295.5,
-      "predicted_close": 297.5422,
-      "predicted_log_return": 0.00688722681944607
-    },
-    {
       "symbol": "EDN",
       "model": "lstm",
       "model_version": "lstm-20260716T233804Z",
@@ -255,17 +222,6 @@
       "predicted_log_return": -0.0011109010139302578
     },
     {
-      "symbol": "YPFD",
-      "model": "xgboost",
-      "model_version": "xgb-20260716T233824Z",
-      "as_of": "2026-07-22",
-      "signal": "alza",
-      "horizon_days": 5,
-      "last_close": 82500.0,
-      "predicted_close": 84946.8805,
-      "predicted_log_return": 0.029227832502109582
-    },
-    {
       "symbol": "COME",
       "model": "xgboost",
       "model_version": "xgb-20260716T233824Z",
@@ -308,17 +264,6 @@
       "last_close": 9995.0,
       "predicted_close": 10058.8613,
       "predicted_log_return": 0.0063689994577907786
-    },
-    {
-      "symbol": "TGNO4",
-      "model": "xgboost",
-      "model_version": "xgb-20260716T233824Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4197.5,
-      "predicted_close": 4206.5379,
-      "predicted_log_return": 0.0021508478642679393
     },
     {
       "symbol": "CEPU",
@@ -431,17 +376,6 @@
       "predicted_log_return": 0.005368504931747262
     },
     {
-      "symbol": "BYMA",
-      "model": "xgboost",
-      "model_version": "xgb-20260716T233824Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 295.5,
-      "predicted_close": 296.0276,
-      "predicted_log_return": 0.001783856374269751
-    },
-    {
       "symbol": "EDN",
       "model": "xgboost",
       "model_version": "xgb-20260716T233824Z",
@@ -497,17 +431,6 @@
       "predicted_log_return": -0.0002857246519906304
     },
     {
-      "symbol": "YPFD",
-      "model": "transformer",
-      "model_version": "transformer-20260716T233905Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 82500.0,
-      "predicted_close": 81974.7029,
-      "predicted_log_return": -0.00638759489218481
-    },
-    {
       "symbol": "COME",
       "model": "transformer",
       "model_version": "transformer-20260716T233905Z",
@@ -550,17 +473,6 @@
       "last_close": 9995.0,
       "predicted_close": 10027.3828,
       "predicted_log_return": 0.003234662783014509
-    },
-    {
-      "symbol": "TGNO4",
-      "model": "transformer",
-      "model_version": "transformer-20260716T233905Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4197.5,
-      "predicted_close": 4223.3709,
-      "predicted_log_return": 0.006144490683442937
     },
     {
       "symbol": "CEPU",
@@ -673,17 +585,6 @@
       "predicted_log_return": 0.0028531318280556645
     },
     {
-      "symbol": "BYMA",
-      "model": "transformer",
-      "model_version": "transformer-20260716T233905Z",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 295.5,
-      "predicted_close": 295.754,
-      "predicted_log_return": 0.0008591908574840563
-    },
-    {
       "symbol": "EDN",
       "model": "transformer",
       "model_version": "transformer-20260716T233905Z",
@@ -739,17 +640,6 @@
       "predicted_log_return": -0.0001281076725778088
     },
     {
-      "symbol": "YPFD",
-      "model": "arima",
-      "model_version": "arima-1-1-1",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 82500.0,
-      "predicted_close": 83188.0856,
-      "predicted_log_return": 0.008305842309076432
-    },
-    {
       "symbol": "COME",
       "model": "arima",
       "model_version": "arima-1-1-1",
@@ -792,17 +682,6 @@
       "last_close": 9995.0,
       "predicted_close": 9994.9501,
       "predicted_log_return": -4.992508710630498e-06
-    },
-    {
-      "symbol": "TGNO4",
-      "model": "arima",
-      "model_version": "arima-1-1-1",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4197.5,
-      "predicted_close": 4211.4596,
-      "predicted_log_return": 0.0033201759760422248
     },
     {
       "symbol": "CEPU",
@@ -913,17 +792,6 @@
       "last_close": 680.0,
       "predicted_close": 683.4681,
       "predicted_log_return": 0.00508718536117566
-    },
-    {
-      "symbol": "BYMA",
-      "model": "arima",
-      "model_version": "arima-1-1-1",
-      "as_of": "2026-07-22",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 295.5,
-      "predicted_close": 295.9008,
-      "predicted_log_return": 0.0013554261724428856
     },
     {
       "symbol": "EDN",
@@ -2816,8 +2684,1322 @@
       "last_close": 81.91,
       "predicted_close": 82.0672,
       "predicted_log_return": 0.0019173403150943887
+    },
+    {
+      "symbol": "GOLD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4028.8,
+      "predicted_close": 4113.3025,
+      "predicted_log_return": 0.02075766896501005
+    },
+    {
+      "symbol": "OIL",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 79.13,
+      "predicted_close": 77.3481,
+      "predicted_log_return": -0.022776056575341177
+    },
+    {
+      "symbol": "ECOG",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3010.0,
+      "predicted_close": 3038.8518,
+      "predicted_log_return": 0.009539667943308605
+    },
+    {
+      "symbol": "CRES",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 1818.0,
+      "predicted_close": 1830.5096,
+      "predicted_log_return": 0.0068574022778391105
+    },
+    {
+      "symbol": "BBAR",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 10030.0,
+      "predicted_close": 10098.9879,
+      "predicted_log_return": 0.006854608931428464
+    },
+    {
+      "symbol": "GGAL",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 7855.0,
+      "predicted_close": 7956.3006,
+      "predicted_log_return": 0.01281387137581893
+    },
+    {
+      "symbol": "TRAN",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3617.5,
+      "predicted_close": 3657.5415,
+      "predicted_log_return": 0.011008020872457476
+    },
+    {
+      "symbol": "YPFD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 79525.0,
+      "predicted_close": 79546.3749,
+      "predicted_log_return": 0.00026874602853059243
+    },
+    {
+      "symbol": "TXAR",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 669.0,
+      "predicted_close": 676.5263,
+      "predicted_log_return": 0.011187263297523778
+    },
+    {
+      "symbol": "EDN",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2023.0,
+      "predicted_close": 2035.2637,
+      "predicted_log_return": 0.006043834623469883
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4012.5,
+      "predicted_close": 4037.2416,
+      "predicted_log_return": 0.006147198044553182
+    },
+    {
+      "symbol": "CEPU",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2335.0,
+      "predicted_close": 2356.9378,
+      "predicted_log_return": 0.009351343006774846
+    },
+    {
+      "symbol": "LOMA",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3645.0,
+      "predicted_close": 3675.5971,
+      "predicted_log_return": 0.00835923019682809
+    },
+    {
+      "symbol": "PAMP",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 5450.0,
+      "predicted_close": 5476.2903,
+      "predicted_log_return": 0.0048123104941857646
+    },
+    {
+      "symbol": "SUPV",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3060.0,
+      "predicted_close": 3096.2963,
+      "predicted_log_return": 0.011791739318209623
+    },
+    {
+      "symbol": "COME",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 42.52,
+      "predicted_close": 42.8896,
+      "predicted_log_return": 0.008654818828293283
+    },
+    {
+      "symbol": "BYMA",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 300.25,
+      "predicted_close": 302.6305,
+      "predicted_log_return": 0.007897128441116041
+    },
+    {
+      "symbol": "VALO",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 624.0,
+      "predicted_close": 629.5278,
+      "predicted_log_return": 0.008819646173219967
+    },
+    {
+      "symbol": "METR",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2030.0,
+      "predicted_close": 2032.6482,
+      "predicted_log_return": 0.0013036818571051673
+    },
+    {
+      "symbol": "BMA",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14500.0,
+      "predicted_close": 14623.3662,
+      "predicted_log_return": 0.008472024630536824
+    },
+    {
+      "symbol": "TGSU2",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9465.0,
+      "predicted_close": 9550.7367,
+      "predicted_log_return": 0.009017508217367359
+    },
+    {
+      "symbol": "ALUA",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 988.0,
+      "predicted_close": 999.6722,
+      "predicted_log_return": 0.011744727496105322
+    },
+    {
+      "symbol": "GOLD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4028.8,
+      "predicted_close": 4082.6831,
+      "predicted_log_return": 0.013285829958243884
+    },
+    {
+      "symbol": "OIL",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 79.13,
+      "predicted_close": 76.473,
+      "predicted_log_return": -0.034154332263478325
+    },
+    {
+      "symbol": "ECOG",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3010.0,
+      "predicted_close": 3037.263,
+      "predicted_log_return": 0.00901670217043995
+    },
+    {
+      "symbol": "CRES",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 1818.0,
+      "predicted_close": 1811.9412,
+      "predicted_log_return": -0.003338238992148765
+    },
+    {
+      "symbol": "BBAR",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 10030.0,
+      "predicted_close": 9915.3146,
+      "predicted_log_return": -0.011500110802990269
+    },
+    {
+      "symbol": "GGAL",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 7855.0,
+      "predicted_close": 7748.5962,
+      "predicted_log_return": -0.01363858023321286
+    },
+    {
+      "symbol": "TRAN",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3617.5,
+      "predicted_close": 3659.2718,
+      "predicted_log_return": 0.011480986345624732
+    },
+    {
+      "symbol": "YPFD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 79525.0,
+      "predicted_close": 80567.8668,
+      "predicted_log_return": 0.01302845744742809
+    },
+    {
+      "symbol": "TXAR",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 669.0,
+      "predicted_close": 666.1981,
+      "predicted_log_return": -0.004196986369113674
+    },
+    {
+      "symbol": "EDN",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2023.0,
+      "predicted_close": 2023.3902,
+      "predicted_log_return": 0.00019286325931178563
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4012.5,
+      "predicted_close": 4015.7918,
+      "predicted_log_return": 0.0008200499599361678
+    },
+    {
+      "symbol": "CEPU",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2335.0,
+      "predicted_close": 2338.8542,
+      "predicted_log_return": 0.001649260207405741
+    },
+    {
+      "symbol": "LOMA",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3645.0,
+      "predicted_close": 3635.0913,
+      "predicted_log_return": -0.0027221378717186746
+    },
+    {
+      "symbol": "PAMP",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 5450.0,
+      "predicted_close": 5444.2792,
+      "predicted_log_return": -0.0010502393817551374
+    },
+    {
+      "symbol": "SUPV",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3060.0,
+      "predicted_close": 3063.5507,
+      "predicted_log_return": 0.00115968678039577
+    },
+    {
+      "symbol": "COME",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 42.52,
+      "predicted_close": 42.5467,
+      "predicted_log_return": 0.0006277427213417186
+    },
+    {
+      "symbol": "BYMA",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 300.25,
+      "predicted_close": 299.1093,
+      "predicted_log_return": -0.003806402527737056
+    },
+    {
+      "symbol": "VALO",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 624.0,
+      "predicted_close": 619.2171,
+      "predicted_log_return": -0.007694430196163032
+    },
+    {
+      "symbol": "METR",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2030.0,
+      "predicted_close": 2017.396,
+      "predicted_log_return": -0.006228222167138058
+    },
+    {
+      "symbol": "BMA",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14500.0,
+      "predicted_close": 14420.6777,
+      "predicted_log_return": -0.005485521447985792
+    },
+    {
+      "symbol": "TGSU2",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9465.0,
+      "predicted_close": 9467.5493,
+      "predicted_log_return": 0.0002693034070596324
+    },
+    {
+      "symbol": "ALUA",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 988.0,
+      "predicted_close": 984.8728,
+      "predicted_log_return": -0.0031702019705240397
+    },
+    {
+      "symbol": "GOLD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4028.8,
+      "predicted_close": 4177.1887,
+      "predicted_log_return": 0.03616989559035438
+    },
+    {
+      "symbol": "OIL",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 79.13,
+      "predicted_close": 78.4174,
+      "predicted_log_return": -0.009046228113996215
+    },
+    {
+      "symbol": "ECOG",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3010.0,
+      "predicted_close": 3052.0819,
+      "predicted_log_return": 0.013883869163763014
+    },
+    {
+      "symbol": "CRES",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 1818.0,
+      "predicted_close": 1831.2538,
+      "predicted_log_return": 0.007263873111124485
+    },
+    {
+      "symbol": "BBAR",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 10030.0,
+      "predicted_close": 9914.3155,
+      "predicted_log_return": -0.011600879198144964
+    },
+    {
+      "symbol": "GGAL",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 7855.0,
+      "predicted_close": 7848.0805,
+      "predicted_log_return": -0.0008812921067111936
+    },
+    {
+      "symbol": "TRAN",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3617.5,
+      "predicted_close": 3703.0963,
+      "predicted_log_return": 0.02338612801095394
+    },
+    {
+      "symbol": "YPFD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 79525.0,
+      "predicted_close": 79351.3921,
+      "predicted_log_return": -0.002185447023359548
+    },
+    {
+      "symbol": "TXAR",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 669.0,
+      "predicted_close": 673.1115,
+      "predicted_log_return": 0.00612693187099978
+    },
+    {
+      "symbol": "EDN",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2023.0,
+      "predicted_close": 2034.7016,
+      "predicted_log_return": 0.005767616050513788
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4012.5,
+      "predicted_close": 4049.5791,
+      "predicted_log_return": 0.009198461335714333
+    },
+    {
+      "symbol": "CEPU",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2335.0,
+      "predicted_close": 2336.9311,
+      "predicted_log_return": 0.0008266817590594615
+    },
+    {
+      "symbol": "LOMA",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3645.0,
+      "predicted_close": 3634.5581,
+      "predicted_log_return": -0.0028688299531706707
+    },
+    {
+      "symbol": "PAMP",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 5450.0,
+      "predicted_close": 5463.1372,
+      "predicted_log_return": 0.0024075948290705664
+    },
+    {
+      "symbol": "SUPV",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3060.0,
+      "predicted_close": 3034.4325,
+      "predicted_log_return": -0.008390494109716694
+    },
+    {
+      "symbol": "COME",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 42.52,
+      "predicted_close": 42.8129,
+      "predicted_log_return": 0.0068649055707440945
+    },
+    {
+      "symbol": "BYMA",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 300.25,
+      "predicted_close": 301.9525,
+      "predicted_log_return": 0.005654259276018342
+    },
+    {
+      "symbol": "VALO",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 624.0,
+      "predicted_close": 633.5668,
+      "predicted_log_return": 0.01521507176801432
+    },
+    {
+      "symbol": "METR",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 2030.0,
+      "predicted_close": 2008.2023,
+      "predicted_log_return": -0.010795849286900396
+    },
+    {
+      "symbol": "BMA",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14500.0,
+      "predicted_close": 14457.7007,
+      "predicted_log_return": -0.0029214564045167493
+    },
+    {
+      "symbol": "TGSU2",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9465.0,
+      "predicted_close": 9519.1197,
+      "predicted_log_return": 0.00570159137911851
+    },
+    {
+      "symbol": "ALUA",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 988.0,
+      "predicted_close": 997.1862,
+      "predicted_log_return": 0.009254815057282841
+    },
+    {
+      "symbol": "GOLD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4028.8,
+      "predicted_close": 4034.372,
+      "predicted_log_return": 0.001382086575097873
+    },
+    {
+      "symbol": "OIL",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 79.13,
+      "predicted_close": 79.535,
+      "predicted_log_return": 0.005105106729221719
+    },
+    {
+      "symbol": "ECOG",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3010.0,
+      "predicted_close": 3010.1152,
+      "predicted_log_return": 3.827169287864969e-05
+    },
+    {
+      "symbol": "CRES",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 1818.0,
+      "predicted_close": 1816.2916,
+      "predicted_log_return": -0.0009401557793749294
+    },
+    {
+      "symbol": "BBAR",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 10030.0,
+      "predicted_close": 10022.3427,
+      "predicted_log_return": -0.0007637312494364625
+    },
+    {
+      "symbol": "GGAL",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 7855.0,
+      "predicted_close": 7846.2087,
+      "predicted_log_return": -0.0011198247328176644
+    },
+    {
+      "symbol": "TRAN",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3617.5,
+      "predicted_close": 3608.2009,
+      "predicted_log_return": -0.0025738970551178126
+    },
+    {
+      "symbol": "YPFD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 79525.0,
+      "predicted_close": 79159.74,
+      "predicted_log_return": -0.004603601393351406
+    },
+    {
+      "symbol": "TXAR",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 669.0,
+      "predicted_close": 667.6225,
+      "predicted_log_return": -0.0020611660924181566
+    },
+    {
+      "symbol": "EDN",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2023.0,
+      "predicted_close": 2015.9852,
+      "predicted_log_return": -0.0034735492732746653
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4012.5,
+      "predicted_close": 3998.7216,
+      "predicted_log_return": -0.003439778419208051
+    },
+    {
+      "symbol": "CEPU",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2335.0,
+      "predicted_close": 2328.8881,
+      "predicted_log_return": -0.0026209477447538985
+    },
+    {
+      "symbol": "LOMA",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3645.0,
+      "predicted_close": 3646.9254,
+      "predicted_log_return": 0.0005280909880802631
+    },
+    {
+      "symbol": "PAMP",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 5450.0,
+      "predicted_close": 5449.1091,
+      "predicted_log_return": -0.0001634812522400299
+    },
+    {
+      "symbol": "SUPV",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 3060.0,
+      "predicted_close": 3055.5656,
+      "predicted_log_return": -0.001450201360658966
+    },
+    {
+      "symbol": "COME",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 42.52,
+      "predicted_close": 42.5301,
+      "predicted_log_return": 0.000237507070479011
+    },
+    {
+      "symbol": "BYMA",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 300.25,
+      "predicted_close": 299.9424,
+      "predicted_log_return": -0.0010250047382514707
+    },
+    {
+      "symbol": "VALO",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 624.0,
+      "predicted_close": 620.8728,
+      "predicted_log_return": -0.005024138334540798
+    },
+    {
+      "symbol": "METR",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2030.0,
+      "predicted_close": 2014.6856,
+      "predicted_log_return": -0.007572639605636495
+    },
+    {
+      "symbol": "BMA",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14500.0,
+      "predicted_close": 14487.5335,
+      "predicted_log_return": -0.0008601284251094649
+    },
+    {
+      "symbol": "TGSU2",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9465.0,
+      "predicted_close": 9465.0809,
+      "predicted_log_return": 8.547242922869836e-06
+    },
+    {
+      "symbol": "ALUA",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-28",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 988.0,
+      "predicted_close": 987.3793,
+      "predicted_log_return": -0.0006284362911243938
     }
   ],
-  "resolved": [],
-  "summary": {}
+  "resolved": [
+    {
+      "symbol": "YPFD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 82500.0,
+      "predicted_close": 82257.2469,
+      "predicted_log_return": -0.0029467993697671483,
+      "realized_close": 79525.0,
+      "realized_log_return": -0.03672685570542745,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4197.5,
+      "predicted_close": 4220.2226,
+      "predicted_log_return": 0.005398765502357707,
+      "realized_close": 4012.5,
+      "realized_log_return": -0.045074621513424555,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "BYMA",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 295.5,
+      "predicted_close": 297.5422,
+      "predicted_log_return": 0.00688722681944607,
+      "realized_close": 300.25,
+      "realized_log_return": 0.015946624113940062,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "YPFD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-22",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 82500.0,
+      "predicted_close": 84946.8805,
+      "predicted_log_return": 0.029227832502109582,
+      "realized_close": 79525.0,
+      "realized_log_return": -0.03672685570542745,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4197.5,
+      "predicted_close": 4206.5379,
+      "predicted_log_return": 0.0021508478642679393,
+      "realized_close": 4012.5,
+      "realized_log_return": -0.045074621513424555,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "BYMA",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 295.5,
+      "predicted_close": 296.0276,
+      "predicted_log_return": 0.001783856374269751,
+      "realized_close": 300.25,
+      "realized_log_return": 0.015946624113940062,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "YPFD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 82500.0,
+      "predicted_close": 81974.7029,
+      "predicted_log_return": -0.00638759489218481,
+      "realized_close": 79525.0,
+      "realized_log_return": -0.03672685570542745,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4197.5,
+      "predicted_close": 4223.3709,
+      "predicted_log_return": 0.006144490683442937,
+      "realized_close": 4012.5,
+      "realized_log_return": -0.045074621513424555,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "BYMA",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 295.5,
+      "predicted_close": 295.754,
+      "predicted_log_return": 0.0008591908574840563,
+      "realized_close": 300.25,
+      "realized_log_return": 0.015946624113940062,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "YPFD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 82500.0,
+      "predicted_close": 83188.0856,
+      "predicted_log_return": 0.008305842309076432,
+      "realized_close": 79525.0,
+      "realized_log_return": -0.03672685570542745,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "TGNO4",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4197.5,
+      "predicted_close": 4211.4596,
+      "predicted_log_return": 0.0033201759760422248,
+      "realized_close": 4012.5,
+      "realized_log_return": -0.045074621513424555,
+      "resolved_at": "2026-07-28"
+    },
+    {
+      "symbol": "BYMA",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-07-22",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 295.5,
+      "predicted_close": 295.9008,
+      "predicted_log_return": 0.0013554261724428856,
+      "realized_close": 300.25,
+      "realized_log_return": 0.015946624113940062,
+      "resolved_at": "2026-07-28"
+    }
+  ],
+  "summary": {
+    "arima": {
+      "overall": {
+        "n_predictions": 3,
+        "mae_logret": 0.036006,
+        "rmse_logret": 0.039085,
+        "directional_accuracy": 0.3333,
+        "neutral_rate": 1.0,
+        "avg_strategy_logret": 0.0,
+        "avg_buy_hold_logret": -0.021952,
+        "signal_hit_rate": null
+      },
+      "per_ticker": {
+        "BYMA": {
+          "n_predictions": 1,
+          "mae_logret": 0.014591,
+          "rmse_logret": 0.014591,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": 0.015947,
+          "signal_hit_rate": null
+        },
+        "TGNO4": {
+          "n_predictions": 1,
+          "mae_logret": 0.048395,
+          "rmse_logret": 0.048395,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.045075,
+          "signal_hit_rate": null
+        },
+        "YPFD": {
+          "n_predictions": 1,
+          "mae_logret": 0.045033,
+          "rmse_logret": 0.045033,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.036727,
+          "signal_hit_rate": null
+        }
+      }
+    },
+    "lstm": {
+      "overall": {
+        "n_predictions": 3,
+        "mae_logret": 0.031104,
+        "rmse_logret": 0.035453,
+        "directional_accuracy": 0.6667,
+        "neutral_rate": 1.0,
+        "avg_strategy_logret": 0.0,
+        "avg_buy_hold_logret": -0.021952,
+        "signal_hit_rate": null
+      },
+      "per_ticker": {
+        "BYMA": {
+          "n_predictions": 1,
+          "mae_logret": 0.009059,
+          "rmse_logret": 0.009059,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": 0.015947,
+          "signal_hit_rate": null
+        },
+        "TGNO4": {
+          "n_predictions": 1,
+          "mae_logret": 0.050473,
+          "rmse_logret": 0.050473,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.045075,
+          "signal_hit_rate": null
+        },
+        "YPFD": {
+          "n_predictions": 1,
+          "mae_logret": 0.03378,
+          "rmse_logret": 0.03378,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.036727,
+          "signal_hit_rate": null
+        }
+      }
+    },
+    "transformer": {
+      "overall": {
+        "n_predictions": 3,
+        "mae_logret": 0.032215,
+        "rmse_logret": 0.035457,
+        "directional_accuracy": 0.6667,
+        "neutral_rate": 1.0,
+        "avg_strategy_logret": 0.0,
+        "avg_buy_hold_logret": -0.021952,
+        "signal_hit_rate": null
+      },
+      "per_ticker": {
+        "BYMA": {
+          "n_predictions": 1,
+          "mae_logret": 0.015087,
+          "rmse_logret": 0.015087,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": 0.015947,
+          "signal_hit_rate": null
+        },
+        "TGNO4": {
+          "n_predictions": 1,
+          "mae_logret": 0.051219,
+          "rmse_logret": 0.051219,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.045075,
+          "signal_hit_rate": null
+        },
+        "YPFD": {
+          "n_predictions": 1,
+          "mae_logret": 0.030339,
+          "rmse_logret": 0.030339,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.036727,
+          "signal_hit_rate": null
+        }
+      }
+    },
+    "xgboost": {
+      "overall": {
+        "n_predictions": 3,
+        "mae_logret": 0.042448,
+        "rmse_logret": 0.047542,
+        "directional_accuracy": 0.3333,
+        "neutral_rate": 0.6667,
+        "avg_strategy_logret": -0.012242,
+        "avg_buy_hold_logret": -0.021952,
+        "signal_hit_rate": 0.0
+      },
+      "per_ticker": {
+        "BYMA": {
+          "n_predictions": 1,
+          "mae_logret": 0.014163,
+          "rmse_logret": 0.014163,
+          "directional_accuracy": 1.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": 0.015947,
+          "signal_hit_rate": null
+        },
+        "TGNO4": {
+          "n_predictions": 1,
+          "mae_logret": 0.047225,
+          "rmse_logret": 0.047225,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 1.0,
+          "avg_strategy_logret": 0.0,
+          "avg_buy_hold_logret": -0.045075,
+          "signal_hit_rate": null
+        },
+        "YPFD": {
+          "n_predictions": 1,
+          "mae_logret": 0.065955,
+          "rmse_logret": 0.065955,
+          "directional_accuracy": 0.0,
+          "neutral_rate": 0.0,
+          "avg_strategy_logret": -0.036727,
+          "avg_buy_hold_logret": -0.036727,
+          "signal_hit_rate": 0.0
+        }
+      }
+    }
+  }
 }
