@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 from numpy.linalg import inv
 
-from src.black_litterman.cartera_ancla import CarteraAncla
+from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
 from src.black_litterman.optimizador import optimizar_pesos
 from src.config import settings
@@ -15,9 +15,14 @@ ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
 
 
-def entry(usuario, predict_function, garch_model=None):
+def entry(
+    usuario,
+    predict_function,
+    garch_model=None,
+    tipo_cartera_ancla: TipoCarteraAncla | None = None,
+):
     tickers, precios_historicos, precios_actuales = get_data()
-    cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales)
+    cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
     if garch_model is not None:
         # Reemplaza la diagonal (varianzas) por el forecast GARCH a un dia,

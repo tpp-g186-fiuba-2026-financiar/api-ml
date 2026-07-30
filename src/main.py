@@ -1,8 +1,10 @@
 from contextlib import asynccontextmanager
+from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 
 from src.black_litterman.black_litterman import entry
+from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
 from src.data import fetch_history
 from src.errors import (
@@ -318,9 +320,24 @@ def _predict_function(model: str | None):
         "actual del usuario, y devuelve los pesos optimos recomendados."
     ),
 )
-async def portfolio_recomendacion(usuario: Usuario, model: str | None = None) -> dict:
+async def portfolio_recomendacion(
+    usuario: Usuario,
+    model: str | None = None,
+    cartera_ancla: Annotated[
+        TipoCarteraAncla | None,
+        Query(
+            description=(
+                "Estrategia de cartera ancla: propia | equal_weight | mercado. "
+                "Default (sin especificar): propia si el usuario tiene holdings "
+                "con valor positivo, equal_weight si no."
+            )
+        ),
+    ] = None,
+) -> dict:
     try:
-        tickers, pesos = entry(usuario, _predict_function(model), garch_volatility_model)
+        tickers, pesos = entry(
+            usuario, _predict_function(model), garch_volatility_model, cartera_ancla
+        )
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ModelNotLoadedError as exc:
@@ -329,6 +346,8 @@ async def portfolio_recomendacion(usuario: Usuario, model: str | None = None) ->
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except NotEnoughDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    except NotImplementedError as exc:
+        raise HTTPException(status_code=501, detail=str(exc)) from exc
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
