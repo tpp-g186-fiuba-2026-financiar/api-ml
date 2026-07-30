@@ -3,26 +3,11 @@ import pandas as pd
 
 
 class MatrizDeCovarianza:
-    """Matriz de covarianza muestral tradicional entre varios tickers.
-
-    Recibe los historicos YA DESCARGADOS como DataFrames OHLCV (la forma real
-    que devuelve fetch_history: columnas open/high/low/close/volume, indice
-    de fechas ascendente) -- no hace fetch ella misma. Alinea por
-    INTERSECCION de fechas: si un dia no esta en TODOS los tickers, se
-    descarta para todos (no se rellena).
-    """
-
     def __init__(self, tickers: list[str], historiales: dict[str, pd.DataFrame]):
         self.tickers = tickers
         self.matriz = self._construir_matriz(tickers, historiales)
 
     def _construir_retornos(self, df: pd.DataFrame) -> tuple[np.ndarray, np.ndarray]:
-        """Retornos porcentuales dia a dia de un ticker, a partir de su
-        DataFrame OHLCV.
-
-        Devuelve ``(dates, returns)``: ``dates[i]`` (datetime64) es la fecha
-        a la que corresponde ``returns[i]`` (close[i] vs close[i-1]).
-        """
         df = df.sort_index()
         close = df["close"].to_numpy(dtype=np.float64)
         returns = np.diff(close) / close[:-1]
@@ -53,6 +38,17 @@ class MatrizDeCovarianza:
             retornos_alineados[i] = returns[idx]
 
         return np.cov(retornos_alineados, rowvar=True)
+
+    def matriz_garch(self, historiales: dict[str, pd.DataFrame], garch_model) -> np.ndarray:
+        desvios_muestrales = np.sqrt(np.diag(self.matriz))
+        correlacion = self.matriz / np.outer(desvios_muestrales, desvios_muestrales)
+
+        varianzas_garch = np.array(
+            [garch_model.forecast_daily_variance(historiales[ticker]) for ticker in self.tickers]
+        )
+        desvios_garch = np.sqrt(varianzas_garch)
+
+        return correlacion * np.outer(desvios_garch, desvios_garch)
 
     def __repr__(self):
         return f"MatrizDeCovarianza(tickers={self.tickers}, shape={self.matriz.shape})"

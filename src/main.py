@@ -320,7 +320,7 @@ def _predict_function(model: str | None):
 )
 async def portfolio_recomendacion(usuario: Usuario, model: str | None = None) -> dict:
     try:
-        tickers, pesos = entry(usuario, _predict_function(model))
+        tickers, pesos = entry(usuario, _predict_function(model), garch_volatility_model)
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ModelNotLoadedError as exc:

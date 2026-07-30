@@ -35,8 +35,7 @@ class GarchVolatilityModel:
     def version(self) -> str:
         return "garch-1-1"
 
-    def predict_df(self, df: pd.DataFrame) -> dict:
-        close = df["close"].to_numpy(dtype=np.float64)
+    def _forecast_variance_pct2(self, close: np.ndarray) -> np.ndarray:
         if len(close) < MIN_ROWS:
             raise NotEnoughDataError(f"se necesitan al menos {MIN_ROWS} ruedas, hay {len(close)}")
 
@@ -46,7 +45,11 @@ class GarchVolatilityModel:
         result = model.fit(update_freq=0, disp="off")
 
         forecast = result.forecast(horizon=self.horizon)
-        variance_pct2 = forecast.variance.to_numpy()[-1]
+        return forecast.variance.to_numpy()[-1]
+
+    def predict_df(self, df: pd.DataFrame) -> dict:
+        close = df["close"].to_numpy(dtype=np.float64)
+        variance_pct2 = self._forecast_variance_pct2(close)
         daily_volatility_pct = np.sqrt(variance_pct2)
         # Volatilidad acumulada asumiendo retornos diarios independientes.
         cumulative_volatility_pct = float(np.sqrt(variance_pct2.sum()))
@@ -58,3 +61,9 @@ class GarchVolatilityModel:
             "last_close": round(float(close[-1]), 4),
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
         }
+
+    def forecast_daily_variance(self, df: pd.DataFrame) -> float:
+        close = df["close"].to_numpy(dtype=np.float64)
+        variance_pct2 = self._forecast_variance_pct2(close)
+        primer_dia_pct2 = float(variance_pct2[0])
+        return primer_dia_pct2 / (100.0**2)
