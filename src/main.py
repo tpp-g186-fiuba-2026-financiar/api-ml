@@ -164,8 +164,8 @@ async def predict_trend_compare(symbol: str) -> dict:
     summary="Prediccion de tendencia (path)",
     description=(
         "Predice la tendencia de un ticker. Query `model` elige el modelo. "
-        "Default: `lstm-modal` si esta configurado (temporal, mientras el "
-        "LSTM local no se reentrena), sino `lstm`."
+        "Default: `lstm-modal` si esta configurado (se reentrena en cada "
+        "request, nunca queda desactualizado), sino `lstm` local."
     ),
 )
 async def predict_trend_get(

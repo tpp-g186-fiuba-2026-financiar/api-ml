@@ -315,9 +315,14 @@ def build_registry(history_days: int) -> TrendRegistry:
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
 
     # Alternativas que corren en Modal (repo `models`), independientes de
-    # este proceso. Solo se registran si su URL esta configurada.
+    # este proceso. Solo se registran si su URL esta configurada. lstm-modal
+    # es default a proposito: se reentrena solo en cada request (no depende
+    # de que alguien corra `make train` y suba el artefacto a mano), asi que
+    # mientras Modal responda, la prediccion "principal" nunca queda vieja.
+    # Si Modal no esta configurado, este `if` ni se ejecuta y el default
+    # sigue siendo el `lstm` local de arriba -- sin riesgo de romper nada.
     if settings.modal_lstm_url:
-        registry.register_remote("lstm-modal", settings.modal_lstm_url)
+        registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
     if settings.modal_xgboost_url:
         registry.register_remote("xgboost-modal", settings.modal_xgboost_url)
     if settings.modal_arima_url:
