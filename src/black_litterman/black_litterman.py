@@ -19,7 +19,8 @@ def entry(usuario, predict_function):
     tickers, precios_historicos, precios_actuales = get_data()
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
-    q, omega = get_predicciones(tickers, predict_function)
+    q = get_predicciones(tickers, predict_function)
+    omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
     return tickers, bl.predecir()
 
@@ -91,16 +92,16 @@ def get_predicciones(tickers, predict_functions):
     for ticker in tickers:
         prediction: TrendResponse = predict_functions(ticker)
         r[ticker] = Prediccion(prediction)
-    q = []
-    omega = []
-    for ticker in tickers:
-        q.append(r[ticker].prediccion)
+    q = [r[ticker].prediccion for ticker in tickers]
+    return q
 
-    for i in range(len(tickers)):
-        row = [0] * len(tickers)
-        row[i] = 1
-        omega.append(row)
-    return q, omega
+
+def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
+    """
+        Omega_ii = tau * Sigma_ii
+    """
+    varianzas = np.diag(sigma)  # Sigma_ii de cada ticker, en el mismo orden
+    return np.diag(tau * varianzas)
 
 
 class Prediccion:
