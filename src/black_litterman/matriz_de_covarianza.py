@@ -26,7 +26,7 @@ class MatrizDeCovarianza:
         df = df.sort_index()
         close = df["close"].to_numpy(dtype=np.float64)
         returns = np.diff(close) / close[:-1]
-        dates = df.index.values[1:]
+        dates = df.index.normalize().values[1:]
         return dates, returns
 
     def _construir_matriz(
