@@ -332,4 +332,4 @@ async def portfolio_recomendacion(usuario: Usuario, model: str | None = None) ->
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {"pesos_recomendados": dict(zip(tickers, pesos.tolist()))}
+    return {"pesos_recomendados": dict(zip(tickers, pesos.tolist(), strict=True))}
