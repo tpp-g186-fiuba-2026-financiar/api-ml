@@ -15,10 +15,18 @@ ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
 
 
-def entry(usuario, predict_function):
+def entry(usuario, predict_function, garch_model=None):
     tickers, precios_historicos, precios_actuales = get_data()
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
+    if garch_model is not None:
+        # Reemplaza la diagonal (varianzas) por el forecast GARCH a un dia,
+        # manteniendo la correlacion muestral. Afecta por igual a Pi,
+        # Omega y bl_sigma porque los tres se calculan a partir de esta
+        # misma matriz.
+        matriz_de_covarianza.matriz = matriz_de_covarianza.matriz_garch(
+            precios_historicos, garch_model
+        )
     q = get_predicciones(tickers, predict_function)
     omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
