@@ -4,6 +4,7 @@ from numpy.linalg import inv
 
 from src.black_litterman.cartera_ancla import CarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
+from src.black_litterman.optimizador import optimizar_pesos
 from src.config import settings
 from src.data import fetch_available_tickers, fetch_history
 from src.schemas import PerfilRiesgo, TrendResponse, Usuario
@@ -65,7 +66,7 @@ class BlackLittermanPrediction:
         return self.matriz_de_covarianza.matriz + inv(self._inv_tau_sigma() + inv(self.omega))
 
     def predecir(self):
-        return np.dot(inv(np.dot(self.perfil_de_riesgo, self.bl_sigma())), self.bl_mu())
+        return optimizar_pesos(self.bl_mu(), self.bl_sigma(), self.perfil_de_riesgo)
 
 
 def get_data():
@@ -97,8 +98,16 @@ def get_predicciones(tickers, predict_functions):
 
 
 def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
-    """
+    """Omega clasico de Black-Litterman para vistas absolutas (P = identidad):
+
         Omega_ii = tau * Sigma_ii
+
+    La incertidumbre de cada vista es proporcional a la propia varianza de
+    ese activo en Sigma, escalada por el mismo tau que ya se usa en Pi y en
+    la mezcla bayesiana -- mismo orden de magnitud por construccion, a
+    diferencia de un placeholder generico como la identidad. Todavia NO usa
+    confidence del modelo; es el default estandar de la literatura antes de
+    calibrar con eso.
     """
     varianzas = np.diag(sigma)  # Sigma_ii de cada ticker, en el mismo orden
     return np.diag(tau * varianzas)
