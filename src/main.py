@@ -2,6 +2,7 @@ from contextlib import asynccontextmanager
 
 from fastapi import FastAPI, HTTPException, Query
 
+from src.black_litterman.black_litterman import entry
 from src.config import settings
 from src.data import fetch_history
 from src.errors import (
@@ -26,7 +27,6 @@ from src.schemas import (
     VolatilityResponse,
 )
 from src.svm_direction import SvmDirectionModel
-from src.black_litterman.black_litterman import entry
 
 prediction_model = PredictionModel(settings.model_path)
 trend_registry = build_registry(settings.history_days)

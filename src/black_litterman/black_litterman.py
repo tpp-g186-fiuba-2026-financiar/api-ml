@@ -9,7 +9,6 @@ from src.config import settings
 from src.data import fetch_available_tickers, fetch_history
 from src.schemas import PerfilRiesgo, TrendResponse, Usuario
 
-
 TAU = 0.05
 ALFA_CONSERVADOR = 0.75
 ALFA_MODERADO = 0.5
@@ -27,7 +26,6 @@ def entry(usuario, predict_function):
 
 
 class BlackLittermanPrediction:
-
     def __init__(self, usuario, matriz_de_covarianza, cartera_ancla, q, omega):
         self.usuario: Usuario = usuario
         self.perfil_de_riesgo: float = self.obtener_alfa()

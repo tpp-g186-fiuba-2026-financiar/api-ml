@@ -1,9 +1,9 @@
 import numpy as np
+
 from src.schemas import Usuario
 
 
 class CarteraAncla:
-
     def __init__(self, usuario: Usuario, tickers: list[str], precios: dict[str, float]):
         self.tickers = tickers
         self.vector = self._construir_vector(usuario, tickers, precios)
