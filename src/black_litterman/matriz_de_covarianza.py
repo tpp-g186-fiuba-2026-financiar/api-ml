@@ -39,9 +39,7 @@ class MatrizDeCovarianza:
         fechas_comunes = None
         for dates, _ in retornos_por_ticker.values():
             fechas_set = set(dates.tolist())
-            fechas_comunes = (
-                fechas_set if fechas_comunes is None else (fechas_comunes & fechas_set)
-            )
+            fechas_comunes = fechas_set if fechas_comunes is None else (fechas_comunes & fechas_set)
 
         if not fechas_comunes:
             raise ValueError("no hay fechas en comun entre los tickers disponibles")

@@ -1,4 +1,4 @@
-from enum import Enum
+import enum
 
 from pydantic import BaseModel, ConfigDict, Field
 
@@ -77,29 +77,27 @@ class VolatilityResponse(BaseModel):
     model_version: str
 
 
-class PerfilRiesgo(str, Enum): 
+class PerfilRiesgo(enum.StrEnum):
     CONSERVADOR = "conservative"
     MODERADO = "moderate"
     ARRIESGADO = "aggressive"
-        
 
 
 class Tenencia(BaseModel):
     ticker: str
     cantidad: float
- 
- 
+
+
 class Usuario(BaseModel):
     """Toda la info del usuario necesaria para armar la recomendacion:
     su perfil de riesgo y su cartera actual (una tenencia por ticker).
     """
- 
+
     perfil_riesgo: PerfilRiesgo
     tenencias: list[Tenencia]
- 
+
     def cantidades_por_ticker(self) -> dict[str, float]:
         """Devuelve un dict {ticker: cantidad}, util para cruzar con precios
         y calcular pesos de cartera (w_actual) mas adelante.
         """
         return {t.ticker: t.cantidad for t in self.tenencias}
-
