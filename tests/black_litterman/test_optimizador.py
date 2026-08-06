@@ -54,9 +54,7 @@ class TestComportamientoEsperado:
         # A mayor aversion al riesgo, con retornos parecidos, deberia
         # diversificar mas en vez de concentrar en el de mayor retorno.
         mu = np.array([0.021, 0.020, 0.019])
-        sigma = np.array(
-            [[4e-4, 1e-4, 1e-4], [1e-4, 4e-4, 1e-4], [1e-4, 1e-4, 4e-4]]
-        )
+        sigma = np.array([[4e-4, 1e-4, 1e-4], [1e-4, 4e-4, 1e-4], [1e-4, 1e-4, 4e-4]])
         w_bajo_delta = optimizar_pesos(mu, sigma, delta=1.0)
         w_alto_delta = optimizar_pesos(mu, sigma, delta=500.0)
 

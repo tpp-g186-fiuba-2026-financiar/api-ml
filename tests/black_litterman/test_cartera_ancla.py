@@ -28,7 +28,9 @@ class TestVectorPropia:
     def test_cartera_vacia_lanza_value_error(self, usuario_sin_cartera, precios_3_tickers):
         tickers = ["GGAL", "YPFD", "PAMP"]
         with pytest.raises(ValueError, match="valor positivo"):
-            CarteraAncla(usuario_sin_cartera, tickers, precios_3_tickers, tipo=TipoCarteraAncla.PROPIA)
+            CarteraAncla(
+                usuario_sin_cartera, tickers, precios_3_tickers, tipo=TipoCarteraAncla.PROPIA
+            )
 
     def test_ticker_sin_tenencia_pesa_cero(self, precios_3_tickers):
         usuario = Usuario(

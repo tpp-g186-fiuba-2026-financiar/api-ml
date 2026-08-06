@@ -3,9 +3,9 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
+from conftest import fake_ohlcv
 
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
-from conftest import fake_ohlcv
 
 
 class TestConstruccionBasica:

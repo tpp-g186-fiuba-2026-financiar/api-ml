@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
+from conftest import fake_ohlcv, make_predict_function
 
 from src.black_litterman.black_litterman import (
     TICKERS_NO_INVERTIBLES,
@@ -16,7 +17,6 @@ from src.black_litterman.black_litterman import (
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
 from src.schemas import PerfilRiesgo, TrendResponse, Usuario
-from conftest import fake_ohlcv, make_predict_function
 
 
 # --------------------------------------------------------------------------- #
@@ -105,7 +105,13 @@ class TestObtenerPreciosActuales:
 
         idx = pd.to_datetime(["2024-01-03", "2024-01-01", "2024-01-02"])
         df = pd.DataFrame(
-            {"open": [1, 2, 3], "high": [1, 2, 3], "low": [1, 2, 3], "close": [30, 10, 20], "volume": [1, 1, 1]},
+            {
+                "open": [1, 2, 3],
+                "high": [1, 2, 3],
+                "low": [1, 2, 3],
+                "close": [30, 10, 20],
+                "volume": [1, 1, 1],
+            },
             index=idx,
         )
         precios = obtener_precios_actuales({"X": df})
