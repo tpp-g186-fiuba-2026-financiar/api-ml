@@ -1,3 +1,5 @@
+from __future__ import annotations
+
 import numpy as np
 import pandas as pd
 from numpy.linalg import inv
@@ -13,15 +15,18 @@ TAU = 0.05
 ALFA_CONSERVADOR = 0.75
 ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
+TICKERS_NO_INVERTIBLES: frozenset[str] = frozenset({"GOLD", "OIL"})
 
 
 def entry(
-    usuario,
+    usuario: Usuario,
     predict_function,
     garch_model=None,
     tipo_cartera_ancla: TipoCarteraAncla | None = None,
+    fetch_tickers=fetch_available_tickers,
+    fetch_hist=fetch_history,
 ):
-    tickers, precios_historicos, precios_actuales = get_data()
+    tickers, precios_historicos, precios_actuales = get_data(fetch_tickers, fetch_hist)
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
     if garch_model is not None:
@@ -80,9 +85,19 @@ class BlackLittermanPrediction:
         return optimizar_pesos(self.bl_mu(), self.bl_sigma(), self.perfil_de_riesgo)
 
 
-def get_data():
-    tickers = fetch_available_tickers()
-    historiales = {ticker: fetch_history(ticker, settings.history_days) for ticker in tickers}
+def get_data(
+    fetch_tickers=fetch_available_tickers,
+    fetch_hist=fetch_history,
+    excluir: frozenset[str] = TICKERS_NO_INVERTIBLES,
+):
+    """Descarga tickers + historicos y arma los precios actuales.
+
+    fetch_tickers/fetch_hist son inyectables (default = las funciones reales
+    de src.data) para poder testear sin mockear el modulo -- se les pasa un
+    fake directo.
+    """
+    tickers = [t for t in fetch_tickers() if t not in excluir]
+    historiales = {ticker: fetch_hist(ticker, settings.history_days) for ticker in tickers}
     precios_actuales = obtener_precios_actuales(historiales)
     return tickers, historiales, precios_actuales
 
