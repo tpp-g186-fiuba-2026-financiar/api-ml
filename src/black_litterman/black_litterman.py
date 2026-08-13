@@ -121,7 +121,6 @@ def get_data(
     tickers_excluidos: dict[str, str] = {}
     for ticker in tickers:
         df = fetch_hist(ticker, settings.history_days)
-        rango = f"{df.index[0].date()} -> {df.index[-1].date()}" if not df.empty else "vacio"
         if len(df) < min_ruedas:
             motivo = f"{len(df)} ruedas, minimo {min_ruedas}"
             tickers_excluidos[ticker] = motivo
