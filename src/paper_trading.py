@@ -37,7 +37,7 @@ import pandas as pd
 from src.backtest import summarize
 from src.config import settings
 from src.data import fetch_available_tickers, fetch_history
-from src.errors import ApiMlError
+from src.errors import ApiMlError, DataUnavailableError
 from src.registry import TrendRegistry, build_registry
 
 DEFAULT_LEDGER_PATH = "models/paper_trading_ledger.json"
@@ -197,6 +197,12 @@ def build_summary(resolved: list[dict]) -> dict[str, dict]:
     return summary
 
 
+def known_tickers(ledger: dict) -> list[str]:
+    """Fallback si el catalogo del collector esta temporalmente caido."""
+    entries = [*ledger.get("pending", []), *ledger.get("resolved", [])]
+    return sorted({entry["symbol"] for entry in entries if entry.get("symbol")})
+
+
 def main() -> None:
     parser = argparse.ArgumentParser(
         description="Paper trading: predicciones diarias hacia adelante, historial persistente.",
@@ -228,7 +234,21 @@ def main() -> None:
     ledger["pending"] = still_pending
     ledger["resolved"].extend(newly_resolved)
 
-    tickers = args.tickers or fetch_available_tickers()
+    if args.tickers:
+        tickers = args.tickers
+    else:
+        try:
+            tickers = fetch_available_tickers()
+        except DataUnavailableError as exc:
+            tickers = known_tickers(ledger)
+            if not tickers:
+                ledger["summary"] = build_summary(ledger["resolved"])
+                save_ledger(ledger_path, ledger)
+                raise
+            print(
+                f"  [warn] {exc}\n"
+                f"  [fallback] se usaran {len(tickers)} tickers ya conocidos por el ledger"
+            )
     registry = build_registry(args.days)
     registry.load_all()
     model_names = select_model_names(registry, args.models)

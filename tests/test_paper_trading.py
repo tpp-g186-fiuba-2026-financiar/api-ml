@@ -5,6 +5,7 @@ import pandas as pd
 
 from src.paper_trading import (
     build_summary,
+    known_tickers,
     record_new_predictions,
     resolve_pending,
     select_model_names,
@@ -185,3 +186,12 @@ def test_build_summary_groups_by_model() -> None:
     assert summary["lstm"]["overall"]["n_predictions"] == 2
     assert set(summary["lstm"]["per_ticker"]) == {"GGAL", "YPFD"}
     assert summary["lstm"]["per_ticker"]["GGAL"]["n_predictions"] == 1
+
+
+def test_known_tickers_uses_pending_and_resolved_without_duplicates() -> None:
+    ledger = {
+        "pending": [{"symbol": "YPFD"}, {"symbol": "GGAL"}],
+        "resolved": [{"symbol": "GGAL"}, {"symbol": "ALUA"}],
+    }
+
+    assert known_tickers(ledger) == ["ALUA", "GGAL", "YPFD"]
