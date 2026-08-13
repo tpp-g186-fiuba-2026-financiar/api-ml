@@ -15,6 +15,8 @@ tendencia (ver ``FEATURE_NAMES`` en ``src.lstm``).
 
 from __future__ import annotations
 
+import time
+
 import certifi
 import pandas as pd
 import requests
@@ -25,6 +27,7 @@ from src.errors import ApiMlError, DataUnavailableError
 _YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _REQUEST_TIMEOUT = 20
+_AVAILABLE_TICKERS_ATTEMPTS = 3
 
 # Commodities que `data-colector` expone como tickers (`available-tickers`),
 # pero que no son acciones de BYMA -- no llevan sufijo `.BA`, van directo a su
@@ -155,12 +158,26 @@ def fetch_available_tickers() -> list[str]:
         raise DataUnavailableError("data_collector_url no esta configurada")
 
     url = f"{base.rstrip('/')}/available-tickers"
-    try:
-        resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        payload = resp.json()
-    except (requests.RequestException, ValueError) as exc:
-        raise DataUnavailableError(f"no se pudo obtener el listado de tickers: {exc}") from exc
+    last_error: Exception | None = None
+    for attempt in range(1, _AVAILABLE_TICKERS_ATTEMPTS + 1):
+        try:
+            resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
+            resp.raise_for_status()
+            payload = resp.json()
+            break
+        except (requests.RequestException, ValueError) as exc:
+            last_error = exc
+            if attempt < _AVAILABLE_TICKERS_ATTEMPTS:
+                print(
+                    f"  [warn] listado de tickers: intento {attempt}/"
+                    f"{_AVAILABLE_TICKERS_ATTEMPTS} fallo; reintentando"
+                )
+                time.sleep(attempt * 2)
+    else:
+        raise DataUnavailableError(
+            f"no se pudo obtener el listado de tickers despues de "
+            f"{_AVAILABLE_TICKERS_ATTEMPTS} intentos: {last_error}"
+        ) from last_error
 
     tickers = ((payload.get("message") or {}).get("tickers")) or []
     if not tickers:
