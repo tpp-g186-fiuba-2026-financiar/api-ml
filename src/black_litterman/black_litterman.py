@@ -16,17 +16,7 @@ ALFA_CONSERVADOR = 0.75
 ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
 
-# Universo de Black-Litterman: panel lider del Merval, nada mas. Reemplaza
-# al blocklist TICKERS_NO_INVERTIBLES (que solo tapaba GOLD/OIL) por un
-# allowlist fijo, porque el problema no es solo GOLD/OIL: fetch_available_tickers()
-# trae TODO lo que cachea data-colector (lider panel + CEDEARs + commodities
-# + ETFs, sin distinguir mercado -- ver docstring de esa funcion en
-# src/data.py), y cualquier CEDEAR recien listado con poca historia (ej.
-# YPFDD, 17 ruedas) tira abajo el forecast GARCH de TODA la corrida
-# (NotEnoughDataError), no solo la de ese ticker. Ir agregando nombres a un
-# blocklist a mano cada vez que aparece uno asi no escala; con un allowlist
-# fijo el universo queda controlado de una. Si el panel lider cambia,
-# actualizar esta lista a mano.
+MIN_RUEDAS = 60
 PANEL_LIDER_TICKERS: list[str] = [
     "ALUA",
     "BBAR",
@@ -63,15 +53,10 @@ def entry(
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
     if garch_model is not None:
-        # Reemplaza la diagonal (varianzas) por el forecast GARCH a un dia,
-        # manteniendo la correlacion muestral. Afecta por igual a Pi,
-        # Omega y bl_sigma porque los tres se calculan a partir de esta
-        # misma matriz.
         matriz_de_covarianza.matriz = matriz_de_covarianza.matriz_garch(
             precios_historicos, garch_model
         )
     q = get_predicciones(tickers, predict_function)
-    print(f"Predicciones: {q}")
     omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
     return tickers, bl.predecir()
@@ -122,17 +107,33 @@ class BlackLittermanPrediction:
 def get_data(
     tickers: list[str] = PANEL_LIDER_TICKERS,
     fetch_hist=fetch_history,
+    min_ruedas: int = MIN_RUEDAS,
 ):
     """Descarga los historicos del panel lider Merval (lista curada, ver
     PANEL_LIDER_TICKERS mas arriba) y arma los precios actuales.
 
-    tickers/fetch_hist son inyectables (default = la lista real / la
-    funcion real de src.data) para poder testear sin mockear el modulo --
-    se les pasa un fake directo.
+    Descarta (sin tirar excepcion) cualquier ticker con menos de
+    min_ruedas de historial: no llega a ajustar GARCH y ademas achica
+    fechas_comunes en MatrizDeCovarianza para el resto de los tickers.
+    Se corta aca, antes de que nada mas lo vea.
     """
-    historiales = {ticker: fetch_hist(ticker, settings.history_days) for ticker in tickers}
+    historiales = {}
+    tickers_excluidos: dict[str, str] = {}
+    for ticker in tickers:
+        df = fetch_hist(ticker, settings.history_days)
+        rango = f"{df.index[0].date()} -> {df.index[-1].date()}" if not df.empty else "vacio"
+        if len(df) < min_ruedas:
+            motivo = f"{len(df)} ruedas, minimo {min_ruedas}"
+            tickers_excluidos[ticker] = motivo
+            continue
+        historiales[ticker] = df
+
+    if not historiales:
+        raise ValueError("ningun ticker llego al minimo de ruedas requerido")
+
+    tickers_validos = [t for t in tickers if t not in tickers_excluidos]
     precios_actuales = obtener_precios_actuales(historiales)
-    return tickers, historiales, precios_actuales
+    return tickers_validos, historiales, precios_actuales
 
 
 def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, float]:
@@ -168,7 +169,7 @@ def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
     confidence del modelo; es el default estandar de la literatura antes de
     calibrar con eso.
     """
-    varianzas = np.diag(sigma)  # Sigma_ii de cada ticker, en el mismo orden
+    varianzas = np.diag(sigma)
     return np.diag(tau * varianzas)
 
 
