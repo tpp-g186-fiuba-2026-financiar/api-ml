@@ -16,7 +16,57 @@ ALFA_CONSERVADOR = 0.75
 ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
 
+# ALFA_* (0.25-0.75) funciona bien como delta de mercado en get_pi(), donde
+# Pi = delta * Sigma @ w_ancla -- ahi Pi queda en la misma escala que mu
+# porque los dos lados de esa cuenta usan Sigma. Pero optimizar_pesos()
+# resuelve mu.w - (delta/2) * w'.Sigma.w, y ahi mu (retornos esperados,
+# ~1e-2) y Sigma (varianzas de retornos diarios, ~1e-4) NO estan en la
+# misma escala relativa: con delta=0.25-0.75 el termino de riesgo queda
+# ordenes de magnitud mas chico que el de retorno, y el optimizador termina
+# concentrando todo en el ticker de mayor mu (solucion de esquina), no
+# porque el solver falle sino porque el objetivo, tal como queda planteado,
+# casi no penaliza el riesgo.
+#
+# ESCALA_DELTA_OPTIMIZADOR reescala ALFA_* para que el termino de riesgo
+# vuelva a competir. OJO: el valor correcto depende de la correlacion entre
+# tickers, no solo de mu/Sigma_ii -- con tickers muy correlacionados (varios
+# bancos del panel lider) probado empiricamente con datos sinteticos
+# representativos, hicieron falta valores de delta del orden de 1e3-1e4
+# para dejar de dar soluciones de esquina, no ~200 como una cuenta ingenua
+# de mu_tipico/Sigma_ii_tipico sugeriria. 1000 es un punto de partida
+# razonable, pero HAY QUE recalibrar corriendo optimizar_pesos con mu/Sigma
+# reales de una corrida (ver script de calibracion) antes de confiar en
+# este numero solo -- por eso PESO_MAXIMO_POR_TICKER es la salvaguarda que
+# de verdad garantiza diversificacion, independientemente de que este bien
+# calibrado o no.
+ESCALA_DELTA_OPTIMIZADOR = 1000.0
+
+# Techo de concentracion por ticker en la cartera final: ningun activo
+# puede pesar mas que esto, mas alla de que delta este bien calibrado.
+# Esta es la salvaguarda que efectivamente evita la solucion de esquina
+# aunque ESCALA_DELTA_OPTIMIZADOR este mal calibrada -- ver comentario de
+# arriba.
+PESO_MAXIMO_POR_TICKER = 0.20
+
+# Minimo de ruedas de historial para que un ticker entre a la corrida.
+# Mismo valor que MIN_ROWS en garch_volatility.py: un ticker con menos
+# ruedas que esto no llega a ajustar GARCH (NotEnoughDataError) y ademas
+# distorsiona las fechas comunes de MatrizDeCovarianza para TODOS los
+# demas tickers. Se filtra aca, antes de que nada lo vea, en vez de dejar
+# que explote mas abajo.
 MIN_RUEDAS = 60
+
+# Universo de Black-Litterman: panel lider del Merval, nada mas. Reemplaza
+# al blocklist TICKERS_NO_INVERTIBLES (que solo tapaba GOLD/OIL) por un
+# allowlist fijo, porque el problema no es solo GOLD/OIL: fetch_available_tickers()
+# trae TODO lo que cachea data-colector (lider panel + CEDEARs + commodities
+# + ETFs, sin distinguir mercado -- ver docstring de esa funcion en
+# src/data.py), y cualquier CEDEAR recien listado con poca historia (ej.
+# YPFDD, 17 ruedas) tira abajo el forecast GARCH de TODA la corrida
+# (NotEnoughDataError), no solo la de ese ticker. Ir agregando nombres a un
+# blocklist a mano cada vez que aparece uno asi no escala; con un allowlist
+# fijo el universo queda controlado de una. Si el panel lider cambia,
+# actualizar esta lista a mano.
 PANEL_LIDER_TICKERS: list[str] = [
     "ALUA",
     "BBAR",
@@ -53,10 +103,15 @@ def entry(
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
     if garch_model is not None:
+        # Reemplaza la diagonal (varianzas) por el forecast GARCH a un dia,
+        # manteniendo la correlacion muestral. Afecta por igual a Pi,
+        # Omega y bl_sigma porque los tres se calculan a partir de esta
+        # misma matriz.
         matriz_de_covarianza.matriz = matriz_de_covarianza.matriz_garch(
             precios_historicos, garch_model
         )
     q = get_predicciones(tickers, predict_function)
+    print(f"Predicciones: {q}")
     omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
     return tickers, bl.predecir()
@@ -101,7 +156,23 @@ class BlackLittermanPrediction:
         return self.matriz_de_covarianza.matriz + inv(self._inv_tau_sigma() + inv(self.omega))
 
     def predecir(self):
-        return optimizar_pesos(self.bl_mu(), self.bl_sigma(), self.perfil_de_riesgo)
+        delta_optimizador = self.perfil_de_riesgo * ESCALA_DELTA_OPTIMIZADOR
+        n = len(self.q)
+        # Si PESO_MAXIMO_POR_TICKER * n < 1 (universo chico, ej. tras
+        # filtrar tickers con pocas ruedas en get_data), el cap fijo es
+        # inviable. OJO: relajar a exactamente 1/n (como hacia antes) NO
+        # sirve -- con cap*n == 1 la unica solucion factible es w = [1/n]*n,
+        # es decir fuerza pesos iguales a la fuerza sin importar mu/Sigma,
+        # dejando al optimizador sin ningun grado de libertad (regresion
+        # detectada por test_con_garch_model_no_explota_y_cambia_el_resultado,
+        # que esperaba que GARCH pudiera diferenciar pesos incluso con
+        # pocos tickers). Se usa 2/n en cambio: deja cap*n == 2, con margen
+        # real para que el optimizador siga pudiendo concentrar mas en el
+        # activo mas favorecido, solo que sin llegar a una esquina absoluta.
+        peso_maximo_efectivo = max(PESO_MAXIMO_POR_TICKER, 2.0 / n)
+        return optimizar_pesos(
+            self.bl_mu(), self.bl_sigma(), delta_optimizador, peso_maximo=peso_maximo_efectivo
+        )
 
 
 def get_data(
@@ -116,13 +187,28 @@ def get_data(
     min_ruedas de historial: no llega a ajustar GARCH y ademas achica
     fechas_comunes en MatrizDeCovarianza para el resto de los tickers.
     Se corta aca, antes de que nada mas lo vea.
+
+    tickers/fetch_hist son inyectables (default = la lista real / la
+    funcion real de src.data) para poder testear sin mockear el modulo --
+    se les pasa un fake directo.
+
+    Devuelve (tickers_validos, historiales, precios_actuales, tickers_excluidos),
+    donde tickers_excluidos es un dict {ticker: motivo} para poder
+    reportarlo en el endpoint.
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
     for ticker in tickers:
         df = fetch_hist(ticker, settings.history_days)
+        # Log de cada historial tal como llega en ESTA corrida real (no un
+        # diagnostico aparte): si algo explota mas abajo por pocas ruedas,
+        # esto deja la foto exacta -- ticker, cantidad y rango de fechas --
+        # en el mismo log del pedido que fallo.
+        rango = f"{df.index[0].date()} -> {df.index[-1].date()}" if not df.empty else "vacio"
+        print(f"  [historial] {ticker}: {len(df)} ruedas ({rango})")
         if len(df) < min_ruedas:
             motivo = f"{len(df)} ruedas, minimo {min_ruedas}"
+            print(f"  [historial] {ticker}: excluido ({motivo})")
             tickers_excluidos[ticker] = motivo
             continue
         historiales[ticker] = df
@@ -168,7 +254,7 @@ def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
     confidence del modelo; es el default estandar de la literatura antes de
     calibrar con eso.
     """
-    varianzas = np.diag(sigma)
+    varianzas = np.diag(sigma)  # Sigma_ii de cada ticker, en el mismo orden
     return np.diag(tau * varianzas)
 
 
