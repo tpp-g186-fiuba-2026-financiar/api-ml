@@ -2,10 +2,10 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import fake_ohlcv, make_predict_function
+from conftest import make_predict_function
 
 from src.black_litterman.black_litterman import (
-    TICKERS_NO_INVERTIBLES,
+    MIN_RUEDAS,
     BlackLittermanPrediction,
     Prediccion,
     construir_omega_tradicional,
@@ -142,44 +142,87 @@ class TestConstruirOmegaTradicional:
 
 
 # --------------------------------------------------------------------------- #
-# get_data: filtro de GOLD/OIL + inyeccion de fetch
+# get_data: filtro por MIN_RUEDAS + inyeccion de fetch
 # --------------------------------------------------------------------------- #
-class TestGetDataFiltraNoInvertibles:
-    def test_excluye_gold_y_oil(self, historiales_3_tickers):
+def _fake_historial(rows: int, base: float = 100.0):
+    """DataFrame OHLCV minimo con `rows` ruedas, para forzar el caso de
+    historial insuficiente (ej. ECOG con 17 ruedas) sin depender de
+    parametros de fake_ohlcv que no sabemos si soporta largo variable.
+    """
+    import pandas as pd
+
+    idx = pd.date_range("2025-01-01", periods=rows, freq="D")
+    closes = [base + i for i in range(rows)]
+    return pd.DataFrame(
+        {
+            "open": closes,
+            "high": closes,
+            "low": closes,
+            "close": closes,
+            "volume": [1000] * rows,
+        },
+        index=idx,
+    )
+
+
+class TestGetDataFiltraPorMinimoDeRuedas:
+    def test_excluye_ticker_con_pocas_ruedas(self, historiales_3_tickers):
         historiales_completos = {
             **historiales_3_tickers,
-            "GOLD": fake_ohlcv(seed=10, base=1900.0),
-            "OIL": fake_ohlcv(seed=11, base=70.0),
+            "ECOG": _fake_historial(rows=17),
         }
-
-        def fetch_tickers():
-            return list(historiales_completos.keys())
 
         def fetch_hist(ticker, days=None):
             return historiales_completos[ticker]
 
-        tickers, historiales, precios = get_data(fetch_tickers, fetch_hist)
+        tickers = [*historiales_3_tickers.keys(), "ECOG"]
+        tickers_validos, historiales, precios = get_data(tickers, fetch_hist)
 
-        assert "GOLD" not in tickers
-        assert "OIL" not in tickers
-        assert "GOLD" not in historiales
-        assert "OIL" not in precios
-        assert set(tickers) == set(historiales_3_tickers.keys())
+        assert "ECOG" not in tickers_validos
+        assert "ECOG" not in historiales
+        assert "ECOG" not in precios
+        assert set(tickers_validos) == set(historiales_3_tickers.keys())
 
-    def test_no_filtra_acciones_normales(self, historiales_3_tickers):
-        def fetch_tickers():
-            return list(historiales_3_tickers.keys())
-
+    def test_no_filtra_acciones_con_historial_suficiente(self, historiales_3_tickers):
         def fetch_hist(ticker, days=None):
             return historiales_3_tickers[ticker]
 
-        tickers, _, _ = get_data(fetch_tickers, fetch_hist)
-        assert set(tickers) == set(historiales_3_tickers.keys())
+        tickers = list(historiales_3_tickers.keys())
+        tickers_validos, _, _ = get_data(tickers, fetch_hist)
 
-    def test_constante_de_exclusion_contiene_gold_y_oil(self):
-        # Test de "documentacion viva": si algun dia cambia la constante,
-        # este test avisa que hay que revisar el resto de la bateria.
-        assert TICKERS_NO_INVERTIBLES == frozenset({"GOLD", "OIL"})
+        assert set(tickers_validos) == set(historiales_3_tickers.keys())
+
+    def test_respeta_min_ruedas_pasado_por_parametro(self, historiales_3_tickers):
+        # Con un min_ruedas mas laxo que el default, un historial que antes
+        # se excluia ahora deberia entrar.
+        historiales_completos = {
+            **historiales_3_tickers,
+            "ECOG": _fake_historial(rows=17),
+        }
+
+        def fetch_hist(ticker, days=None):
+            return historiales_completos[ticker]
+
+        tickers = [*historiales_3_tickers.keys(), "ECOG"]
+        tickers_validos, _, _ = get_data(tickers, fetch_hist, min_ruedas=10)
+
+        assert "ECOG" in tickers_validos
+
+    def test_todos_los_tickers_insuficientes_lanza_error(self):
+        def fetch_hist(ticker, days=None):
+            return _fake_historial(rows=5)
+
+        with pytest.raises(ValueError, match="minimo de ruedas"):
+            get_data(["GGAL", "YPFD"], fetch_hist)
+
+    def test_constante_min_ruedas_coincide_con_garch(self):
+        # Test de "documentacion viva": MIN_RUEDAS tiene que ir en linea con
+        # MIN_ROWS de garch_volatility.py -- si se desincronizan, un ticker
+        # puede pasar el filtro de get_data y de todos modos explotarle a
+        # GARCH mas abajo (o al reves, excluirse de mas).
+        from src.garch_volatility import MIN_ROWS
+
+        assert MIN_RUEDAS == MIN_ROWS
 
 
 # --------------------------------------------------------------------------- #
@@ -295,21 +338,19 @@ class TestPredecir:
 # entry(): integracion de punta a punta
 # --------------------------------------------------------------------------- #
 class TestEntryEndToEnd:
-    def _fetchers(self, historiales):
-        def fetch_tickers():
-            return list(historiales.keys())
-
+    def _fetch_hist(self, historiales):
         def fetch_hist(ticker, days=None):
             return historiales[ticker]
 
-        return fetch_tickers, fetch_hist
+        return fetch_hist
 
     def test_devuelve_tickers_y_pesos_validos(self, usuario_con_cartera, historiales_3_tickers):
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01, "PAMP": 0.0})
 
         tickers, pesos = entry(
-            usuario_con_cartera, predict, fetch_tickers=fetch_tickers, fetch_hist=fetch_hist
+            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
         )
 
         assert set(tickers) == set(historiales_3_tickers.keys())
@@ -318,38 +359,42 @@ class TestEntryEndToEnd:
         assert np.all(pesos >= -1e-8)
         assert np.all(pesos <= 1.0 + 1e-8)
 
-    def test_excluye_gold_oil_del_resultado_final(self, usuario_con_cartera, historiales_3_tickers):
+    def test_excluye_ticker_con_pocas_ruedas_del_resultado_final(
+        self, usuario_con_cartera, historiales_3_tickers
+    ):
         historiales_completos = {
             **historiales_3_tickers,
-            "GOLD": fake_ohlcv(seed=10, base=1900.0),
-            "OIL": fake_ohlcv(seed=11, base=70.0),
+            "ECOG": _fake_historial(rows=17),
         }
-        fetch_tickers, fetch_hist = self._fetchers(historiales_completos)
+        fetch_hist = self._fetch_hist(historiales_completos)
+        tickers_in = [*historiales_3_tickers.keys(), "ECOG"]
         predict = make_predict_function({})  # todas las vistas neutras (0%)
 
         tickers, pesos = entry(
-            usuario_con_cartera, predict, fetch_tickers=fetch_tickers, fetch_hist=fetch_hist
+            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
         )
 
-        assert "GOLD" not in tickers
-        assert "OIL" not in tickers
+        assert "ECOG" not in tickers
+        assert len(pesos) == len(tickers)
 
     def test_usuario_sin_cartera_no_explota(self, usuario_sin_cartera, historiales_3_tickers):
         # Con la cartera ancla cayendo a EQUAL_WEIGHT por default, un
         # usuario nuevo (sin tenencias) tiene que poder recibir una
         # recomendacion igual, no un error.
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.03})
 
         tickers, pesos = entry(
-            usuario_sin_cartera, predict, fetch_tickers=fetch_tickers, fetch_hist=fetch_hist
+            usuario_sin_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
         )
         assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
 
     def test_tipo_cartera_ancla_explicito_se_respeta(
         self, usuario_con_cartera, historiales_3_tickers
     ):
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({})
 
         # Fuerzo EQUAL_WEIGHT aunque el usuario tenga cartera propia -- no
@@ -358,7 +403,7 @@ class TestEntryEndToEnd:
             usuario_con_cartera,
             predict,
             tipo_cartera_ancla=TipoCarteraAncla.EQUAL_WEIGHT,
-            fetch_tickers=fetch_tickers,
+            tickers=tickers_in,
             fetch_hist=fetch_hist,
         )
         assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
@@ -366,7 +411,8 @@ class TestEntryEndToEnd:
     def test_con_garch_model_no_explota_y_cambia_el_resultado(
         self, usuario_con_cartera, historiales_3_tickers
     ):
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.02, "YPFD": 0.019})
 
         # Variazas MUY distintas entre si (no un unico valor uniforme) para
@@ -387,13 +433,13 @@ class TestEntryEndToEnd:
                 return variancias_garch["PAMP"]
 
         _, pesos_sin_garch = entry(
-            usuario_con_cartera, predict, fetch_tickers=fetch_tickers, fetch_hist=fetch_hist
+            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
         )
         _, pesos_con_garch = entry(
             usuario_con_cartera,
             predict,
             garch_model=FakeGarch(),
-            fetch_tickers=fetch_tickers,
+            tickers=tickers_in,
             fetch_hist=fetch_hist,
         )
 
@@ -406,7 +452,8 @@ class TestEntryEndToEnd:
         # Chequeo mas directo/estructural: la matriz que termina usando
         # BlackLittermanPrediction tiene que tener la diagonal GARCH, no la
         # muestral -- sin depender de si eso alcanza para cambiar w*.
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({})
 
         capturada = {}
@@ -430,7 +477,7 @@ class TestEntryEndToEnd:
                 usuario_con_cartera,
                 predict,
                 garch_model=FakeGarch(),
-                fetch_tickers=fetch_tickers,
+                tickers=tickers_in,
                 fetch_hist=fetch_hist,
             )
         finally:
@@ -442,7 +489,8 @@ class TestEntryEndToEnd:
         # No siempre van a diferir (depende de mu/Sigma), pero con una vista
         # fuerte y concentrada, mayor delta (conservador) deberia diversificar
         # al menos tanto como uno mas agresivo.
-        fetch_tickers, fetch_hist = self._fetchers(historiales_3_tickers)
+        fetch_hist = self._fetch_hist(historiales_3_tickers)
+        tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.15})
 
         resultados = {}
@@ -451,7 +499,7 @@ class TestEntryEndToEnd:
                 perfil_riesgo=perfil,
                 tenencias=[{"ticker": "GGAL", "cantidad": 10}, {"ticker": "YPFD", "cantidad": 10}],
             )
-            _, pesos = entry(usuario, predict, fetch_tickers=fetch_tickers, fetch_hist=fetch_hist)
+            _, pesos = entry(usuario, predict, tickers=tickers_in, fetch_hist=fetch_hist)
             resultados[perfil] = pesos
 
         concentracion_conservador = np.max(resultados[PerfilRiesgo.CONSERVADOR])
