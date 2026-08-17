@@ -1,5 +1,5 @@
 {
-  "updated_at": "2026-08-14T21:22:23Z",
+  "updated_at": "2026-08-17T21:24:01Z",
   "pending": [
     {
       "symbol": "METR",
@@ -209,28 +209,6 @@
       "last_close": 1667.0,
       "predicted_close": 1661.1199,
       "predicted_log_return": -0.003533590312278436
-    },
-    {
-      "symbol": "GOLD",
-      "model": "lstm",
-      "model_version": "lstm-20260716T233804Z",
-      "as_of": "2026-08-11",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4427.7998,
-      "predicted_close": 4461.7353,
-      "predicted_log_return": 0.007634969538359045
-    },
-    {
-      "symbol": "OIL",
-      "model": "lstm",
-      "model_version": "lstm-20260716T233804Z",
-      "as_of": "2026-08-11",
-      "signal": "baja",
-      "horizon_days": 5,
-      "last_close": 83.23,
-      "predicted_close": 82.1315,
-      "predicted_log_return": -0.013286238444446973
     },
     {
       "symbol": "BBAR",
@@ -453,28 +431,6 @@
       "predicted_log_return": 0.012453565159374498
     },
     {
-      "symbol": "GOLD",
-      "model": "xgboost",
-      "model_version": "xgb-20260716T233824Z",
-      "as_of": "2026-08-11",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4427.7998,
-      "predicted_close": 4465.1751,
-      "predicted_log_return": 0.008405628146122291
-    },
-    {
-      "symbol": "OIL",
-      "model": "xgboost",
-      "model_version": "xgb-20260716T233824Z",
-      "as_of": "2026-08-11",
-      "signal": "alza",
-      "horizon_days": 5,
-      "last_close": 83.23,
-      "predicted_close": 84.7975,
-      "predicted_log_return": 0.01865820147320107
-    },
-    {
       "symbol": "BBAR",
       "model": "xgboost",
       "model_version": "xgb-20260716T233824Z",
@@ -695,28 +651,6 @@
       "predicted_log_return": 0.014976788014628397
     },
     {
-      "symbol": "GOLD",
-      "model": "transformer",
-      "model_version": "transformer-20260716T233905Z",
-      "as_of": "2026-08-11",
-      "signal": "alza",
-      "horizon_days": 5,
-      "last_close": 4427.7998,
-      "predicted_close": 4573.7182,
-      "predicted_log_return": 0.03242368306895901
-    },
-    {
-      "symbol": "OIL",
-      "model": "transformer",
-      "model_version": "transformer-20260716T233905Z",
-      "as_of": "2026-08-11",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 83.23,
-      "predicted_close": 82.9298,
-      "predicted_log_return": -0.003613392970294428
-    },
-    {
       "symbol": "BBAR",
       "model": "transformer",
       "model_version": "transformer-20260716T233905Z",
@@ -935,28 +869,6 @@
       "last_close": 1667.0,
       "predicted_close": 1665.2528,
       "predicted_log_return": -0.0010486600297039482
-    },
-    {
-      "symbol": "GOLD",
-      "model": "arima",
-      "model_version": "arima-1-1-1",
-      "as_of": "2026-08-11",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 4427.7998,
-      "predicted_close": 4404.0733,
-      "predicted_log_return": -0.0053729388568672974
-    },
-    {
-      "symbol": "OIL",
-      "model": "arima",
-      "model_version": "arima-1-1-1",
-      "as_of": "2026-08-11",
-      "signal": "neutral",
-      "horizon_days": 5,
-      "last_close": 83.23,
-      "predicted_close": 82.8526,
-      "predicted_log_return": -0.004544734362146079
     },
     {
       "symbol": "BBAR",
@@ -4730,6 +4642,644 @@
       "last_close": 2072.0,
       "predicted_close": 2068.1228,
       "predicted_log_return": -0.00187298846955088
+    },
+    {
+      "symbol": "ARKKD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 8.4,
+      "predicted_close": 8.3333,
+      "predicted_log_return": -0.007972169657177036
+    },
+    {
+      "symbol": "AIGD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 16.06,
+      "predicted_close": 16.4841,
+      "predicted_log_return": 0.026064571428270712
+    },
+    {
+      "symbol": "ABEVD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 8.64,
+      "predicted_close": 8.7261,
+      "predicted_log_return": 0.009915951824372373
+    },
+    {
+      "symbol": "ABNBD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 12.73,
+      "predicted_close": 12.27,
+      "predicted_log_return": -0.03680415384649516
+    },
+    {
+      "symbol": "BAD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9.96,
+      "predicted_close": 10.0383,
+      "predicted_log_return": 0.007830705621204404
+    },
+    {
+      "symbol": "AI",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 3100.0,
+      "predicted_close": 3018.9159,
+      "predicted_log_return": -0.026504318060670013
+    },
+    {
+      "symbol": "ALUAD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 0.589,
+      "predicted_close": 0.5907,
+      "predicted_log_return": 0.002882090661602858
+    },
+    {
+      "symbol": "AEMD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 32.24,
+      "predicted_close": 31.3191,
+      "predicted_log_return": -0.02897978256088533
+    },
+    {
+      "symbol": "AAPLD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 15.93,
+      "predicted_close": 15.8674,
+      "predicted_log_return": -0.003937433933338933
+    },
+    {
+      "symbol": "GOLD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-17",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4473.1001,
+      "predicted_close": 4515.0754,
+      "predicted_log_return": 0.009340183701708861
+    },
+    {
+      "symbol": "OIL",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-17",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 84.95,
+      "predicted_close": 84.1519,
+      "predicted_log_return": -0.009439349007560697
+    },
+    {
+      "symbol": "ABBVD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 26.03,
+      "predicted_close": 25.9013,
+      "predicted_log_return": -0.004956558510418019
+    },
+    {
+      "symbol": "ADID",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 26.78,
+      "predicted_close": 26.8507,
+      "predicted_log_return": 0.0026365511155117204
+    },
+    {
+      "symbol": "BBAS3",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 2752.5,
+      "predicted_close": 2779.9855,
+      "predicted_log_return": 0.009936122246907047
+    },
+    {
+      "symbol": "AEG",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14810.0,
+      "predicted_close": 14741.2524,
+      "predicted_log_return": -0.004652779049232289
+    },
+    {
+      "symbol": "ACWI",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9835.0,
+      "predicted_close": 9750.407,
+      "predicted_log_return": -0.008638424112762414
+    },
+    {
+      "symbol": "ABTD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 28.77,
+      "predicted_close": 29.6792,
+      "predicted_log_return": 0.031113286194555296
+    },
+    {
+      "symbol": "ABNBD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 12.73,
+      "predicted_close": 13.1173,
+      "predicted_log_return": 0.02997055708548124
+    },
+    {
+      "symbol": "BIIBD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 16.82,
+      "predicted_close": 16.2469,
+      "predicted_log_return": -0.034666533198588985
+    },
+    {
+      "symbol": "BAD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 9.96,
+      "predicted_close": 10.0778,
+      "predicted_log_return": 0.011757913257598179
+    },
+    {
+      "symbol": "AI",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3100.0,
+      "predicted_close": 3200.8853,
+      "predicted_log_return": 0.03202531630229686
+    },
+    {
+      "symbol": "AEMD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 32.24,
+      "predicted_close": 32.5346,
+      "predicted_log_return": 0.00909622078081373
+    },
+    {
+      "symbol": "AALD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 7.73,
+      "predicted_close": 8.1797,
+      "predicted_log_return": 0.056546612526161576
+    },
+    {
+      "symbol": "GOLD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-17",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4473.1001,
+      "predicted_close": 4523.6037,
+      "predicted_log_return": 0.011227252030264128
+    },
+    {
+      "symbol": "OIL",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-17",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 84.95,
+      "predicted_close": 85.8346,
+      "predicted_log_return": 0.010359340490405718
+    },
+    {
+      "symbol": "ABBVD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 26.03,
+      "predicted_close": 25.9782,
+      "predicted_log_return": -0.001991994228937372
+    },
+    {
+      "symbol": "BBAS3",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2752.5,
+      "predicted_close": 2862.0554,
+      "predicted_log_return": 0.03903044842515708
+    },
+    {
+      "symbol": "AEG",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 14810.0,
+      "predicted_close": 15178.526,
+      "predicted_log_return": 0.024579037523850135
+    },
+    {
+      "symbol": "ADBED",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 6.23,
+      "predicted_close": 6.4097,
+      "predicted_log_return": 0.028436135165900045
+    },
+    {
+      "symbol": "ECOG",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2820.0,
+      "predicted_close": 2876.4963,
+      "predicted_log_return": 0.01983610608494525
+    },
+    {
+      "symbol": "AIGD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 16.06,
+      "predicted_close": 16.3678,
+      "predicted_log_return": 0.018984281652171153
+    },
+    {
+      "symbol": "BAD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 9.96,
+      "predicted_close": 10.2136,
+      "predicted_log_return": 0.025143093927496956
+    },
+    {
+      "symbol": "ADGOD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 9.29,
+      "predicted_close": 9.4774,
+      "predicted_log_return": 0.019971464221216255
+    },
+    {
+      "symbol": "AI",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 3100.0,
+      "predicted_close": 3131.5836,
+      "predicted_log_return": 0.010136707607225032
+    },
+    {
+      "symbol": "A3D",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2.02,
+      "predicted_close": 2.0641,
+      "predicted_log_return": 0.021596784644961356
+    },
+    {
+      "symbol": "AAPLD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 15.93,
+      "predicted_close": 15.9966,
+      "predicted_log_return": 0.004172075736500122
+    },
+    {
+      "symbol": "ABNB",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 19270.0,
+      "predicted_close": 19389.8763,
+      "predicted_log_return": 0.006201607230834254
+    },
+    {
+      "symbol": "AMGND",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 14.4,
+      "predicted_close": 14.6351,
+      "predicted_log_return": 0.01619454647329536
+    },
+    {
+      "symbol": "GOLD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-17",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4473.1001,
+      "predicted_close": 4602.5671,
+      "predicted_log_return": 0.02853251013490087
+    },
+    {
+      "symbol": "OIL",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-17",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 84.95,
+      "predicted_close": 84.6589,
+      "predicted_log_return": -0.003432606258641918
+    },
+    {
+      "symbol": "ABBVD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 26.03,
+      "predicted_close": 26.2841,
+      "predicted_log_return": 0.009714474617861832
+    },
+    {
+      "symbol": "ADID",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 26.78,
+      "predicted_close": 26.8904,
+      "predicted_log_return": 0.004114005325479936
+    },
+    {
+      "symbol": "BBAS3",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2752.5,
+      "predicted_close": 2805.3485,
+      "predicted_log_return": 0.019018184066753336
+    },
+    {
+      "symbol": "AEG",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 14810.0,
+      "predicted_close": 14977.7631,
+      "predicted_log_return": 0.011264012891473385
+    },
+    {
+      "symbol": "ECOG",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2820.0,
+      "predicted_close": 2885.5207,
+      "predicted_log_return": 0.022968483993165013
+    },
+    {
+      "symbol": "ARKKD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 8.4,
+      "predicted_close": 8.4235,
+      "predicted_log_return": 0.0027937129948538337
+    },
+    {
+      "symbol": "AIGD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 16.06,
+      "predicted_close": 16.0496,
+      "predicted_log_return": -0.0006477813715317915
+    },
+    {
+      "symbol": "ABEVD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 8.64,
+      "predicted_close": 8.7059,
+      "predicted_log_return": 0.007598373916907238
+    },
+    {
+      "symbol": "BIIBD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 16.82,
+      "predicted_close": 16.7045,
+      "predicted_log_return": -0.0068905103423640935
+    },
+    {
+      "symbol": "BAD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 9.96,
+      "predicted_close": 9.9553,
+      "predicted_log_return": -0.0004719989241697217
+    },
+    {
+      "symbol": "AAPLD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 15.93,
+      "predicted_close": 15.9303,
+      "predicted_log_return": 1.88322143865897e-05
+    },
+    {
+      "symbol": "ABNB",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 19270.0,
+      "predicted_close": 19307.7463,
+      "predicted_log_return": 0.001956895654404692
+    },
+    {
+      "symbol": "AMGND",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14.4,
+      "predicted_close": 14.2797,
+      "predicted_log_return": -0.008389258294557545
+    },
+    {
+      "symbol": "GOLD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-17",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4473.1001,
+      "predicted_close": 4457.2917,
+      "predicted_log_return": -0.0035403634837385275
+    },
+    {
+      "symbol": "OIL",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-17",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 84.95,
+      "predicted_close": 84.5012,
+      "predicted_log_return": -0.005297112672216829
+    },
+    {
+      "symbol": "BBAS3",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 2752.5,
+      "predicted_close": 2933.8218,
+      "predicted_log_return": 0.06379635206525554
+    },
+    {
+      "symbol": "AEG",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 14810.0,
+      "predicted_close": 14809.4706,
+      "predicted_log_return": -3.574675639581693e-05
+    },
+    {
+      "symbol": "ADBED",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-14",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 6.23,
+      "predicted_close": 6.2462,
+      "predicted_log_return": 0.002596946041995641
     }
   ],
   "resolved": [
@@ -20524,18 +21074,130 @@
       "realized_close": 6850.0,
       "realized_log_return": -0.07181128046665089,
       "resolved_at": "2026-08-14"
+    },
+    {
+      "symbol": "GOLD",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-11",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4427.7998,
+      "predicted_close": 4461.7353,
+      "predicted_log_return": 0.007634969538359045,
+      "realized_close": 4473.10009765625,
+      "realized_log_return": 0.010178900854262783,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "OIL",
+      "model": "lstm",
+      "model_version": "lstm-20260716T233804Z",
+      "as_of": "2026-08-11",
+      "signal": "baja",
+      "horizon_days": 5,
+      "last_close": 83.23,
+      "predicted_close": 82.1315,
+      "predicted_log_return": -0.013286238444446973,
+      "realized_close": 84.94999694824219,
+      "realized_log_return": 0.02045495243577171,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "GOLD",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-11",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4427.7998,
+      "predicted_close": 4465.1751,
+      "predicted_log_return": 0.008405628146122291,
+      "realized_close": 4473.10009765625,
+      "realized_log_return": 0.010178900854262783,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "OIL",
+      "model": "xgboost",
+      "model_version": "xgb-20260716T233824Z",
+      "as_of": "2026-08-11",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 83.23,
+      "predicted_close": 84.7975,
+      "predicted_log_return": 0.01865820147320107,
+      "realized_close": 84.94999694824219,
+      "realized_log_return": 0.02045495243577171,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "GOLD",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-11",
+      "signal": "alza",
+      "horizon_days": 5,
+      "last_close": 4427.7998,
+      "predicted_close": 4573.7182,
+      "predicted_log_return": 0.03242368306895901,
+      "realized_close": 4473.10009765625,
+      "realized_log_return": 0.010178900854262783,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "OIL",
+      "model": "transformer",
+      "model_version": "transformer-20260716T233905Z",
+      "as_of": "2026-08-11",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 83.23,
+      "predicted_close": 82.9298,
+      "predicted_log_return": -0.003613392970294428,
+      "realized_close": 84.94999694824219,
+      "realized_log_return": 0.02045495243577171,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "GOLD",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-11",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 4427.7998,
+      "predicted_close": 4404.0733,
+      "predicted_log_return": -0.0053729388568672974,
+      "realized_close": 4473.10009765625,
+      "realized_log_return": 0.010178900854262783,
+      "resolved_at": "2026-08-17"
+    },
+    {
+      "symbol": "OIL",
+      "model": "arima",
+      "model_version": "arima-1-1-1",
+      "as_of": "2026-08-11",
+      "signal": "neutral",
+      "horizon_days": 5,
+      "last_close": 83.23,
+      "predicted_close": 82.8526,
+      "predicted_log_return": -0.004544734362146079,
+      "realized_close": 84.94999694824219,
+      "realized_log_return": 0.02045495243577171,
+      "resolved_at": "2026-08-17"
     }
   ],
   "summary": {
     "arima": {
       "overall": {
-        "n_predictions": 282,
-        "mae_logret": 0.073953,
-        "rmse_logret": 0.282435,
-        "directional_accuracy": 0.5496,
-        "neutral_rate": 0.9858,
-        "avg_strategy_logret": 0.001229,
-        "avg_buy_hold_logret": -0.056112,
+        "n_predictions": 284,
+        "mae_logret": 0.073575,
+        "rmse_logret": 0.281444,
+        "directional_accuracy": 0.5458,
+        "neutral_rate": 0.9859,
+        "avg_strategy_logret": 0.00122,
+        "avg_buy_hold_logret": -0.055609,
         "signal_hit_rate": 1.0
       },
       "per_ticker": {
@@ -20640,13 +21302,13 @@
           "signal_hit_rate": null
         },
         "GOLD": {
-          "n_predictions": 11,
-          "mae_logret": 0.033105,
-          "rmse_logret": 0.040677,
-          "directional_accuracy": 0.2727,
+          "n_predictions": 12,
+          "mae_logret": 0.031642,
+          "rmse_logret": 0.039204,
+          "directional_accuracy": 0.25,
           "neutral_rate": 1.0,
           "avg_strategy_logret": 0.0,
-          "avg_buy_hold_logret": 0.030209,
+          "avg_buy_hold_logret": 0.02854,
           "signal_hit_rate": null
         },
         "LOMA": {
@@ -20670,13 +21332,13 @@
           "signal_hit_rate": null
         },
         "OIL": {
-          "n_predictions": 11,
-          "mae_logret": 0.066031,
-          "rmse_logret": 0.07605,
-          "directional_accuracy": 0.8182,
-          "neutral_rate": 0.8182,
-          "avg_strategy_logret": 0.0178,
-          "avg_buy_hold_logret": -0.014219,
+          "n_predictions": 12,
+          "mae_logret": 0.062612,
+          "rmse_logret": 0.073169,
+          "directional_accuracy": 0.75,
+          "neutral_rate": 0.8333,
+          "avg_strategy_logret": 0.016317,
+          "avg_buy_hold_logret": -0.01133,
           "signal_hit_rate": 1.0
         },
         "PAMP": {
@@ -20763,14 +21425,14 @@
     },
     "lstm": {
       "overall": {
-        "n_predictions": 282,
-        "mae_logret": 0.074463,
-        "rmse_logret": 0.281777,
-        "directional_accuracy": 0.4858,
-        "neutral_rate": 0.7908,
-        "avg_strategy_logret": 0.010072,
-        "avg_buy_hold_logret": -0.056121,
-        "signal_hit_rate": 0.5254
+        "n_predictions": 284,
+        "mae_logret": 0.074066,
+        "rmse_logret": 0.28079,
+        "directional_accuracy": 0.4859,
+        "neutral_rate": 0.7887,
+        "avg_strategy_logret": 0.009929,
+        "avg_buy_hold_logret": -0.055618,
+        "signal_hit_rate": 0.5167
       },
       "per_ticker": {
         "ALUA": {
@@ -20874,13 +21536,13 @@
           "signal_hit_rate": 0.6667
         },
         "GOLD": {
-          "n_predictions": 11,
-          "mae_logret": 0.023884,
-          "rmse_logret": 0.029976,
-          "directional_accuracy": 0.9091,
-          "neutral_rate": 0.1818,
-          "avg_strategy_logret": 0.027401,
-          "avg_buy_hold_logret": 0.030143,
+          "n_predictions": 12,
+          "mae_logret": 0.022105,
+          "rmse_logret": 0.02871,
+          "directional_accuracy": 0.9167,
+          "neutral_rate": 0.25,
+          "avg_strategy_logret": 0.025117,
+          "avg_buy_hold_logret": 0.028479,
           "signal_hit_rate": 1.0
         },
         "LOMA": {
@@ -20904,14 +21566,14 @@
           "signal_hit_rate": 0.5
         },
         "OIL": {
-          "n_predictions": 11,
-          "mae_logret": 0.070265,
-          "rmse_logret": 0.076978,
-          "directional_accuracy": 0.4545,
-          "neutral_rate": 0.4545,
-          "avg_strategy_logret": 0.022005,
-          "avg_buy_hold_logret": -0.014391,
-          "signal_hit_rate": 0.5
+          "n_predictions": 12,
+          "mae_logret": 0.067221,
+          "rmse_logret": 0.074341,
+          "directional_accuracy": 0.4167,
+          "neutral_rate": 0.4167,
+          "avg_strategy_logret": 0.018466,
+          "avg_buy_hold_logret": -0.011487,
+          "signal_hit_rate": 0.4286
         },
         "PAMP": {
           "n_predictions": 13,
@@ -20997,14 +21659,14 @@
     },
     "transformer": {
       "overall": {
-        "n_predictions": 282,
-        "mae_logret": 0.077761,
-        "rmse_logret": 0.282838,
-        "directional_accuracy": 0.3865,
-        "neutral_rate": 0.6809,
-        "avg_strategy_logret": -0.003422,
-        "avg_buy_hold_logret": -0.05612,
-        "signal_hit_rate": 0.3333
+        "n_predictions": 284,
+        "mae_logret": 0.077377,
+        "rmse_logret": 0.281847,
+        "directional_accuracy": 0.3873,
+        "neutral_rate": 0.6796,
+        "avg_strategy_logret": -0.003362,
+        "avg_buy_hold_logret": -0.055616,
+        "signal_hit_rate": 0.3407
       },
       "per_ticker": {
         "ALUA": {
@@ -21108,14 +21770,14 @@
           "signal_hit_rate": null
         },
         "GOLD": {
-          "n_predictions": 11,
-          "mae_logret": 0.019709,
-          "rmse_logret": 0.023521,
-          "directional_accuracy": 0.9091,
+          "n_predictions": 12,
+          "mae_logret": 0.019921,
+          "rmse_logret": 0.023418,
+          "directional_accuracy": 0.9167,
           "neutral_rate": 0.0,
-          "avg_strategy_logret": 0.030165,
-          "avg_buy_hold_logret": 0.030165,
-          "signal_hit_rate": 0.9091
+          "avg_strategy_logret": 0.028499,
+          "avg_buy_hold_logret": 0.028499,
+          "signal_hit_rate": 0.9167
         },
         "LOMA": {
           "n_predictions": 13,
@@ -21138,13 +21800,13 @@
           "signal_hit_rate": 0.7778
         },
         "OIL": {
-          "n_predictions": 11,
-          "mae_logret": 0.070317,
-          "rmse_logret": 0.080774,
-          "directional_accuracy": 0.4545,
-          "neutral_rate": 0.6364,
-          "avg_strategy_logret": -0.001026,
-          "avg_buy_hold_logret": -0.014365,
+          "n_predictions": 12,
+          "mae_logret": 0.066463,
+          "rmse_logret": 0.077647,
+          "directional_accuracy": 0.4167,
+          "neutral_rate": 0.6667,
+          "avg_strategy_logret": -0.000941,
+          "avg_buy_hold_logret": -0.011463,
           "signal_hit_rate": 0.5
         },
         "PAMP": {
@@ -21231,14 +21893,14 @@
     },
     "xgboost": {
       "overall": {
-        "n_predictions": 282,
-        "mae_logret": 0.076749,
-        "rmse_logret": 0.284023,
-        "directional_accuracy": 0.422,
-        "neutral_rate": 0.6206,
-        "avg_strategy_logret": -0.022379,
-        "avg_buy_hold_logret": -0.05612,
-        "signal_hit_rate": 0.3364
+        "n_predictions": 284,
+        "mae_logret": 0.076221,
+        "rmse_logret": 0.283022,
+        "directional_accuracy": 0.4261,
+        "neutral_rate": 0.6197,
+        "avg_strategy_logret": -0.02215,
+        "avg_buy_hold_logret": -0.055617,
+        "signal_hit_rate": 0.3426
       },
       "per_ticker": {
         "ALUA": {
@@ -21342,13 +22004,13 @@
           "signal_hit_rate": 0.0
         },
         "GOLD": {
-          "n_predictions": 11,
-          "mae_logret": 0.022882,
-          "rmse_logret": 0.028882,
-          "directional_accuracy": 0.9091,
-          "neutral_rate": 0.1818,
-          "avg_strategy_logret": 0.024774,
-          "avg_buy_hold_logret": 0.030158,
+          "n_predictions": 12,
+          "mae_logret": 0.021123,
+          "rmse_logret": 0.027657,
+          "directional_accuracy": 0.9167,
+          "neutral_rate": 0.25,
+          "avg_strategy_logret": 0.02271,
+          "avg_buy_hold_logret": 0.028493,
           "signal_hit_rate": 0.8889
         },
         "LOMA": {
@@ -21372,14 +22034,14 @@
           "signal_hit_rate": 0.3333
         },
         "OIL": {
-          "n_predictions": 11,
-          "mae_logret": 0.060238,
-          "rmse_logret": 0.070069,
-          "directional_accuracy": 0.5455,
-          "neutral_rate": 0.3636,
-          "avg_strategy_logret": 0.030302,
-          "avg_buy_hold_logret": -0.01438,
-          "signal_hit_rate": 0.7143
+          "n_predictions": 12,
+          "mae_logret": 0.055368,
+          "rmse_logret": 0.067088,
+          "directional_accuracy": 0.5833,
+          "neutral_rate": 0.3333,
+          "avg_strategy_logret": 0.029482,
+          "avg_buy_hold_logret": -0.011477,
+          "signal_hit_rate": 0.75
         },
         "PAMP": {
           "n_predictions": 13,
