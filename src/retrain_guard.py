@@ -40,11 +40,17 @@ def pooled_directional_accuracy(
     horizon: int,
     backtest_days: int = BACKTEST_DAYS,
 ) -> dict:
-    """Accuracy direccional pooleada sobre todos los tickers de `histories`."""
+    """Accuracy direccional pooleada sobre todos los tickers de `histories`.
+
+    A diferencia del backtest que se muestra en vivo en el comparador (que
+    usa un `step` grande para no tardar dentro de un request HTTP), este gate
+    corre offline en el cron de reentrenamiento -- sin apuro por tiempo, usa
+    `step=1` (todos los dias) para una decision de promocion mas precisa.
+    """
     total_observations = 0
     total_correct = 0.0
     for df in histories.values():
-        result = backtest_predict_df(model, df, horizon, backtest_days)
+        result = backtest_predict_df(model, df, horizon, backtest_days, step=1)
         if result is None:
             continue
         total_observations += result["observations"]
