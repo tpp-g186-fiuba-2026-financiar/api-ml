@@ -19,6 +19,13 @@ from src.errors import ApiMlError
 from src.lstm import rsi
 
 BACKTEST_DAYS = 60
+# Cada cuantos dias mover el cutoff en `backtest_predict_df`. En vivo (dentro
+# de un request HTTP, a diferencia del `make backtest` offline) no podemos
+# pagar 60 forward-pass por modelo: en un dyno con CPU compartida (Render
+# free tier) eso paso de ~0.6s por modelo en local a timeout (>40s) en
+# produccion. step=5 deja 12 observaciones en vez de 60 -- mismo backtest_days
+# de cobertura, menos resolucion.
+BACKTEST_STEP = 5
 
 
 class _DfPredictor(Protocol):
@@ -77,12 +84,13 @@ def backtest_predict_df(
     df: pd.DataFrame,
     horizon: int,
     backtest_days: int = BACKTEST_DAYS,
+    step: int = BACKTEST_STEP,
 ) -> dict | None:
     """Backtest walk-forward generico para cualquier modelo con `predict_df`.
 
     Reusa el modelo ya entrenado (no reentrena en cada paso, igual que
-    `backtest_lstm`/`backtest_xgboost` en el repo `models`): para cada dia de
-    los ultimos `backtest_days`, predice con el historico disponible hasta
+    `backtest_lstm`/`backtest_xgboost` en el repo `models`): cada `step` dias
+    de los ultimos `backtest_days`, predice con el historico disponible hasta
     ese dia y compara contra lo que paso `horizon` dias despues. Devuelve
     `None` si no hay historia suficiente en vez de tirar, para que el
     comparador siga mostrando la prediccion aunque no pueda medir accuracy.
@@ -93,7 +101,7 @@ def backtest_predict_df(
     predicted_returns: list[float] = []
     actual_returns: list[float] = []
     series: list[dict] = []
-    for cutoff in range(split, len(df) - horizon):
+    for cutoff in range(split, len(df) - horizon, step):
         try:
             result = predictor.predict_df(df.iloc[: cutoff + 1])
         except ApiMlError:

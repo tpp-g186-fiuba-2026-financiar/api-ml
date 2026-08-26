@@ -202,6 +202,9 @@ class RemoteTrendService:
         return result
 
 
+_LIVE_BACKTEST_MODELS = {"lstm", "xgboost"}
+
+
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
@@ -280,12 +283,14 @@ class TrendRegistry:
                 continue
             try:
                 result = service.predict_on(df, symbol)
-                # Solo los modelos con artefacto pre-entrenado (lstm/xgboost/
-                # transformer) pueden backtestear barato: reusan el mismo
-                # modelo cargado. ARIMA local reajusta por-ticker en cada
-                # predict_df, asi que 60 pasos de walk-forward serian 60
-                # fits reales -- se deja sin backtest en vivo a proposito.
-                if isinstance(service, TrendService):
+                # Backtest en vivo solo para lstm/xgboost: son los que importa
+                # comparar (los mas fuertes) y ya así el comparador se puso al
+                # limite de timeout en el dyno de Render (CPU compartida) con
+                # los 3 -- transformer es el mas caro (self-attention) y el
+                # menos diferencial, se deja afuera del calculo en vivo.
+                # ARIMA local reajusta por-ticker en cada predict_df, asi que
+                # walk-forward serian fits reales -- tambien afuera a proposito.
+                if name in _LIVE_BACKTEST_MODELS and isinstance(service, TrendService):
                     result["backtest"] = service.backtest_on(df, result.get("horizon_days", 5))
                 predictions[name] = result
             except ApiMlError as exc:
