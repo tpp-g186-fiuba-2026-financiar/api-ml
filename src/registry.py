@@ -25,6 +25,7 @@ import pandas as pd
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.errors import ApiMlError, ModelNotLoadedError, UnknownModelError
 from src.modal_client import call_modal
+from src.trend_common import backtest_predict_df
 
 
 def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
@@ -89,6 +90,12 @@ class TrendService:
     def predict(self, symbol: str) -> dict:
         df = _fetch_history_with_macro(symbol, self.history_days)
         return self.predict_on(df, symbol)
+
+    def backtest_on(self, df: pd.DataFrame, horizon: int) -> dict | None:
+        """Backtest walk-forward sobre el artefacto ya cargado (ver `backtest_predict_df`)."""
+        if self._model is None:
+            return None
+        return backtest_predict_df(self._model, df, horizon)
 
 
 class OnDemandTrendService:
@@ -272,7 +279,17 @@ class TrendRegistry:
                 predictions[name] = {"available": False, "reason": "modelo no entrenado"}
                 continue
             try:
-                predictions[name] = service.predict_on(df, symbol)
+                result = service.predict_on(df, symbol)
+                # Solo los modelos con artefacto pre-entrenado (lstm/xgboost/
+                # transformer) pueden backtestear barato: reusan el mismo
+                # modelo cargado. ARIMA local reajusta por-ticker en cada
+                # predict_df, asi que 60 pasos de walk-forward serian 60
+                # fits reales -- se deja sin backtest en vivo a proposito.
+                if isinstance(service, TrendService):
+                    result["backtest"] = service.backtest_on(
+                        df, result.get("horizon_days", 5)
+                    )
+                predictions[name] = result
             except ApiMlError as exc:
                 predictions[name] = {"available": False, "reason": str(exc)}
         return {

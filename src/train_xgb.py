@@ -19,6 +19,7 @@ import argparse
 from src.config import settings
 from src.data import fetch_available_tickers, fetch_history
 from src.lstm import fetch_histories
+from src.retrain_guard import force_promote, promote_if_better
 from src.xgb_trend import XGBConfig, XGBTrendModel
 
 
@@ -34,6 +35,11 @@ def main() -> None:
     parser.add_argument("--max-depth", type=int, default=XGBConfig.max_depth)
     parser.add_argument("--learning-rate", type=float, default=XGBConfig.learning_rate)
     parser.add_argument("--out", default=settings.xgb_model_path, help="Ruta del artefacto .pkl")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Guardar aunque el candidato no supere al modelo vigente (salta el gate de promocion).",
+    )
     args = parser.parse_args()
 
     tickers = args.tickers or fetch_available_tickers()
@@ -54,11 +60,23 @@ def main() -> None:
 
     print(f"\nEntrenando XGBoost con {len(histories)} tickers...")
     metrics = model.fit(histories)
-
-    model.save(args.out)
     print("\nMetricas de validacion:")
     for key, value in metrics.items():
         print(f"  {key}: {value}")
+
+    print("\nBacktesteando el candidato (walk-forward, pooled sobre todos los tickers)...")
+    if args.force:
+        score = force_promote(model, args.out, histories, config.horizon)
+        print(f"  candidato: {score}  (--force: se guardo sin comparar)")
+    else:
+        promoted, score = promote_if_better(
+            model, args.out, XGBTrendModel.load, histories, config.horizon
+        )
+        print(f"  candidato: {score}")
+        if not promoted:
+            print("\nEl candidato no supera al modelo vigente -- no se promueve, no se toca el artefacto.")
+            return
+
     print(f"\nModelo guardado en: {args.out}")
     print(f"Version: {model.version}")
 

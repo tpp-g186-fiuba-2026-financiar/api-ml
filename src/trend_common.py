@@ -10,10 +10,19 @@ mismos umbrales, mismo formato de respuesta).
 
 from __future__ import annotations
 
+from typing import Protocol
+
 import numpy as np
 import pandas as pd
 
+from src.errors import ApiMlError
 from src.lstm import rsi
+
+BACKTEST_DAYS = 60
+
+
+class _DfPredictor(Protocol):
+    def predict_df(self, df: pd.DataFrame) -> dict: ...
 
 
 def derive_trend_output(
@@ -60,4 +69,56 @@ def derive_trend_output(
         "rsi": round(rsi_value, 2) if rsi_value is not None else None,
         "condition": condition,
         "as_of": df.index[-1].strftime("%Y-%m-%d"),
+    }
+
+
+def backtest_predict_df(
+    predictor: _DfPredictor,
+    df: pd.DataFrame,
+    horizon: int,
+    backtest_days: int = BACKTEST_DAYS,
+) -> dict | None:
+    """Backtest walk-forward generico para cualquier modelo con `predict_df`.
+
+    Reusa el modelo ya entrenado (no reentrena en cada paso, igual que
+    `backtest_lstm`/`backtest_xgboost` en el repo `models`): para cada dia de
+    los ultimos `backtest_days`, predice con el historico disponible hasta
+    ese dia y compara contra lo que paso `horizon` dias despues. Devuelve
+    `None` si no hay historia suficiente en vez de tirar, para que el
+    comparador siga mostrando la prediccion aunque no pueda medir accuracy.
+    """
+    split = len(df) - backtest_days - horizon
+    if split < 1:
+        return None
+    predicted_returns: list[float] = []
+    actual_returns: list[float] = []
+    series: list[dict] = []
+    for cutoff in range(split, len(df) - horizon):
+        try:
+            result = predictor.predict_df(df.iloc[: cutoff + 1])
+        except ApiMlError:
+            continue
+        predicted_close = result.get("predicted_close")
+        if predicted_close is None:
+            continue
+        last_close = float(df["close"].iloc[cutoff])
+        future_close = float(df["close"].iloc[cutoff + horizon])
+        predicted_returns.append(float(np.log(predicted_close / last_close)))
+        actual_returns.append(float(np.log(future_close / last_close)))
+        series.append(
+            {
+                "date": df.index[cutoff + horizon].strftime("%Y-%m-%d"),
+                "predicted": predicted_close,
+                "actual": future_close,
+            }
+        )
+    if not actual_returns:
+        return None
+    predicted_arr = np.asarray(predicted_returns)
+    actual_arr = np.asarray(actual_returns)
+    return {
+        "directional_accuracy": float(np.mean(np.sign(predicted_arr) == np.sign(actual_arr))),
+        "mae": float(np.mean(np.abs(predicted_arr - actual_arr))),
+        "observations": len(actual_returns),
+        "series": series[-30:],
     }

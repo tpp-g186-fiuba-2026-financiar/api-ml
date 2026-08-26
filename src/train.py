@@ -17,6 +17,7 @@ import argparse
 from src.config import settings
 from src.data import fetch_available_tickers, fetch_history
 from src.lstm import TrainConfig, TrendModel, fetch_histories
+from src.retrain_guard import force_promote, promote_if_better
 
 
 def main() -> None:
@@ -32,6 +33,11 @@ def main() -> None:
     parser.add_argument("--batch-size", type=int, default=TrainConfig.batch_size)
     parser.add_argument("--learning-rate", type=float, default=TrainConfig.learning_rate)
     parser.add_argument("--out", default=settings.lstm_model_path, help="Ruta del artefacto .pt")
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Guardar aunque el candidato no supere al modelo vigente (salta el gate de promocion).",
+    )
     args = parser.parse_args()
 
     tickers = args.tickers or fetch_available_tickers()
@@ -53,11 +59,21 @@ def main() -> None:
 
     print(f"\nEntrenando LSTM con {len(histories)} tickers...")
     metrics = model.fit(histories)
-
-    model.save(args.out)
     print("\nMetricas de validacion:")
     for key, value in metrics.items():
         print(f"  {key}: {value}")
+
+    print("\nBacktesteando el candidato (walk-forward, pooled sobre todos los tickers)...")
+    if args.force:
+        score = force_promote(model, args.out, histories, config.horizon)
+        print(f"  candidato: {score}  (--force: se guardo sin comparar)")
+    else:
+        promoted, score = promote_if_better(model, args.out, TrendModel.load, histories, config.horizon)
+        print(f"  candidato: {score}")
+        if not promoted:
+            print("\nEl candidato no supera al modelo vigente -- no se promueve, no se toca el artefacto.")
+            return
+
     print(f"\nModelo guardado en: {args.out}")
     print(f"Version: {model.version}")
 
