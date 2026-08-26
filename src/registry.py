@@ -286,9 +286,7 @@ class TrendRegistry:
                 # predict_df, asi que 60 pasos de walk-forward serian 60
                 # fits reales -- se deja sin backtest en vivo a proposito.
                 if isinstance(service, TrendService):
-                    result["backtest"] = service.backtest_on(
-                        df, result.get("horizon_days", 5)
-                    )
+                    result["backtest"] = service.backtest_on(df, result.get("horizon_days", 5))
                 predictions[name] = result
             except ApiMlError as exc:
                 predictions[name] = {"available": False, "reason": str(exc)}

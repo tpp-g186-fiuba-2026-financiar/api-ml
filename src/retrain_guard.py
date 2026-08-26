@@ -22,8 +22,8 @@ vigente en cada corrida.
 from __future__ import annotations
 
 import json
+from collections.abc import Callable
 from pathlib import Path
-from typing import Callable
 
 import pandas as pd
 
@@ -115,9 +115,7 @@ def promote_if_better(
     return should_promote, candidate
 
 
-def force_promote(
-    model, model_path: str, histories: dict[str, pd.DataFrame], horizon: int
-) -> dict:
+def force_promote(model, model_path: str, histories: dict[str, pd.DataFrame], horizon: int) -> dict:
     """Guarda `model` sin comparar contra el vigente (uso manual, `--force`)."""
     score = pooled_directional_accuracy(model, histories, horizon)
     model.save(model_path)

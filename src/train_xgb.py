@@ -38,7 +38,7 @@ def main() -> None:
     parser.add_argument(
         "--force",
         action="store_true",
-        help="Guardar aunque el candidato no supere al modelo vigente (salta el gate de promocion).",
+        help="Guardar aunque el candidato no supere al vigente (salta el gate de promocion).",
     )
     args = parser.parse_args()
 
@@ -74,7 +74,7 @@ def main() -> None:
         )
         print(f"  candidato: {score}")
         if not promoted:
-            print("\nEl candidato no supera al modelo vigente -- no se promueve, no se toca el artefacto.")
+            print("\nEl candidato no supera al vigente -- no se promueve, no se toca el artefacto.")
             return
 
     print(f"\nModelo guardado en: {args.out}")
