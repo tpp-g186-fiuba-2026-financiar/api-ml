@@ -32,10 +32,10 @@ jobs:
           # GitHub lo resuelve como "" y pydantic lo toma como valor
           # explicito en vez de usar el default -- por eso las URLs de
           # Modal solo se mandan si de verdad estan configuradas.
-          MODAL_LSTM_URL: ${{ secrets.MODAL_LSTM_URL }}
-          MODAL_XGBOOST_URL: ${{ secrets.MODAL_XGBOOST_URL }}
-          MODAL_ARIMA_URL: ${{ secrets.MODAL_ARIMA_URL }}
-        run: python -m src.paper_trading
+          MODAL_LSTM_URL: https://matimorales01--lstm-trend-model-main.modal.run
+          MODAL_XGBOOST_URL: https://matimorales01--xgboost-trend-model-main.modal.run
+          MODAL_ARIMA_URL: https://matimorales01--arima-model-main.modal.run
+        run: python -m src.paper_trading --models lstm-modal xgboost-modal arima-modal
 
       - name: Commitear el ledger actualizado
         run: |

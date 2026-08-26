@@ -28,5 +28,5 @@ jobs:
       - name: Format check
         run: ruff format --check src tests
 
-      - name: Run tests
-        run: pytest -v
+      - name: Run tests with coverage
+        run: pytest -v --cov=src --cov-report=term-missing
