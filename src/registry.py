@@ -17,6 +17,7 @@ Nada mas cambia: endpoints, health y comparacion lo toman automaticamente.
 from __future__ import annotations
 
 from collections.abc import Callable
+from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
@@ -212,6 +213,13 @@ class TrendRegistry:
         self._history_days = history_days
         self._services: dict[str, TrendService | OnDemandTrendService | RemoteTrendService] = {}
         self._default: str | None = None
+        # (symbol, dia) -> resultado de compare() ya calculado. Los datos son
+        # velas diarias, asi que recalcular todo (incluido el backtest en
+        # vivo) mas de una vez por dia por ticker es trabajo tirado -- y en el
+        # dyno free de Render (CPU compartida) es justo lo que hace que el
+        # endpoint tarde o se caiga. Solo el primer pedido del dia paga el
+        # costo completo.
+        self._compare_cache: dict[tuple[str, str], dict] = {}
 
     def register(
         self, name: str, model_path: str, loader: LoaderFn, *, default: bool = False
@@ -273,8 +281,17 @@ class TrendRegistry:
 
         Descarga la serie una sola vez y la pasa a cada modelo, asi la
         comparacion es justa (todos ven exactamente los mismos datos). Los
-        modelos no entrenados se reportan como no disponibles, sin cortar.
+        modelos no entrenados, o que fallan al predecir/backtestear, se
+        reportan como no disponibles en vez de cortar la comparacion entera
+        -- un modelo roto (o sin recursos en el dyno de Render) no debe
+        tumbar a los demas.
         """
+        symbol_key = symbol.strip().upper()
+        today = date.today().isoformat()
+        cached = self._compare_cache.get((symbol_key, today))
+        if cached is not None:
+            return cached
+
         df = _fetch_history_with_macro(symbol, self._history_days)
         predictions: dict[str, dict] = {}
         for name, service in self._services.items():
@@ -283,24 +300,30 @@ class TrendRegistry:
                 continue
             try:
                 result = service.predict_on(df, symbol)
-                # Backtest en vivo solo para lstm/xgboost: son los que importa
-                # comparar (los mas fuertes) y ya así el comparador se puso al
-                # limite de timeout en el dyno de Render (CPU compartida) con
-                # los 3 -- transformer es el mas caro (self-attention) y el
-                # menos diferencial, se deja afuera del calculo en vivo.
-                # ARIMA local reajusta por-ticker en cada predict_df, asi que
-                # walk-forward serian fits reales -- tambien afuera a proposito.
-                if name in _LIVE_BACKTEST_MODELS and isinstance(service, TrendService):
-                    result["backtest"] = service.backtest_on(df, result.get("horizon_days", 5))
-                predictions[name] = result
-            except ApiMlError as exc:
+            except Exception as exc:  # noqa: BLE001 - un modelo no debe tumbar la comparacion
                 predictions[name] = {"available": False, "reason": str(exc)}
-        return {
-            "symbol": symbol.strip().upper(),
+                continue
+            # Backtest en vivo solo para lstm/xgboost: son los que importa
+            # comparar (los mas fuertes) y ya así el comparador se puso al
+            # limite de timeout en el dyno de Render (CPU compartida) con
+            # los 3 -- transformer es el mas caro (self-attention) y el
+            # menos diferencial, se deja afuera del calculo en vivo.
+            # ARIMA local reajusta por-ticker en cada predict_df, asi que
+            # walk-forward serian fits reales -- tambien afuera a proposito.
+            if name in _LIVE_BACKTEST_MODELS and isinstance(service, TrendService):
+                try:
+                    result["backtest"] = service.backtest_on(df, result.get("horizon_days", 5))
+                except Exception as exc:  # noqa: BLE001 - backtest es best-effort
+                    result["backtest"] = None
+            predictions[name] = result
+        response = {
+            "symbol": symbol_key,
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
             "default_model": self._default,
             "predictions": predictions,
         }
+        self._compare_cache[(symbol_key, today)] = response
+        return response
 
     def statuses(self) -> dict[str, dict]:
         """Estado de cada modelo, para el endpoint de health / listado."""
