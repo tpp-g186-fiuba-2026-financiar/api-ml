@@ -1,4 +1,5 @@
 {
-  "directional_accuracy": 0.5044444444444445,
-  "observations": 3600
+  "directional_accuracy": 0.5330601092896174,
+  "observations": 3660,
+  "incumbent_directional_accuracy": 0.5044444444444445
 }
