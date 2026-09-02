@@ -323,7 +323,7 @@ class TrendRegistry:
             if name in _LIVE_BACKTEST_MODELS and isinstance(service, TrendService):
                 try:
                     result["backtest"] = service.backtest_on(df, result.get("horizon_days", 5))
-                except Exception as exc:  # noqa: BLE001 - backtest es best-effort
+                except Exception:  # noqa: BLE001 - backtest es best-effort
                     result["backtest"] = None
             predictions[name] = result
         response = {
