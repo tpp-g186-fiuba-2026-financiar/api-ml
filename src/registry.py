@@ -24,7 +24,7 @@ from typing import Protocol, runtime_checkable
 import pandas as pd
 
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
-from src.errors import ApiMlError, ModelNotLoadedError, UnknownModelError
+from src.errors import ApiMlError, DataUnavailableError, ModelNotLoadedError, UnknownModelError
 from src.modal_client import call_modal
 from src.trend_common import backtest_predict_df
 
@@ -153,6 +153,12 @@ def _identity_translator(payload: dict) -> dict:
 # consistente entre todos los modelos.
 _DROPPED_TREND_FIELDS = ("expected_return", "confidence")
 
+# Campos minimos de TrendResponse (ver src.schemas) que RemoteTrendService
+# necesita para armar una entrada valida. Cuando Modal no tiene un modelo
+# entrenado para el ticker devuelve HTTP 200 con {"error": "..."} en vez de
+# un 4xx/5xx, asi que call_modal no lo detecta: hay que validarlo aca.
+_REQUIRED_TREND_FIELDS = ("as_of", "signal", "horizon_days", "last_close", "predicted_close")
+
 
 class RemoteTrendService:
     """Modelo que corre en otro servicio (Modal) via HTTP, no en este proceso.
@@ -195,6 +201,10 @@ class RemoteTrendService:
     def predict(self, symbol: str) -> dict:
         payload = call_modal(self.base_url, symbol, **self._extra_params)
         result = self._translator(payload)
+        missing = [field for field in _REQUIRED_TREND_FIELDS if field not in result]
+        if "error" in result or missing:
+            reason = result.get("error") or f"faltan campos {missing} en la respuesta de Modal"
+            raise DataUnavailableError(f"{self.name}/{symbol}: {reason}")
         for field in _DROPPED_TREND_FIELDS:
             result.pop(field, None)
         result["symbol"] = symbol.strip().upper()
