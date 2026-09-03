@@ -23,7 +23,7 @@ import numpy as np
 import pandas as pd
 from statsmodels.tsa.arima.model import ARIMA
 
-from src.errors import NotEnoughDataError
+from src.errors import DataUnavailableError, NotEnoughDataError
 from src.trend_common import derive_trend_output
 
 HORIZON = 5
@@ -75,7 +75,10 @@ def translate_modal_arima_response(payload: dict) -> dict:
     """
     forecast = payload.get("prediction") or []
     if not forecast:
-        raise ValueError("Modal (arima) no devolvio pronostico")
+        # Sin ApiMlError esto tumbaba record_new_predictions entero (solo
+        # atrapa ApiMlError) en vez de saltear el ticker como hacen
+        # lstm-modal/xgboost-modal cuando Modal no tiene modelo entrenado.
+        raise DataUnavailableError("Modal (arima) no devolvio pronostico")
 
     last_close = float(payload["valor_actual"])
     forecast_close = float(forecast[-1])
