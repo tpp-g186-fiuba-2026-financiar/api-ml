@@ -21,12 +21,13 @@ from datetime import date
 from pathlib import Path
 from typing import Protocol, runtime_checkable
 
+import numpy as np
 import pandas as pd
 
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.errors import ApiMlError, DataUnavailableError, ModelNotLoadedError, UnknownModelError
 from src.modal_client import call_modal
-from src.trend_common import backtest_predict_df
+from src.trend_common import backtest_predict_df, derive_trend_output
 
 
 def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
@@ -213,6 +214,70 @@ class RemoteTrendService:
         return result
 
 
+class EnsembleTrendService:
+    """Promedio pesado del retorno log de otros modelos ya registrados.
+
+    No tiene artefacto propio ni entrena nada: en cada prediccion le pide a
+    cada miembro su ``predicted_close``/``last_close`` (via ``predict_on``,
+    reusando el mismo ``df`` que ya bajo el resto de los modelos), los
+    convierte al retorno log implicito, promedia con los pesos fijos, y
+    deriva la salida final con ``derive_trend_output`` -- asi la senal del
+    ensamble usa el mismo umbral/RSI/formato que un modelo individual. Los
+    pesos se resuelven contra los miembros pasados al construir el registro
+    (ver ``TrendRegistry.register_ensemble``), no contra un registro global.
+    """
+
+    def __init__(
+        self,
+        name: str,
+        members: dict[str, tuple[TrendService, float]],
+        history_days: int,
+    ):
+        self.name = name
+        self._members = members
+        self.history_days = history_days
+
+    def load(self) -> None:
+        pass  # cada miembro se carga solo via su propio TrendService.load()
+
+    @property
+    def is_loaded(self) -> bool:
+        # Requiere los 3 miembros cargados: un promedio parcial silencioso
+        # (ej: si transformer no cargo) daria una senal distinta a la que se
+        # esta probando en el issue sin que se note en el nombre del modelo.
+        return all(svc.is_loaded for svc, _weight in self._members.values())
+
+    @property
+    def version(self) -> str:
+        parts = ",".join(f"{n}:{svc.version}:{w}" for n, (svc, w) in self._members.items())
+        return f"ensemble({parts})"
+
+    def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
+        if not self.is_loaded:
+            raise ModelNotLoadedError(
+                f"el ensamble '{self.name}' necesita todos sus modelos miembro cargados"
+            )
+        log_returns = []
+        weights = []
+        horizon = None
+        for svc, weight in self._members.values():
+            result = svc.predict_on(df, symbol)
+            horizon = horizon or int(result["horizon_days"])
+            log_returns.append(np.log(result["predicted_close"] / result["last_close"]))
+            weights.append(weight)
+        avg_log_return = float(np.average(log_returns, weights=weights))
+
+        output = derive_trend_output(df, avg_log_return, horizon)
+        output["symbol"] = symbol.strip().upper()
+        output["model"] = self.name
+        output["model_version"] = self.version
+        return output
+
+    def predict(self, symbol: str) -> dict:
+        df = _fetch_history_with_macro(symbol, self.history_days)
+        return self.predict_on(df, symbol)
+
+
 _LIVE_BACKTEST_MODELS = {"lstm", "xgboost"}
 
 
@@ -221,7 +286,9 @@ class TrendRegistry:
 
     def __init__(self, history_days: int):
         self._history_days = history_days
-        self._services: dict[str, TrendService | OnDemandTrendService | RemoteTrendService] = {}
+        self._services: dict[
+            str, TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService
+        ] = {}
         self._default: str | None = None
         # (symbol, dia) -> resultado de compare() ya calculado. Los datos son
         # velas diarias, asi que recalcular todo (incluido el backtest en
@@ -268,11 +335,41 @@ class TrendRegistry:
             self._default = key
         return self
 
+    def register_ensemble(
+        self, name: str, weights: dict[str, float], *, default: bool = False
+    ) -> TrendRegistry:
+        """Registra un promedio pesado de modelos ya registrados en *este* registry.
+
+        ``weights`` mapea el nombre de cada miembro (ya registrado con
+        ``register``, ej: ``{"lstm": 0.25, "xgboost": 0.5, "transformer": 0.25}``)
+        a su peso. Los pesos no necesitan sumar 1: se normalizan en cada
+        prediccion (``np.average``). Los miembros deben ser instancias de
+        ``TrendService`` (con artefacto propio, no on-demand/remoto) porque
+        el ensamble reusa su ``predict_on`` sobre el mismo ``df``.
+        """
+        key = name.strip().lower()
+        resolved: dict[str, tuple[TrendService, float]] = {}
+        for member_name, weight in weights.items():
+            member_key = member_name.strip().lower()
+            service = self._services.get(member_key)
+            if not isinstance(service, TrendService):
+                raise UnknownModelError(
+                    f"'{member_name}' no esta registrado como TrendService; "
+                    "registralo antes de armar el ensamble"
+                )
+            resolved[member_key] = (service, weight)
+        self._services[key] = EnsembleTrendService(key, resolved, self._history_days)
+        if default:
+            self._default = key
+        return self
+
     def load_all(self) -> None:
         for service in self._services.values():
             service.load()
 
-    def resolve(self, name: str | None) -> TrendService | OnDemandTrendService | RemoteTrendService:
+    def resolve(
+        self, name: str | None
+    ) -> TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService:
         key = (name or self._default or "").strip().lower()
         if key not in self._services:
             available = ", ".join(self._services) or "(ninguno)"
@@ -366,6 +463,18 @@ def build_registry(history_days: int) -> TrendRegistry:
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
+
+    # Ensamble numerico (issue #163, "probar" un promedio pesado entre LSTM/
+    # XGBoost/Transformer): se probo con `register_ensemble` (ver clase
+    # `EnsembleTrendService` mas abajo) en varios esquemas de pesos -- ningun
+    # promedio le gano a XGBoost solo de forma significativa (mejor caso:
+    # +0.1pp de accuracy direccional, dentro del ruido con ~2700 predicciones
+    # pooled; MAE y retorno de estrategia siempre peores que XGBoost solo).
+    # No se registra en produccion a proposito: cada entrada de ensamble
+    # implica repetir la inferencia de los 3 modelos sin beneficio medido, y
+    # /predict/trend/compare ya esta al limite de timeout en Render (ver nota
+    # mas abajo). Queda `register_ensemble` disponible para volver a probar
+    # si se suma un modelo realmente distinto (no correlacionado con estos 3).
 
     # Alternativas que corren en Modal (repo `models`), independientes de
     # este proceso. Solo se registran si su URL esta configurada. lstm-modal

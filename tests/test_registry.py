@@ -1,10 +1,17 @@
 """Tests del TrendRegistry / TrendService (sin red)."""
 
+import numpy as np
+import pandas as pd
 import pytest
 
 import src.registry as registry_module
-from src.errors import DataUnavailableError, StaleArtifactError
-from src.registry import RemoteTrendService, TrendService
+from src.errors import (
+    DataUnavailableError,
+    ModelNotLoadedError,
+    StaleArtifactError,
+    UnknownModelError,
+)
+from src.registry import EnsembleTrendService, RemoteTrendService, TrendRegistry, TrendService
 
 
 def test_load_tolerates_incompatible_artifact(tmp_path) -> None:
@@ -89,3 +96,86 @@ def test_remote_predict_returns_result_when_payload_is_complete(monkeypatch) -> 
     assert result["as_of"] == "2026-08-30"
     assert result["model"] == "lstm-modal"
     assert result["model_version"] == "modal:lstm-modal"
+
+
+def _fake_df() -> pd.DataFrame:
+    dates = pd.date_range("2026-01-01", periods=30, freq="B")
+    return pd.DataFrame({"close": np.linspace(90.0, 100.0, len(dates))}, index=dates)
+
+
+def _loaded_service(name: str, predicted_close: float, last_close: float) -> TrendService:
+    """TrendService con un modelo fake ya 'cargado' (sin pasar por `load()`/disco)."""
+
+    class _FakeModel:
+        version = f"{name}-fake"
+
+        def predict_df(self, df: pd.DataFrame) -> dict:
+            return {
+                "signal": "alza",
+                "horizon_days": 5,
+                "predicted_close": predicted_close,
+                "last_close": last_close,
+                "rsi": None,
+                "condition": "neutral",
+                "as_of": df.index[-1].strftime("%Y-%m-%d"),
+            }
+
+    service = TrendService(name, "unused", lambda p: _FakeModel(), history_days=750)
+    service._model = _FakeModel()
+    return service
+
+
+def test_ensemble_predict_on_is_weighted_average_of_log_returns() -> None:
+    lstm = _loaded_service("lstm", predicted_close=105.0, last_close=100.0)
+    xgboost = _loaded_service("xgboost", predicted_close=110.0, last_close=100.0)
+    ensemble = EnsembleTrendService(
+        "ensemble", {"lstm": (lstm, 1.0), "xgboost": (xgboost, 3.0)}, history_days=750
+    )
+
+    result = ensemble.predict_on(_fake_df(), "GGAL")
+
+    expected_log_return = np.average(
+        [np.log(105.0 / 100.0), np.log(110.0 / 100.0)], weights=[1.0, 3.0]
+    )
+    # derive_trend_output redondea a 4 decimales.
+    assert result["predicted_close"] == pytest.approx(100.0 * np.exp(expected_log_return), abs=1e-4)
+    assert result["symbol"] == "GGAL"
+    assert result["model"] == "ensemble"
+    assert "lstm-fake" in result["model_version"]
+    assert "xgboost-fake" in result["model_version"]
+
+
+def test_ensemble_is_loaded_requires_all_members() -> None:
+    lstm = _loaded_service("lstm", predicted_close=105.0, last_close=100.0)
+    xgboost = TrendService("xgboost", "missing/path.pkl", lambda p: None, history_days=750)
+    ensemble = EnsembleTrendService(
+        "ensemble", {"lstm": (lstm, 1.0), "xgboost": (xgboost, 1.0)}, history_days=750
+    )
+
+    assert ensemble.is_loaded is False
+    with pytest.raises(ModelNotLoadedError):
+        ensemble.predict_on(_fake_df(), "GGAL")
+
+
+def test_register_ensemble_rejects_unregistered_member() -> None:
+    reg = TrendRegistry(history_days=750)
+    reg.register("lstm", "unused", lambda p: None)
+
+    with pytest.raises(UnknownModelError):
+        reg.register_ensemble("ensemble", {"lstm": 1.0, "xgboost": 1.0})
+
+
+def test_register_ensemble_resolves_and_predicts() -> None:
+    reg = TrendRegistry(history_days=750)
+    reg._services["lstm"] = _loaded_service("lstm", predicted_close=105.0, last_close=100.0)
+    reg._services["xgboost"] = _loaded_service("xgboost", predicted_close=95.0, last_close=100.0)
+
+    reg.register_ensemble("ensemble", {"lstm": 1.0, "xgboost": 1.0})
+    ensemble = reg.resolve("ensemble")
+
+    assert isinstance(ensemble, EnsembleTrendService)
+    assert ensemble.is_loaded is True
+    result = ensemble.predict_on(_fake_df(), "GGAL")
+    expected_log_return = np.average([np.log(1.05), np.log(0.95)], weights=[1.0, 1.0])
+    assert result["predicted_close"] == pytest.approx(100.0 * np.exp(expected_log_return), abs=1e-4)
+    assert result["signal"] == "neutral"
