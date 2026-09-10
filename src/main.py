@@ -6,6 +6,7 @@ from fastapi import FastAPI, HTTPException, Query
 from src.black_litterman.black_litterman import entry
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
+from src.consensus import compute_consensus
 from src.data import fetch_history
 from src.errors import (
     ApiMlError,
@@ -19,8 +20,10 @@ from src.modal_client import call_modal
 from src.model import PredictionModel
 from src.registry import build_registry
 from src.schemas import (
+    ConsensusResponse,
     DirectionResponse,
     HealthResponse,
+    PerfilRiesgo,
     PredictionRequest,
     PredictionResponse,
     TrendRequest,
@@ -159,6 +162,39 @@ async def predict_trend_compare(symbol: str) -> dict:
         return trend_registry.compare(symbol)
     except DataUnavailableError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get(
+    "/predict/trend/consensus/{symbol}",
+    response_model=ConsensusResponse,
+    tags=["Predicciones"],
+    summary="Consenso entre modelos (sobrecompra/sobreventa)",
+    description=(
+        "Combina las predicciones de todos los modelos en una sola lectura "
+        "(sobrecompra/sobreventa/neutral), ajustada por el perfil de riesgo "
+        "del inversor. Adaptado de decision_maker_playground (issue #154) -- "
+        "ver src.consensus para el detalle de la formula y por que cambia "
+        "respecto del prototipo original."
+    ),
+)
+async def predict_trend_consensus(
+    symbol: str,
+    profile: Annotated[
+        PerfilRiesgo,
+        Query(description="Perfil de riesgo del inversor (ver users.risk_profile)"),
+    ] = PerfilRiesgo.MODERADO,
+) -> ConsensusResponse:
+    try:
+        compared = trend_registry.compare(symbol)
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    consensus = compute_consensus(compared["predictions"], profile)
+    return ConsensusResponse(
+        symbol=compared["symbol"],
+        investor_profile=profile,
+        **consensus,
+    )
 
 
 @app.get(

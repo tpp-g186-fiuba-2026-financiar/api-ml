@@ -83,6 +83,22 @@ class PerfilRiesgo(enum.StrEnum):
     ARRIESGADO = "aggressive"
 
 
+class ConsensusResponse(BaseModel):
+    """Lectura unica (sobrecompra/sobreventa/neutral) combinando todos los
+    modelos de tendencia, ajustada por perfil de riesgo. Ver src.consensus.
+    """
+
+    symbol: str
+    investor_profile: PerfilRiesgo
+    classification: str  # sobrecompra | sobreventa | neutral | sin_datos
+    composite_score: float
+    aggregate_confidence: float
+    threshold_buy: float
+    threshold_sell: float
+    confidence_min: float
+    models_considered: int
+
+
 class Tenencia(BaseModel):
     ticker: str
     cantidad: float
