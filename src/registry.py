@@ -146,6 +146,35 @@ def _identity_translator(payload: dict) -> dict:
     return payload
 
 
+def translate_modal_svm_response(payload: dict) -> dict:
+    """Traduce la respuesta de ``svm_model.py`` de Modal (repo `models`) al
+    formato de TrendResponse.
+
+    El SVM es un clasificador binario (Buy/Sell) sobre el retorno del dia
+    siguiente: no predice un precio, asi que ``last_close``/``predicted_close``
+    quedan en None (mismo criterio que ``rsi``/``condition`` en ARIMA-modal,
+    que tampoco los puede calcular -- ver ``translate_modal_arima_response``).
+    El ``as_of`` es una aproximacion (fecha de hoy): Modal no manda la fecha
+    real de la ultima rueda que uso. Se preserva el ``backtest`` original
+    (``directional_accuracy``) para que compita de igual a igual en
+    ``_pick_best_model``.
+    """
+    prediction = payload.get("prediction")
+    if prediction not in ("Buy", "Sell"):
+        raise DataUnavailableError("Modal (svm) no devolvio una prediccion valida")
+    return {
+        "signal": "alza" if prediction == "Buy" else "baja",
+        "horizon_days": 1,
+        "predicted_close": None,
+        "last_close": None,
+        "rsi": None,
+        "condition": "indeterminado",
+        "as_of": date.today().isoformat(),
+        "backtest": payload.get("backtest"),
+        "model_version": payload.get("model_version"),
+    }
+
+
 # Campos que el equipo decidio sacar del contrato de TrendResponse
 # (expected_return era redundante con predicted_close; confidence saturaba
 # en 1.0 con cualquier retorno > 3%). Los modelos locales ya no los generan,
@@ -521,5 +550,20 @@ def build_registry(history_days: int) -> TrendRegistry:
             translator=translate_modal_arima_response,
             extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
         )
+    if settings.modal_svm_url:
+        # svm_model.py (repo `models`, issue #159) es un clasificador binario
+        # Buy/Sell: si tiene signal, entra al mismo comparador/backtest que
+        # el resto (ver translate_modal_svm_response).
+        registry.register_remote(
+            "svm-modal", settings.modal_svm_url, translator=translate_modal_svm_response
+        )
+    # garch_model.py (repo `models`, issue #159) NO se registra aca a
+    # proposito: pronostica volatilidad (varianza a 5 dias), no una
+    # direccion -- no tiene "signal" y forzarlo en este registry rompe el
+    # contrato de TrendPredictor que asumen paper_trading.py y TrendResponse
+    # (alza/baja/neutral). Se suma igual "al comparador" pero un nivel mas
+    # arriba, en backend-website (compare_trend_logic.rs), que solo relaya
+    # JSON y no necesita ese contrato -- ahi se lo marca explicitamente como
+    # no apto para el ranking de tendencia (ver `fetch_garch`).
 
     return registry

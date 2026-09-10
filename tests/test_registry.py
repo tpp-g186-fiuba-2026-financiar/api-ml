@@ -17,7 +17,33 @@ from src.registry import (
     TrendRegistry,
     TrendService,
     _pick_best_model,
+    translate_modal_svm_response,
 )
+
+
+def test_translate_modal_svm_response_maps_buy_to_alza() -> None:
+    payload = {
+        "prediction": "Buy",
+        "model_version": "2026-09-09T00:00:00Z",
+        "backtest": {"directional_accuracy": 0.55, "observations": 60},
+    }
+    result = translate_modal_svm_response(payload)
+    assert result["signal"] == "alza"
+    assert result["horizon_days"] == 1
+    assert result["last_close"] is None
+    assert result["predicted_close"] is None
+    assert result["backtest"] == {"directional_accuracy": 0.55, "observations": 60}
+    assert result["model_version"] == "2026-09-09T00:00:00Z"
+
+
+def test_translate_modal_svm_response_maps_sell_to_baja() -> None:
+    result = translate_modal_svm_response({"prediction": "Sell"})
+    assert result["signal"] == "baja"
+
+
+def test_translate_modal_svm_response_raises_when_prediction_missing() -> None:
+    with pytest.raises(DataUnavailableError):
+        translate_modal_svm_response({"error": "todavia no hay un modelo entrenado para 'OIL'"})
 
 
 def test_pick_best_model_prefers_higher_directional_accuracy() -> None:
