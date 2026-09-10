@@ -281,6 +281,31 @@ class EnsembleTrendService:
 _LIVE_BACKTEST_MODELS = {"lstm", "xgboost"}
 
 
+def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str | None:
+    """Elige, entre los modelos con backtest, el de mejor accuracy direccional.
+
+    El "default" ya no es un modelo fijo: cada ticker puede tener un ganador
+    distinto segun como le fue prediciendolo. Solo lstm/xgboost calculan
+    backtest en vivo en `compare()` (ver `_LIVE_BACKTEST_MODELS`), asi que la
+    eleccion queda entre esos dos; en empate de accuracy gana el de menor
+    error (mae). Si ninguno tiene metricas todavia (poca historia, backtest
+    fallo), se cae al default global de siempre.
+    """
+    best_name: str | None = None
+    best_score: tuple[float, float] | None = None
+    for name, result in predictions.items():
+        if result.get("available") is False:
+            continue
+        backtest = result.get("backtest")
+        if not backtest or backtest.get("directional_accuracy") is None:
+            continue
+        score = (backtest["directional_accuracy"], -backtest.get("mae", float("inf")))
+        if best_score is None or score > best_score:
+            best_score = score
+            best_name = name
+    return best_name or fallback
+
+
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
@@ -426,7 +451,7 @@ class TrendRegistry:
         response = {
             "symbol": symbol_key,
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
-            "default_model": self._default,
+            "default_model": _pick_best_model(predictions, self._default),
             "predictions": predictions,
         }
         self._compare_cache[(symbol_key, today)] = response

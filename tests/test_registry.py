@@ -11,7 +11,46 @@ from src.errors import (
     StaleArtifactError,
     UnknownModelError,
 )
-from src.registry import EnsembleTrendService, RemoteTrendService, TrendRegistry, TrendService
+from src.registry import (
+    EnsembleTrendService,
+    RemoteTrendService,
+    TrendRegistry,
+    TrendService,
+    _pick_best_model,
+)
+
+
+def test_pick_best_model_prefers_higher_directional_accuracy() -> None:
+    predictions = {
+        "lstm": {"backtest": {"directional_accuracy": 0.6, "mae": 0.02}},
+        "xgboost": {"backtest": {"directional_accuracy": 0.75, "mae": 0.03}},
+    }
+    assert _pick_best_model(predictions, fallback="lstm") == "xgboost"
+
+
+def test_pick_best_model_breaks_ties_with_lower_mae() -> None:
+    predictions = {
+        "lstm": {"backtest": {"directional_accuracy": 0.7, "mae": 0.05}},
+        "xgboost": {"backtest": {"directional_accuracy": 0.7, "mae": 0.02}},
+    }
+    assert _pick_best_model(predictions, fallback="lstm") == "xgboost"
+
+
+def test_pick_best_model_ignores_unavailable_and_missing_backtest() -> None:
+    predictions = {
+        "lstm": {"available": False, "reason": "no entrenado"},
+        "transformer": {"symbol": "GGAL"},  # sin backtest (no esta en _LIVE_BACKTEST_MODELS)
+        "xgboost": {"backtest": {"directional_accuracy": 0.55, "mae": 0.04}},
+    }
+    assert _pick_best_model(predictions, fallback="lstm") == "xgboost"
+
+
+def test_pick_best_model_falls_back_when_nothing_has_metrics() -> None:
+    predictions = {
+        "lstm": {"available": False, "reason": "no entrenado"},
+        "arima": {"symbol": "GGAL"},
+    }
+    assert _pick_best_model(predictions, fallback="lstm") == "lstm"
 
 
 def test_load_tolerates_incompatible_artifact(tmp_path) -> None:
