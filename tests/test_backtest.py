@@ -1,9 +1,21 @@
 """Tests del backtesting walk-forward con datos sinteticos (sin red)."""
 
+from unittest.mock import Mock, patch
+
 import numpy as np
 import pandas as pd
+import pytest
 
-from src.backtest import select_model_names, summarize, walk_forward
+from src.backtest import (
+    _fetch_histories,
+    _print_comparison,
+    main,
+    run_backtest,
+    select_model_names,
+    summarize,
+    walk_forward,
+)
+from src.errors import DataUnavailableError
 from src.lstm import TrainConfig, TrendModel
 from src.registry import RemoteTrendService, TrendRegistry, TrendService
 
@@ -87,3 +99,91 @@ def test_select_model_names_skips_explicit_remote_request() -> None:
 
     assert isinstance(registry.resolve("lstm-modal"), RemoteTrendService)
     assert select_model_names(registry, ["lstm", "lstm-modal"]) == ["lstm"]
+
+
+def test_fetch_histories_skips_unavailable_and_short_history() -> None:
+    def fake_fetch_history(symbol, days):
+        if symbol == "BAD":
+            raise DataUnavailableError("no data")
+        return _synthetic_ohlcv(300 if symbol == "OK" else 5)
+
+    with patch("src.backtest.fetch_macro_series", return_value=None):
+        with patch("src.backtest.fetch_history", side_effect=fake_fetch_history):
+            histories = _fetch_histories(["BAD", "SHORT", "OK"], days=300, min_rows=100)
+
+    assert list(histories) == ["OK"]
+    assert "macro_rate" in histories["OK"].columns
+
+
+def test_run_backtest_skips_unloaded_models_and_aggregates() -> None:
+    registry = TrendRegistry(history_days=750)
+    service = _fake_lstm_service()
+    registry.register("lstm", "models/lstm.pt", TrendModel.load, default=True)
+    registry._services["lstm"] = service
+    registry.register("xgb", "models/xgb.pkl", Mock(), default=False)
+
+    histories = {"SYN": _synthetic_ohlcv(300)}
+    results = run_backtest(registry, histories, ["lstm", "xgb"], step=10, min_history=50)
+
+    assert "xgb" not in results
+    assert results["lstm"]["overall"]["n_predictions"] > 0
+    assert "SYN" in results["lstm"]["per_ticker"]
+
+
+def test_print_comparison_handles_empty_and_nonempty(capsys) -> None:
+    _print_comparison({})
+    assert "Sin resultados" in capsys.readouterr().out
+
+    _print_comparison(
+        {"lstm": {"version": "lstm-1", "overall": {"n_predictions": 3, "mae_logret": 0.01}}}
+    )
+    out = capsys.readouterr().out
+    assert "lstm" in out
+
+
+def test_main_end_to_end(monkeypatch, tmp_path) -> None:
+    registry = TrendRegistry(history_days=750)
+    service = _fake_lstm_service()
+    registry.register("lstm", "models/lstm.pt", TrendModel.load, default=True)
+    registry._services["lstm"] = service
+
+    monkeypatch.setattr("src.backtest.fetch_available_tickers", lambda: ["SYN"])
+    monkeypatch.setattr("src.backtest.fetch_macro_series", lambda days: None)
+    monkeypatch.setattr("src.backtest.fetch_history", lambda symbol, days: _synthetic_ohlcv(300))
+    monkeypatch.setattr("src.backtest.build_registry", lambda days: registry)
+    monkeypatch.setattr(registry, "load_all", lambda: None)
+
+    out_path = tmp_path / "backtest_results.json"
+    monkeypatch.setattr(
+        "sys.argv",
+        ["backtest", "--step", "10", "--min-history", "50", "--out", str(out_path)],
+    )
+    main()
+    assert out_path.exists()
+
+
+def test_main_aborts_when_no_histories(monkeypatch) -> None:
+    monkeypatch.setattr("src.backtest.fetch_available_tickers", lambda: ["SYN"])
+    monkeypatch.setattr("src.backtest.fetch_macro_series", lambda days: None)
+    monkeypatch.setattr(
+        "src.backtest.fetch_history",
+        lambda symbol, days: (_ for _ in ()).throw(DataUnavailableError("nope")),
+    )
+    monkeypatch.setattr("sys.argv", ["backtest"])
+    with pytest.raises(SystemExit):
+        main()
+
+
+def test_main_aborts_when_no_valid_models(monkeypatch) -> None:
+    registry = TrendRegistry(history_days=750)
+    registry.register_remote("lstm-modal", "https://example.invalid")
+
+    monkeypatch.setattr("src.backtest.fetch_available_tickers", lambda: ["SYN"])
+    monkeypatch.setattr("src.backtest.fetch_macro_series", lambda days: None)
+    monkeypatch.setattr("src.backtest.fetch_history", lambda symbol, days: _synthetic_ohlcv(300))
+    monkeypatch.setattr("src.backtest.build_registry", lambda days: registry)
+    monkeypatch.setattr(registry, "load_all", lambda: None)
+    monkeypatch.setattr("sys.argv", ["backtest", "--models", "lstm-modal"])
+
+    with pytest.raises(SystemExit):
+        main()

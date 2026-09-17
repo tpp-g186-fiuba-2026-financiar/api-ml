@@ -21,7 +21,7 @@ backtest:
 paper-trade:
 	python -m src.paper_trading
 test:
-	pytest
+	pytest --cov=src --cov-report=term-missing --cov-fail-under=80
 lint:
 	ruff check src tests
 fmt:
