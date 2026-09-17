@@ -153,6 +153,23 @@ def test_walk_forward_backtest_handles_short_errors_and_missing_predictions():
     assert result is not None
     assert result["observations"] > 0
     assert result["mae"] >= 0
+    # El Predictor siempre predice +1% (alza): si el historico sintetico es
+    # ascendente, seguir la senal deberia rendir igual que comprar-y-mantener
+    # (misma posicion, siempre long).
+    assert result["avg_strategy_return_pct"] == pytest.approx(result["avg_buy_hold_return_pct"])
+
+
+def test_backtest_predict_df_strategy_return_short_on_bearish_prediction():
+    class BearishPredictor:
+        def predict_df(self, frame):
+            return {"predicted_close": float(frame["close"].iloc[-1]) * 0.9}
+
+    df = history()
+    result = trend_common.backtest_predict_df(BearishPredictor(), df, 2, 15, step=2)
+    assert result is not None
+    # El historico sintetico de `history()` es ascendente: predecir baja
+    # siempre (short) deberia rendir peor que comprar-y-mantener.
+    assert result["avg_strategy_return_pct"] < result["avg_buy_hold_return_pct"]
 
 
 def test_modal_client_success_and_errors(monkeypatch):

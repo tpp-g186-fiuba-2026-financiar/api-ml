@@ -124,9 +124,18 @@ def backtest_predict_df(
         return None
     predicted_arr = np.asarray(predicted_returns)
     actual_arr = np.asarray(actual_returns)
+    # Retorno de "seguir la senal al pie de la letra" (long si predijo alza,
+    # short si predijo baja, afuera en neutral) vs. comprar-y-mantener lisa y
+    # llanamente -- misma cuenta que `summarize()` en `src/backtest.py`, pero
+    # sobre el mismo backtest en vivo que ya corre `compare()`, para que se
+    # vea junto al resto de las metricas sin pagar un segundo backtest.
+    position = np.sign(predicted_arr)
+    strategy_logrets = position * actual_arr
     return {
         "directional_accuracy": float(np.mean(np.sign(predicted_arr) == np.sign(actual_arr))),
         "mae": float(np.mean(np.abs(predicted_arr - actual_arr))),
         "observations": len(actual_returns),
         "series": series[-30:],
+        "avg_strategy_return_pct": float(np.expm1(np.mean(strategy_logrets)) * 100),
+        "avg_buy_hold_return_pct": float(np.expm1(np.mean(actual_arr)) * 100),
     }
