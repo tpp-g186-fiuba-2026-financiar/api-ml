@@ -38,6 +38,7 @@ class Settings(BaseSettings):
     # alternativas simplemente no aparecen en el registro.
     modal_lstm_url: str | None = None
     modal_xgboost_url: str | None = None
+    modal_transformer_url: str | None = None
     modal_arima_url: str | None = None
     modal_svm_url: str | None = None
     modal_garch_url: str | None = None

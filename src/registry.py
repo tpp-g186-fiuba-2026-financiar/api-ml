@@ -541,6 +541,8 @@ def build_registry(history_days: int) -> TrendRegistry:
         registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
     if settings.modal_xgboost_url:
         registry.register_remote("xgboost-modal", settings.modal_xgboost_url)
+    if settings.modal_transformer_url:
+        registry.register_remote("transformer-modal", settings.modal_transformer_url)
     if settings.modal_arima_url:
         # El arima_model.py de Modal (version del equipo) pide "predictions"
         # y "media_movil" en vez de horizon/order_ma.

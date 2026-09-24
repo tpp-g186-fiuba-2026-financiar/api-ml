@@ -244,3 +244,15 @@ def test_register_ensemble_resolves_and_predicts() -> None:
     expected_log_return = np.average([np.log(1.05), np.log(0.95)], weights=[1.0, 1.0])
     assert result["predicted_close"] == pytest.approx(100.0 * np.exp(expected_log_return), abs=1e-4)
     assert result["signal"] == "neutral"
+
+
+def test_build_registry_registers_transformer_modal_only_when_configured(monkeypatch) -> None:
+    from src.config import settings
+
+    monkeypatch.setattr(settings, "modal_transformer_url", None)
+    assert "transformer-modal" not in registry_module.build_registry(750).names()
+
+    monkeypatch.setattr(settings, "modal_transformer_url", "https://modal.example/transformer")
+    registry = registry_module.build_registry(750)
+    assert "transformer-modal" in registry.names()
+    assert isinstance(registry._services["transformer-modal"], RemoteTrendService)
