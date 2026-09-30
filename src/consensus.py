@@ -85,15 +85,29 @@ def _expected_return(prediction: dict) -> float | None:
     return float(np.log(predicted / last))
 
 
+# Casos "virtuales" al 50% que se suman a cada accuracy: con pocas
+# observaciones el numero se acerca al azar. Mismo criterio que
+# ``pick_best_model`` en backend-website, para que ambos ordenen igual.
+ACCURACY_PRIOR_CASES = 50
+
+
 def _model_quality(prediction: dict) -> float:
     """Reemplazo de "confidence": accuracy direccional del backtest de ese
-    modelo para este ticker puntual. 0.5 (ni mejor ni peor que azar) para
+    modelo para este ticker puntual, ajustada por cantidad de casos: un 90%
+    sobre 20 observaciones pesa mucho menos que un 60% sobre 500, porque con
+    pocos casos el numero es casi suerte. 0.5 (ni mejor ni peor que azar) para
     modelos sin backtest todavia -- no los excluye, pero tampoco les da de
     arranque mas peso que a una moneda al aire.
     """
     backtest = prediction.get("backtest") or {}
     accuracy = backtest.get("directional_accuracy")
-    return float(accuracy) if accuracy is not None else 0.5
+    if accuracy is None:
+        return 0.5
+    observations = backtest.get("observations")
+    if not observations or observations <= 0:
+        return float(accuracy)
+    weight = observations / (observations + ACCURACY_PRIOR_CASES)
+    return float(0.5 + (accuracy - 0.5) * weight)
 
 
 def _agreement(signal: str | None, expected_return: float) -> float:
@@ -110,6 +124,44 @@ def _agreement(signal: str | None, expected_return: float) -> float:
     else:
         sign = 0
     return 1.0 if (signal_num == sign or expected_return == 0) else 0.5
+
+
+def _build_explanation(
+    classification: str,
+    considered: int,
+    alza_count: int,
+    baja_count: int,
+    confidence: float,
+    confidence_min: float,
+) -> str:
+    """Traduce la lectura numerica a una frase en espanol llano, para que el
+    usuario entienda el "por que" sin tener que leer score/thresholds.
+    """
+    if classification == "sin_datos":
+        return "Todavia no hay modelos disponibles para este ticker."
+
+    if classification == "neutral":
+        if confidence < confidence_min:
+            return (
+                f"{considered} modelo(s) opinaron, pero su acierto historico "
+                f"promedio ({confidence:.0%}) esta por debajo del minimo exigido "
+                f"({confidence_min:.0%}): no hay confianza suficiente para una senal."
+            )
+        return (
+            f"Los modelos estan divididos: {alza_count} en alza y {baja_count} "
+            f"en baja (de {considered} considerados) -- no hay una tendencia clara."
+        )
+
+    if classification == "sobrecompra":
+        return (
+            f"{alza_count} de {considered} modelos coinciden en una lectura "
+            f"alcista, con un acierto historico promedio del {confidence:.0%}."
+        )
+
+    return (
+        f"{baja_count} de {considered} modelos coinciden en una lectura "
+        f"bajista, con un acierto historico promedio del {confidence:.0%}."
+    )
 
 
 def compute_consensus(
@@ -132,6 +184,8 @@ def compute_consensus(
     num_confidence = 0.0
     den_confidence = 0.0
     considered = 0
+    alza_count = 0
+    baja_count = 0
 
     for prediction in predictions.values():
         if prediction.get("available") is False:
@@ -148,6 +202,10 @@ def compute_consensus(
         num_confidence += quality
         den_confidence += 1.0
         considered += 1
+        if expected_return > 0:
+            alza_count += 1
+        elif expected_return < 0:
+            baja_count += 1
 
     score = num_score / den_score if den_score else 0.0
     confidence = num_confidence / den_confidence if den_confidence else 0.0
@@ -167,6 +225,10 @@ def compute_consensus(
     else:
         classification = "neutral"
 
+    explanation = _build_explanation(
+        classification, considered, alza_count, baja_count, confidence, confidence_min
+    )
+
     return {
         "classification": classification,
         "composite_score": round(score, 4),
@@ -175,4 +237,5 @@ def compute_consensus(
         "threshold_sell": round(theta_sell, 4),
         "confidence_min": round(confidence_min, 3),
         "models_considered": considered,
+        "explanation": explanation,
     }

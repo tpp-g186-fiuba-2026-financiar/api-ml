@@ -36,11 +36,19 @@ import pandas as pd
 
 from src.backtest import summarize
 from src.config import settings
+from src.consensus import compute_consensus
 from src.data import fetch_available_tickers, fetch_history
 from src.errors import ApiMlError, DataUnavailableError
 from src.registry import TrendRegistry, build_registry
+from src.schemas import PerfilRiesgo
 
 DEFAULT_LEDGER_PATH = "models/paper_trading_ledger.json"
+
+CONSENSUS_PREFIX = "consensus-"
+CONSENSUS_VERSION = "consensus-v1"
+# Clasificacion del consenso -> signal de trend, asi ``summarize`` lo mide
+# igual que a cualquier modelo (signal_hit_rate = "cuando dio senal, acerto?").
+_CONSENSUS_SIGNAL = {"sobrecompra": "alza", "sobreventa": "baja", "neutral": "neutral"}
 
 
 def _empty_ledger() -> dict:
@@ -183,6 +191,79 @@ def record_new_predictions(
     return new_entries
 
 
+def _model_quality_lookup(resolved: list[dict]) -> dict[tuple[str, str], dict]:
+    """Accuracy direccional y cantidad de casos por (modelo, ticker), calculada
+    solo con lo ya resuelto: es la calidad que el consenso hubiera conocido al
+    momento de predecir (sin mirar hacia adelante). Los consensos no entran
+    como insumo de si mismos."""
+    base = [r for r in resolved if not r["model"].startswith(CONSENSUS_PREFIX)]
+    lookup: dict[tuple[str, str], dict] = {}
+    for model, data in build_summary(base).items():
+        for symbol, stats in data["per_ticker"].items():
+            lookup[(model, symbol)] = {
+                "directional_accuracy": stats.get("directional_accuracy"),
+                "observations": stats.get("n_predictions"),
+            }
+    return lookup
+
+
+def record_consensus_entries(
+    pending: list[dict],
+    new_entries: list[dict],
+    resolved: list[dict],
+    existing_keys: set[tuple],
+) -> list[dict]:
+    """Por cada ticker, combina las predicciones de hoy de todos los modelos
+    con ``compute_consensus`` (una vez por perfil de riesgo) y las registra
+    como un modelo mas (``consensus-<perfil>``), para medir cuantas veces
+    acerto lo que se le muestra al usuario."""
+    pool = [e for e in [*pending, *new_entries] if not e["model"].startswith(CONSENSUS_PREFIX)]
+    latest_as_of: dict[str, str] = {}
+    for e in pool:
+        latest_as_of[e["symbol"]] = max(latest_as_of.get(e["symbol"], ""), e["as_of"])
+
+    quality = _model_quality_lookup(resolved)
+    by_symbol: dict[str, list[dict]] = {}
+    for e in pool:
+        if e["as_of"] == latest_as_of[e["symbol"]]:
+            by_symbol.setdefault(e["symbol"], []).append(e)
+
+    entries: list[dict] = []
+    for symbol, group in sorted(by_symbol.items()):
+        predictions = {
+            e["model"]: {
+                "signal": e["signal"],
+                "last_close": e["last_close"],
+                "predicted_close": e["predicted_close"],
+                "backtest": quality.get((e["model"], symbol)),
+            }
+            for e in group
+        }
+        as_of = latest_as_of[symbol]
+        last_close = group[0]["last_close"]
+        for profile in PerfilRiesgo:
+            result = compute_consensus(predictions, profile)
+            if result["classification"] == "sin_datos":
+                continue
+            entry = {
+                "symbol": symbol,
+                "model": f"{CONSENSUS_PREFIX}{profile.value}",
+                "model_version": CONSENSUS_VERSION,
+                "as_of": as_of,
+                "signal": _CONSENSUS_SIGNAL[result["classification"]],
+                "horizon_days": int(group[0]["horizon_days"]),
+                "last_close": last_close,
+                "predicted_close": float(last_close * np.exp(result["composite_score"])),
+                "predicted_log_return": float(result["composite_score"]),
+            }
+            key = _pending_key(entry)
+            if key in existing_keys:
+                continue
+            existing_keys.add(key)
+            entries.append(entry)
+    return entries
+
+
 def build_summary(resolved: list[dict]) -> dict[str, dict]:
     """Agrega, por modelo, las metricas de ``src.backtest.summarize`` sobre
     todo lo resuelto hasta el momento -- el "historial de aciertos/errores"."""
@@ -260,7 +341,12 @@ def main() -> None:
     existing_keys |= {_pending_key(e) for e in ledger["resolved"]}
     new_entries = record_new_predictions(registry, model_names, tickers, existing_keys)
     print(f"  [ok] {len(new_entries)} predicciones nuevas")
+    consensus_entries = record_consensus_entries(
+        ledger["pending"], new_entries, ledger["resolved"], existing_keys
+    )
+    print(f"  [ok] {len(consensus_entries)} lecturas de consenso nuevas")
     ledger["pending"].extend(new_entries)
+    ledger["pending"].extend(consensus_entries)
 
     ledger["summary"] = build_summary(ledger["resolved"])
     save_ledger(ledger_path, ledger)

@@ -5,6 +5,7 @@ import pytest
 from src.consensus import (
     ConsensusParams,
     _agreement,
+    _build_explanation,
     _expected_return,
     _model_quality,
     compute_consensus,
@@ -43,6 +44,24 @@ def test_expected_return_is_none_without_prices() -> None:
 
 def test_model_quality_uses_backtest_accuracy() -> None:
     assert _model_quality({"backtest": {"directional_accuracy": 0.72}}) == 0.72
+
+
+def test_model_quality_shrinks_toward_chance_with_few_observations() -> None:
+    few = _model_quality({"backtest": {"directional_accuracy": 0.9, "observations": 20}})
+    many = _model_quality({"backtest": {"directional_accuracy": 0.9, "observations": 2000}})
+    assert 0.5 < few < 0.7  # 90% sobre 20 casos casi no se distingue del azar
+    assert many == pytest.approx(0.9, abs=0.02)
+
+
+def test_model_quality_solid_sample_beats_lucky_small_sample() -> None:
+    lucky = _model_quality({"backtest": {"directional_accuracy": 0.7, "observations": 20}})
+    solid = _model_quality({"backtest": {"directional_accuracy": 0.62, "observations": 600}})
+    assert solid > lucky
+
+
+def test_model_quality_never_moves_away_from_chance() -> None:
+    below = _model_quality({"backtest": {"directional_accuracy": 0.3, "observations": 24}})
+    assert 0.3 < below < 0.5
 
 
 def test_model_quality_falls_back_to_coin_flip_without_backtest() -> None:
@@ -102,6 +121,7 @@ def test_compute_consensus_returns_sin_datos_when_nothing_is_usable() -> None:
     result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
     assert result["classification"] == "sin_datos"
     assert result["models_considered"] == 0
+    assert "no hay modelos disponibles" in result["explanation"].lower()
 
 
 def test_compute_consensus_returns_neutral_below_confidence_floor() -> None:
@@ -111,6 +131,7 @@ def test_compute_consensus_returns_neutral_below_confidence_floor() -> None:
     result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
     assert result["aggregate_confidence"] == pytest.approx(0.2)
     assert result["classification"] == "neutral"
+    assert "confianza suficiente" in result["explanation"]
 
 
 def test_compute_consensus_classifies_sobrecompra_above_threshold() -> None:
@@ -120,6 +141,8 @@ def test_compute_consensus_classifies_sobrecompra_above_threshold() -> None:
     }
     result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
     assert result["classification"] == "sobrecompra"
+    assert "alcista" in result["explanation"]
+    assert "2 de 2" in result["explanation"]
 
 
 def test_compute_consensus_classifies_sobreventa_below_threshold() -> None:
@@ -129,6 +152,7 @@ def test_compute_consensus_classifies_sobreventa_below_threshold() -> None:
     }
     result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
     assert result["classification"] == "sobreventa"
+    assert "bajista" in result["explanation"]
 
 
 def test_aggressive_profile_makes_sobrecompra_easier_than_conservative() -> None:
@@ -146,3 +170,27 @@ def test_custom_params_are_respected() -> None:
     predictions = {"lstm": _prediction(predicted_close=101.0, directional_accuracy=0.9)}
     strict = compute_consensus(predictions, PerfilRiesgo.MODERADO, ConsensusParams(theta0=0.5))
     assert strict["classification"] == "neutral"
+
+
+def test_compute_consensus_neutral_when_models_disagree_with_enough_confidence() -> None:
+    predictions = {
+        "lstm": _prediction(predicted_close=101.2, signal="alza", directional_accuracy=0.7),
+        "xgboost": _prediction(predicted_close=98.8, signal="baja", directional_accuracy=0.7),
+    }
+    result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
+    assert result["classification"] == "neutral"
+    assert "divididos" in result["explanation"]
+    assert "1 en alza y 1 en baja" in result["explanation"]
+
+
+@pytest.mark.parametrize(
+    ("classification", "expected_snippet"),
+    [
+        ("sin_datos", "no hay modelos disponibles"),
+        ("sobrecompra", "alcista"),
+        ("sobreventa", "bajista"),
+    ],
+)
+def test_build_explanation_branches(classification, expected_snippet) -> None:
+    text = _build_explanation(classification, 3, 2, 1, 0.65, 0.5).lower()
+    assert expected_snippet in text
