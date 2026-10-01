@@ -97,6 +97,7 @@ class ConsensusResponse(BaseModel):
     threshold_sell: float
     confidence_min: float
     models_considered: int
+    explanation: str
 
 
 class Tenencia(BaseModel):

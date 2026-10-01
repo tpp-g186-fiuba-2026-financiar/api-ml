@@ -195,3 +195,61 @@ def test_known_tickers_uses_pending_and_resolved_without_duplicates() -> None:
     }
 
     assert known_tickers(ledger) == ["ALUA", "GGAL", "YPFD"]
+
+
+def _entry(model: str, signal: str, predicted: float, symbol: str = "GGAL") -> dict:
+    return {
+        "symbol": symbol,
+        "model": model,
+        "model_version": "v1",
+        "as_of": "2024-01-10",
+        "signal": signal,
+        "horizon_days": 5,
+        "last_close": 100.0,
+        "predicted_close": predicted,
+        "predicted_log_return": float(np.log(predicted / 100.0)),
+    }
+
+
+def test_record_consensus_entries_one_per_profile() -> None:
+    from src.paper_trading import record_consensus_entries
+
+    new = [_entry("lstm", "alza", 105.0), _entry("xgboost", "alza", 104.0)]
+    entries = record_consensus_entries([], new, [], set())
+
+    assert {e["model"] for e in entries} == {
+        "consensus-conservative",
+        "consensus-moderate",
+        "consensus-aggressive",
+    }
+    moderate = next(e for e in entries if e["model"] == "consensus-moderate")
+    assert moderate["signal"] == "alza"
+    assert moderate["symbol"] == "GGAL"
+    assert moderate["predicted_log_return"] > 0
+
+
+def test_record_consensus_entries_skips_existing_and_its_own_inputs() -> None:
+    from src.paper_trading import record_consensus_entries
+
+    new = [_entry("lstm", "alza", 105.0), _entry("consensus-moderate", "baja", 90.0)]
+    existing = {("GGAL", "consensus-moderate", "2024-01-10")}
+    entries = record_consensus_entries([], new, [], existing)
+
+    assert "consensus-moderate" not in {e["model"] for e in entries}
+    # Sin el input "baja" colado, el consenso solo ve el lstm (alza o neutral
+    # segun el perfil, nunca baja).
+    assert all(e["signal"] in ("alza", "neutral") for e in entries)
+
+
+def test_consensus_entries_are_measured_like_any_model() -> None:
+    from src.paper_trading import build_summary
+
+    resolved = [
+        {**_entry("consensus-moderate", "alza", 105.0), "realized_log_return": 0.02},
+        {**_entry("consensus-moderate", "baja", 95.0), "realized_log_return": 0.01},
+        {**_entry("consensus-moderate", "neutral", 100.5), "realized_log_return": 0.01},
+    ]
+    overall = build_summary(resolved)["consensus-moderate"]["overall"]
+
+    assert overall["n_predictions"] == 3
+    assert overall["signal_hit_rate"] == 0.5

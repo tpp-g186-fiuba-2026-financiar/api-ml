@@ -37,11 +37,14 @@ jobs:
           MODAL_ARIMA_URL: https://matimorales01--arima-model-main.modal.run
         run: python -m src.paper_trading --models lstm xgboost transformer arima lstm-modal xgboost-modal arima-modal
 
+      - name: Actualizar reporte de calidad (backtest vs paper trading)
+        run: python -m src.quality_report
+
       - name: Commitear el ledger actualizado
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add models/paper_trading_ledger.json
+          git add models/paper_trading_ledger.json models/quality_report.md models/quality_history.json
           if git diff --cached --quiet; then
             echo "sin cambios en el ledger"
           else

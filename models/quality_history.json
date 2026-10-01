@@ -1,0 +1,25 @@
+[
+  {
+    "date": "2026-09-29",
+    "period": {
+      "from": "2026-07-22",
+      "to": "2026-09-23"
+    },
+    "n_resolved": 6982,
+    "paper_accuracy": {
+      "arima": 0.5151,
+      "lstm": 0.4767,
+      "lstm-modal": 0.5165,
+      "transformer": 0.5148,
+      "xgboost": 0.4809,
+      "xgboost-modal": 0.4809
+    },
+    "gap_accuracy": {
+      "lstm": 0.0326,
+      "lstm-modal": -0.0072,
+      "xgboost": 0.2784,
+      "xgboost-modal": 0.2784,
+      "transformer": -0.0148
+    }
+  }
+]
