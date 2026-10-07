@@ -12,12 +12,15 @@ class Settings(BaseSettings):
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
     transformer_model_path: str = "models/transformer.pt"
+    macro_model_path: str = "models/macro.pkl"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si
     # data_source == "collector", y siempre para listar tickers disponibles
     # (el catalogo de tickers solo vive en data-colector, no en Yahoo).
     data_collector_url: str | None = "https://data-colector.onrender.com"
+    # URL del data-colector que sirve las series macro (default: data_collector_url).
+    macro_collector_url: str | None = None
     # Sufijo de mercado para Yahoo Finance (BYMA = ".BA").
     market_suffix: str = ".BA"
     # Cantidad de ruedas de historia a pedir para entrenar / predecir.

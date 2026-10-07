@@ -180,6 +180,23 @@ Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
 
+## Modelo macro de tendencia
+
+Modelo aparte de los demás (se registra como `macro`). Predice alza o baja a 20 ruedas con variables
+macro de Argentina (riesgo país, dólar CCL/MEP/oficial, brecha, BADLAR, reservas, base monetaria) más
+indicadores técnicos. Las series las sirve el data-colector (`/macro/argdatos/*` e `/interest-rate/ar/*`);
+si no responde, el modelo figura como no disponible y los demás siguen funcionando.
+
+- Código: `src/macro_trend.py`, `src/macro_data.py`, `src/train_macro.py`.
+- Responde `alza`, `baja` o `neutral`, con `probability_down` y `probability_up`.
+- Se reentrena el primer día de cada mes (`.github/workflows/retrain-macro.yml`).
+
+```bash
+DATA_SOURCE=collector python -m src.train_macro
+```
+
+Resultados en [`notebooks/investigacion_macro/README.md`](notebooks/investigacion_macro/README.md).
+
 ## Backtesting (walk-forward)
 
 Las métricas que guarda cada modelo en su artefacto (`val_mae_logret`,

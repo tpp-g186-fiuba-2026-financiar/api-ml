@@ -35,7 +35,7 @@ jobs:
           MODAL_LSTM_URL: https://matimorales01--lstm-trend-model-main.modal.run
           MODAL_XGBOOST_URL: https://matimorales01--xgboost-trend-model-main.modal.run
           MODAL_ARIMA_URL: https://matimorales01--arima-model-main.modal.run
-        run: python -m src.paper_trading --models lstm xgboost transformer arima lstm-modal xgboost-modal arima-modal
+        run: python -m src.paper_trading --models lstm xgboost transformer macro arima lstm-modal xgboost-modal arima-modal
 
       - name: Actualizar reporte de calidad (backtest vs paper trading)
         run: python -m src.quality_report
