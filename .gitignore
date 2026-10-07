@@ -51,4 +51,6 @@ models/backtest_results.json
 # models/lstm.pt se commitea a proposito para que el deploy de Render lo tenga.
 # Idem el artefacto de XGBoost: se versiona para que la imagen de Render lo incluya.
 !models/xgb.pkl
+# Idem el modelo 'macro' (src/macro_trend.py).
+!models/macro.pkl
 !models/.gitkeep

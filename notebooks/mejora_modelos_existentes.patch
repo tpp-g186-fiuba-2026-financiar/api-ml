@@ -1,0 +1,474 @@
+diff --git a/src/arima_trend.py b/src/arima_trend.py
+index 4ed329a..68b60da 100644
+--- a/src/arima_trend.py
++++ b/src/arima_trend.py
+@@ -26,7 +26,7 @@ from statsmodels.tsa.arima.model import ARIMA
+ from src.errors import DataUnavailableError, NotEnoughDataError
+ from src.trend_common import derive_trend_output
+ 
+-HORIZON = 5
++HORIZON = 14
+ # El arima_model.py de Modal usa media_movil=20 por default, pero un orden
+ # de MA tan alto genera inestabilidad numerica en el ajuste (overflow en el
+ # filtro de Kalman) sin mejorar el AIC de forma significativa (probado con
+diff --git a/src/backtest.py b/src/backtest.py
+index c9c8a57..bd40d39 100644
+--- a/src/backtest.py
++++ b/src/backtest.py
+@@ -49,6 +49,7 @@ from src.data import (
+     fetch_macro_series,
+ )
+ from src.errors import ApiMlError
++from src.market_features import attach_market_features, drop_stale, fetch_market_frame
+ from src.registry import (
+     OnDemandTrendService,
+     RemoteTrendService,
+@@ -164,15 +165,15 @@ def select_model_names(registry: TrendRegistry, requested: list[str] | None) ->
+ 
+ 
+ def _fetch_histories(tickers: list[str], days: int, min_rows: int) -> dict[str, pd.DataFrame]:
+-    """Descarga el historico de cada ticker, con la feature macro ya alineada.
++    """Descarga el historico de cada ticker, con la macro y el contexto de mercado alineados.
+ 
+-    Sin esto, los modelos que usan ``macro_rate_chg5`` (ver ``FEATURE_NAMES``
+-    en ``src.lstm``) predecirian con esa feature siempre en 0/NaN durante el
++    Sin esto, los modelos que usan ``macro_rate_chg5`` y ``mkt_*`` (ver
++    ``FEATURE_NAMES`` en ``src.lstm``) predecirian con esas features siempre en 0/NaN durante el
+     backtest -- distinto a como se entrenaron -- y los numeros del backtest
+     quedarian peores de lo que el modelo realmente da en produccion.
+     """
+     macro = fetch_macro_series(days)
+-    histories: dict[str, pd.DataFrame] = {}
++    raw: dict[str, pd.DataFrame] = {}
+     for symbol in tickers:
+         try:
+             df = fetch_history(symbol, days)
+@@ -182,7 +183,16 @@ def _fetch_histories(tickers: list[str], days: int, min_rows: int) -> dict[str,
+         if len(df) < min_rows:
+             print(f"  [skip] {symbol}: pocas ruedas ({len(df)})")
+             continue
+-        histories[symbol] = attach_macro_feature(df, MACRO_COLUMN, macro)
++        raw[symbol] = df
++    try:
++        market = fetch_market_frame(days, known=raw)
++    except ApiMlError:
++        market = None
++    histories: dict[str, pd.DataFrame] = {}
++    for symbol, df in drop_stale(raw).items():
++        histories[symbol] = attach_market_features(
++            attach_macro_feature(df, MACRO_COLUMN, macro), market
++        )
+         print(f"  [ok]   {symbol}: {len(df)} ruedas")
+     return histories
+ 
+diff --git a/src/indicators.py b/src/indicators.py
+index 0913ea2..cd7b505 100644
+--- a/src/indicators.py
++++ b/src/indicators.py
+@@ -16,7 +16,9 @@ import numpy as np
+ 
+ def _rsi_from_averages(avg_gain: float, avg_loss: float) -> float:
+     if avg_loss == 0:
+-        return 100.0
++        # Sin perdidas: 100 solo si hubo ganancias. Sin ningun movimiento de precio
++        # (ej. serie estancada) no es "sobrecompra": es neutral.
++        return 50.0 if avg_gain == 0 else 100.0
+     rs = avg_gain / avg_loss
+     return 100.0 - (100.0 / (1.0 + rs))
+ 
+diff --git a/src/lstm.py b/src/lstm.py
+index f6d2b87..ebd174f 100644
+--- a/src/lstm.py
++++ b/src/lstm.py
+@@ -30,6 +30,13 @@ from torch import nn
+ from src.data import MACRO_COLUMN, attach_macro_feature, fetch_macro_series
+ from src.errors import NotEnoughDataError, StaleArtifactError
+ from src.indicators import macd_histogram, rsi_series, sma
++from src.market_features import (
++    BASKET,
++    MARKET_COLUMNS,
++    attach_market_features,
++    drop_stale,
++    market_frame_from_histories,
++)
+ 
+ FEATURE_NAMES = [
+     "log_return",
+@@ -40,13 +47,28 @@ FEATURE_NAMES = [
+     "macd_norm",
+     "momentum_10",
+     "macro_rate_chg5",
++    # EDA (issue #135): distancia al maximo de 60 ruedas, RSI x volumen inusual y
++    # Bollinger. gk_vol20 = volatilidad Garman-Klass (usa apertura/maximo/minimo).
++    "dist_max60",
++    "rsi_vol_interaction",
++    "boll_z",
++    "gk_vol20",
++    # Contexto de mercado (ver src.market_features): como viene el Merval y que tan
++    # por encima o por debajo de el esta la accion. Fue lo unico que mejoro la
++    # prediccion fuera de muestra (notebooks/evaluacion_modelos.py).
++    "mkt_ret5",
++    "mkt_ret20",
++    "mkt_ret60",
++    "mkt_vol20",
++    "mkt_dist_max60",
++    "rel20",
+ ]
+ 
+ 
+ # --------------------------------------------------------------------------- #
+ # Feature engineering
+ # --------------------------------------------------------------------------- #
+-def build_features(df: pd.DataFrame, horizon: int = 5) -> tuple[np.ndarray, np.ndarray]:
++def build_features(df: pd.DataFrame, horizon: int = 14) -> tuple[np.ndarray, np.ndarray]:
+     """Convierte un OHLCV en (X_features, y_target).
+ 
+     ``X`` tiene una fila por dia con las columnas de ``FEATURE_NAMES``.
+@@ -87,6 +109,32 @@ def build_features(df: pd.DataFrame, horizon: int = 5) -> tuple[np.ndarray, np.n
+     macro_chg5 = np.full(len(close), np.nan)
+     macro_chg5[5:] = macro_rate[5:] - macro_rate[:-5]
+ 
++    # EDA: distancia al maximo de 60 ruedas, RSI x volumen inusual, Bollinger y
++    # volatilidad Garman-Klass. Todas relativas (sin escala de precio).
++    close_s = pd.Series(close, index=df.index)
++    dist_max60 = (close_s / close_s.rolling(60).max() - 1.0).to_numpy()
++    log_volume = np.log1p(np.where(volume < 0, 0.0, volume))
++    vol_s = pd.Series(log_volume, index=df.index)
++    volume_z = ((vol_s - vol_s.rolling(60).mean()) / vol_s.rolling(60).std()).to_numpy()
++    rsi_vol_interaction = rsi_norm * np.nan_to_num(volume_z, nan=0.0, posinf=0.0, neginf=0.0)
++    boll_z = ((close_s - close_s.rolling(20).mean()) / close_s.rolling(20).std()).to_numpy()
++    hl = np.log(high / np.where(low <= 0, np.nan, low)) ** 2
++    open_ = df["open"].to_numpy(dtype=np.float64)
++    co = np.log(close / np.where(open_ <= 0, np.nan, open_)) ** 2
++    gk = np.clip(0.5 * hl - (2 * np.log(2) - 1) * co, 0.0, None)
++    gk_vol20 = np.sqrt(pd.Series(gk, index=df.index).rolling(20).mean().to_numpy())
++
++    # Contexto de mercado adjunto como columnas (ver attach_market_features): si
++    # faltan (df sintetico o fallo la descarga) quedan en NaN -> 0 = "sin senal".
++    def _col(name: str) -> np.ndarray:
++        if name in df.columns:
++            return df[name].to_numpy(dtype=np.float64)
++        return np.full(len(close), np.nan)
++
++    mkt = {name: _col(name) for name in MARKET_COLUMNS}
++    rel20 = np.full(len(close), np.nan)
++    rel20[20:] = (log_close[20:] - log_close[:-20]) - mkt["mkt_ret20"][20:]
++
+     feats = np.column_stack(
+         [
+             log_return,
+@@ -97,6 +145,16 @@ def build_features(df: pd.DataFrame, horizon: int = 5) -> tuple[np.ndarray, np.n
+             macd_norm[1:],
+             momentum_10[1:],
+             macro_chg5[1:],
++            dist_max60[1:],
++            rsi_vol_interaction[1:],
++            boll_z[1:],
++            gk_vol20[1:],
++            mkt["mkt_ret5"][1:],
++            mkt["mkt_ret20"][1:],
++            mkt["mkt_ret60"][1:],
++            mkt["mkt_vol20"][1:],
++            mkt["mkt_dist_max60"][1:],
++            rel20[1:],
+         ]
+     )
+ 
+@@ -153,6 +211,27 @@ def check_feature_compatibility(saved_feature_names: list[str] | None) -> None:
+         )
+ 
+ 
++# El modelo solo da "alza"/"baja" en el ~20% de los casos donde mas se anima (el
++# resto es "neutral"): opinar siempre, con precios que suben mas de lo que bajan,
++# da aciertos que no son del modelo. Ver notebooks/evaluacion_baselines.py.
++ABSTENTION_COVERAGE = 0.20
++
++
++def abstention_band(
++    pred_log_returns: np.ndarray, default: float, coverage: float = ABSTENTION_COVERAGE
++) -> float:
++    """Banda "neutral" calibrada con las predicciones de validacion.
++
++    Es el retorno esperado (en valor absoluto) a partir del cual el modelo esta
++    entre el ``coverage`` de casos mas extremos que vio fuera de muestra. Sin
++    predicciones de validacion devuelve ``default`` (el valor fijo anterior).
++    """
++    if len(pred_log_returns) == 0:
++        return default
++    band = float(np.quantile(np.abs(np.expm1(np.asarray(pred_log_returns))), 1.0 - coverage))
++    return band if band > 0 else default
++
++
+ def rsi(close: np.ndarray, period: int = 14) -> float | None:
+     """RSI de Wilder sobre el ultimo valor de la serie."""
+     series = rsi_series(close, period)
+@@ -185,7 +264,9 @@ class _LSTMRegressor(nn.Module):
+ @dataclass
+ class TrainConfig:
+     window: int = 30
+-    horizon: int = 5  # dias hacia adelante para definir la tendencia a predecir
++    horizon: int = (
++        14  # ruedas hacia adelante (= periodo del RSI) para definir la tendencia a predecir
++    )
+     hidden_size: int = 32
+     num_layers: int = 1
+     dropout: float = 0.1
+@@ -320,6 +401,10 @@ class TrendModel:
+ 
+         self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+         self.metrics = self._evaluate(Xva, yva)
++        if len(Xva):
++            self.config.neutral_band = abstention_band(
++                self._predict_log_returns(Xva), self.config.neutral_band
++            )
+         return self.metrics
+ 
+     # ------------------------------------------------------------------ #
+@@ -375,11 +460,7 @@ class TrendModel:
+     def _evaluate(self, X: np.ndarray, y: np.ndarray) -> dict[str, float]:
+         if len(X) == 0 or self._net is None:
+             return {}
+-        x = self._to_tensor(self._scale_features(X))
+-        self._net.eval()
+-        with torch.no_grad():
+-            scaled = self._net(x).numpy()
+-        pred = scaled * self.target_std + self.target_mean
++        pred = self._predict_log_returns(X)
+         mae = float(np.mean(np.abs(pred - y)))
+         # Acierto direccional: que el signo del retorno coincida.
+         directional = float(np.mean(np.sign(pred) == np.sign(y)))
+@@ -389,6 +470,13 @@ class TrendModel:
+             "val_directional_accuracy": round(directional, 4),
+         }
+ 
++    def _predict_log_returns(self, X: np.ndarray) -> np.ndarray:
++        x = self._to_tensor(self._scale_features(X))
++        self._net.eval()
++        with torch.no_grad():
++            scaled = self._net(x).numpy()
++        return scaled * self.target_std + self.target_mean
++
+     def _scale_features(self, X: np.ndarray) -> np.ndarray:
+         return (X - self.feature_mean) / self.feature_std
+ 
+@@ -443,12 +531,14 @@ class TrendModel:
+ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd.DataFrame]:
+     """Descarga el historico de cada simbolo, tolerando fallas individuales.
+ 
+-    La serie macro (ver ``FEATURE_NAMES``) se descarga una unica vez para
+-    todo el batch -- es una serie global, no por ticker -- y se alinea a cada
+-    historico antes de sumarlo al dict.
++    La serie macro y el contexto de mercado (ver ``FEATURE_NAMES``) se calculan
++    una unica vez para todo el batch -- son series globales, no por ticker -- y
++    se alinean a cada historico antes de sumarlo al dict. Las series estancadas
++    (ej. A3: precio sin cambio la mayoria de los dias) se descartan: sin
++    movimiento de precio los indicadores no significan nada.
+     """
+     macro = fetch_macro_series(days)
+-    histories: dict[str, pd.DataFrame] = {}
++    raw: dict[str, pd.DataFrame] = {}
+     for symbol in symbols:
+         try:
+             df = fetch_fn(symbol, days)
+@@ -458,6 +548,25 @@ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd
+         if len(df) < 60:
+             print(f"  [skip] {symbol}: pocas ruedas ({len(df)})")
+             continue
+-        histories[symbol] = attach_macro_feature(df, MACRO_COLUMN, macro)
++        raw[symbol] = df
++
++    # El contexto de mercado usa siempre la misma canasta, este o no en `symbols`.
++    market_source = dict(raw)
++    for symbol in BASKET:
++        if symbol in market_source:
++            continue
++        try:
++            market_source[symbol] = fetch_fn(symbol, days)
++        except Exception:  # noqa: BLE001 - la canasta es best-effort
++            continue
++    try:
++        market = market_frame_from_histories(market_source)
++    except NotEnoughDataError:
++        market = None
++
++    histories: dict[str, pd.DataFrame] = {}
++    for symbol, df in drop_stale(raw).items():
++        df = attach_macro_feature(df, MACRO_COLUMN, macro)
++        histories[symbol] = attach_market_features(df, market)
+         print(f"  [ok]   {symbol}: {len(df)} ruedas")
+     return histories
+diff --git a/src/registry.py b/src/registry.py
+index bbce3d7..3fba6a0 100644
+--- a/src/registry.py
++++ b/src/registry.py
+@@ -25,15 +25,32 @@ import numpy as np
+ import pandas as pd
+ 
+ from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
+-from src.errors import ApiMlError, DataUnavailableError, ModelNotLoadedError, UnknownModelError
++from src.errors import (
++    ApiMlError,
++    DataUnavailableError,
++    ModelNotLoadedError,
++    NotEnoughDataError,
++    UnknownModelError,
++)
++from src.market_features import attach_market_features, is_stale, todays_market_frame
+ from src.modal_client import call_modal
+ from src.trend_common import backtest_predict_df, derive_trend_output
+ 
+ 
+ def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
+-    """Historico OHLCV de un ticker con la feature macro ya alineada (ver ``src.lstm``)."""
++    """Historico OHLCV de un ticker con la serie macro y el contexto de mercado ya alineados
++    (ver ``src.lstm`` y ``src.market_features``)."""
+     df = fetch_history(symbol, days)
+-    return attach_macro_feature(df, MACRO_COLUMN, fetch_macro_series(days))
++    df = attach_macro_feature(df, MACRO_COLUMN, fetch_macro_series(days))
++    return attach_market_features(df, todays_market_frame())
++
++
++def _refuse_stale(df: pd.DataFrame, symbol: str) -> None:
++    """Sin movimiento de precio (ej. A3) ningun indicador significa nada: no se predice."""
++    if is_stale(df):
++        raise NotEnoughDataError(
++            f"{symbol}: la serie casi no tiene movimiento de precio (datos estancados)"
++        )
+ 
+ 
+ @runtime_checkable
+@@ -83,6 +100,7 @@ class TrendService:
+             raise ModelNotLoadedError(
+                 f"el modelo '{self.name}' no esta entrenado; correr su script de training"
+             )
++        _refuse_stale(df, symbol)
+         result = self._model.predict_df(df)
+         result["symbol"] = symbol.strip().upper()
+         result["model"] = self.name
+@@ -125,6 +143,7 @@ class OnDemandTrendService:
+         return self._predictor.version
+ 
+     def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
++        _refuse_stale(df, symbol)
+         result = self._predictor.predict_df(df)
+         result["symbol"] = symbol.strip().upper()
+         result["model"] = self.name
+diff --git a/src/transformer.py b/src/transformer.py
+index 77b9a40..de6808b 100644
+--- a/src/transformer.py
++++ b/src/transformer.py
+@@ -15,7 +15,13 @@ from src.errors import NotEnoughDataError
+ # Reutilizamos el feature engineering del modelo LSTM tal cual: la parte de
+ # "convertir OHLCV en features estacionarias" no cambia por usar otra
+ # arquitectura.
+-from src.lstm import FEATURE_NAMES, build_features, check_feature_compatibility, make_windows
++from src.lstm import (
++    FEATURE_NAMES,
++    abstention_band,
++    build_features,
++    check_feature_compatibility,
++    make_windows,
++)
+ 
+ # Mismo post-procesamiento (senal / RSI / condicion / confianza) que usan el
+ # resto de los modelos del registro (ver XGBTrendModel), para que las salidas
+@@ -86,7 +92,9 @@ class _TransformerRegressor(nn.Module):
+ @dataclass
+ class TransformerTrainConfig:
+     window: int = 30
+-    horizon: int = 5  # dias hacia adelante para definir la tendencia a predecir
++    horizon: int = (
++        14  # ruedas hacia adelante (= periodo del RSI) para definir la tendencia a predecir
++    )
+     d_model: int = 32
+     nhead: int = 4
+     num_layers: int = 2
+@@ -257,6 +265,10 @@ class TransformerTrendModel:
+ 
+         self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+         self.metrics = self._evaluate(Xva, yva)
++        if len(Xva):
++            self.config.neutral_band = abstention_band(
++                self._predict_log_returns(Xva), self.config.neutral_band
++            )
+         return self.metrics
+ 
+     # ------------------------------------------------------------------ #
+@@ -289,11 +301,7 @@ class TransformerTrendModel:
+     def _evaluate(self, X: np.ndarray, y: np.ndarray) -> dict[str, float]:
+         if len(X) == 0 or self._net is None:
+             return {}
+-        x = self._to_tensor(self._scale_features(X))
+-        self._net.eval()
+-        with torch.no_grad():
+-            scaled = self._net(x).numpy()
+-        pred = scaled * self.target_std + self.target_mean
++        pred = self._predict_log_returns(X)
+         mae = float(np.mean(np.abs(pred - y)))
+         # Acierto direccional: que el signo del retorno coincida.
+         directional = float(np.mean(np.sign(pred) == np.sign(y)))
+@@ -303,6 +311,13 @@ class TransformerTrendModel:
+             "val_directional_accuracy": round(directional, 4),
+         }
+ 
++    def _predict_log_returns(self, X: np.ndarray) -> np.ndarray:
++        x = self._to_tensor(self._scale_features(X))
++        self._net.eval()
++        with torch.no_grad():
++            scaled = self._net(x).numpy()
++        return scaled * self.target_std + self.target_mean
++
+     def _scale_features(self, X: np.ndarray) -> np.ndarray:
+         return (X - self.feature_mean) / self.feature_std
+ 
+diff --git a/src/xgb_trend.py b/src/xgb_trend.py
+index ef64187..6ad0fba 100644
+--- a/src/xgb_trend.py
++++ b/src/xgb_trend.py
+@@ -29,14 +29,20 @@ import numpy as np
+ import pandas as pd
+ 
+ from src.errors import NotEnoughDataError
+-from src.lstm import FEATURE_NAMES, build_features, check_feature_compatibility, make_windows
++from src.lstm import (
++    FEATURE_NAMES,
++    abstention_band,
++    build_features,
++    check_feature_compatibility,
++    make_windows,
++)
+ from src.trend_common import derive_trend_output
+ 
+ 
+ @dataclass
+ class XGBConfig:
+     window: int = 30
+-    horizon: int = 5  # dias hacia adelante (igual que el LSTM, para comparar)
++    horizon: int = 14  # ruedas hacia adelante (= periodo del RSI; igual que el LSTM)
+     n_estimators: int = 300
+     max_depth: int = 4
+     learning_rate: float = 0.05
+@@ -114,6 +120,10 @@ class XGBTrendModel:
+ 
+         self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+         self.metrics = self._evaluate(Xva, yva)
++        if len(Xva):
++            self.config.neutral_band = abstention_band(
++                self._booster.predict(Xva), self.config.neutral_band
++            )
+         return self.metrics
+ 
+     # ------------------------------------------------------------------ #
+diff --git a/tests/test_coverage_models.py b/tests/test_coverage_models.py
+index d5ee432..5fd2ad9 100644
+--- a/tests/test_coverage_models.py
++++ b/tests/test_coverage_models.py
+@@ -275,7 +275,7 @@ def test_xgb_model_fit_predict_save_and_load(monkeypatch, tmp_path):
+     metrics = model.fit({"GGAL": history()})
+     assert metrics["val_samples"] > 0
+     assert model.version.startswith("xgb-")
+-    assert model.predict_df(history())["horizon"] == 5
++    assert model.predict_df(history())["horizon"] == xgb_trend.XGBConfig.horizon
+     assert model._evaluate(np.empty((0, 6)), np.empty((0,))) == {}
+ 
+     path = tmp_path / "xgb.pkl"

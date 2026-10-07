@@ -180,6 +180,34 @@ Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
 
+## Modelo macro de tendencia
+
+Modelo **aparte** de LSTM / XGBoost / Transformer / ARIMA (conviven en el registro; entra solo
+al comparador, al consenso y al paper trading). Predice si una acción va a **subir o bajar a 20
+ruedas** (~1 mes) a partir de la **macro argentina**: riesgo país, dólar CCL/MEP/oficial/mayorista/blue
+y la brecha, tasa BADLAR, reservas y base monetaria, más indicadores técnicos de la propia acción.
+Con solo indicadores técnicos ningún modelo distinguía subas de bajas (AUC ~0.50); con la macro
+sí (AUC ~0.60, medido fuera de muestra). Detalle, números y advertencias en
+[`notebooks/investigacion_macro/README.md`](notebooks/investigacion_macro/README.md).
+
+- Código: `src/macro_trend.py` (variables + ensamble de gradient boosting y Extra Trees + calibración
+  de señales), `src/macro_data.py` (series macro desde el data-colector), `src/train_macro.py`.
+- **Depende del data-colector**: `POST /macro/argdatos/{CCL,MEP,OFICIAL,MAYORISTA,BLUE,RIESGO_PAIS}` y
+  `POST /interest-rate/ar/{BADLAR,RESERVAS,BASE_MONETARIA}` (ver `data-colector/ENDPOINTS.md`). Si no
+  responden, el modelo figura como *no disponible* en la comparación y el resto sigue funcionando.
+  `MACRO_COLLECTOR_URL` permite apuntar a otro data-colector solo para las series macro.
+- Emite `alza` / `baja` solo en los extremos de lo que el modelo vio fuera de muestra (~12% de cada
+  lado); el resto es `neutral` (precio proyectado = último cierre). La respuesta incluye
+  `probability_down` / `probability_up`.
+- **Hay que reentrenarlo seguido**: depende del régimen macro y entrenado una sola vez pierde calidad.
+  `.github/workflows/retrain-macro.yml` lo hace el primer día hábil de cada mes; no guarda el artefacto
+  si su AUC fuera de muestra no supera `--min-auc` (0.52).
+
+```bash
+DATA_SOURCE=collector python -m src.train_macro                       # entrenar
+DATA_SOURCE=collector python notebooks/investigacion_macro/validar_modelo_macro.py   # validar (walk-forward)
+```
+
 ## Backtesting (walk-forward)
 
 Las métricas que guarda cada modelo en su artefacto (`val_mae_logret`,

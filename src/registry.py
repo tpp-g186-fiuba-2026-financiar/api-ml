@@ -25,7 +25,14 @@ import numpy as np
 import pandas as pd
 
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
-from src.errors import ApiMlError, DataUnavailableError, ModelNotLoadedError, UnknownModelError
+from src.data_quality import is_stale
+from src.errors import (
+    ApiMlError,
+    DataUnavailableError,
+    ModelNotLoadedError,
+    NotEnoughDataError,
+    UnknownModelError,
+)
 from src.modal_client import call_modal
 from src.trend_common import backtest_predict_df, derive_trend_output
 
@@ -34,6 +41,14 @@ def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
     """Historico OHLCV de un ticker con la feature macro ya alineada (ver ``src.lstm``)."""
     df = fetch_history(symbol, days)
     return attach_macro_feature(df, MACRO_COLUMN, fetch_macro_series(days))
+
+
+def _refuse_stale(df: pd.DataFrame, symbol: str) -> None:
+    """Sin movimiento de precio (ej. A3) ningun indicador significa nada: no se predice."""
+    if is_stale(df):
+        raise NotEnoughDataError(
+            f"{symbol}: la serie casi no tiene movimiento de precio (datos estancados)"
+        )
 
 
 @runtime_checkable
@@ -83,6 +98,7 @@ class TrendService:
             raise ModelNotLoadedError(
                 f"el modelo '{self.name}' no esta entrenado; correr su script de training"
             )
+        _refuse_stale(df, symbol)
         result = self._model.predict_df(df)
         result["symbol"] = symbol.strip().upper()
         result["model"] = self.name
@@ -125,6 +141,7 @@ class OnDemandTrendService:
         return self._predictor.version
 
     def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
+        _refuse_stale(df, symbol)
         result = self._predictor.predict_df(df)
         result["symbol"] = symbol.strip().upper()
         result["model"] = self.name
@@ -507,6 +524,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.arima_trend import ArimaTrendModel, translate_modal_arima_response
     from src.config import settings
     from src.lstm import TrendModel
+    from src.macro_trend import MacroTrendModel
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
@@ -514,6 +532,9 @@ def build_registry(history_days: int) -> TrendRegistry:
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
+    # "macro": modelo aparte basado en la macro argentina (riesgo pais, dolar, brecha, tasas);
+    # alza/baja a 20 ruedas. Necesita las series del data-colector (src.macro_data).
+    registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)

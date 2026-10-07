@@ -28,6 +28,7 @@ import torch
 from torch import nn
 
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_macro_series
+from src.data_quality import drop_stale
 from src.errors import NotEnoughDataError, StaleArtifactError
 from src.indicators import macd_histogram, rsi_series, sma
 
@@ -448,7 +449,7 @@ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd
     historico antes de sumarlo al dict.
     """
     macro = fetch_macro_series(days)
-    histories: dict[str, pd.DataFrame] = {}
+    raw: dict[str, pd.DataFrame] = {}
     for symbol in symbols:
         try:
             df = fetch_fn(symbol, days)
@@ -458,6 +459,9 @@ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd
         if len(df) < 60:
             print(f"  [skip] {symbol}: pocas ruedas ({len(df)})")
             continue
+        raw[symbol] = df
+    histories: dict[str, pd.DataFrame] = {}
+    for symbol, df in drop_stale(raw).items():  # series estancadas (ej. A3) fuera
         histories[symbol] = attach_macro_feature(df, MACRO_COLUMN, macro)
         print(f"  [ok]   {symbol}: {len(df)} ruedas")
     return histories
