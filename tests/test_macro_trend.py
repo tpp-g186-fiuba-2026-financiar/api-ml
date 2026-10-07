@@ -1,4 +1,4 @@
-"""Tests del modelo de tendencia "macro" (sin red)."""
+"""Tests del modelo macro."""
 
 import sys
 

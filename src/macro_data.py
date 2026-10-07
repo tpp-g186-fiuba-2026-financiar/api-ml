@@ -1,14 +1,4 @@
-"""Series macro argentinas, servidas por el data-colector, como DataFrame diario.
-
-El data-colector es el unico que habla con fuentes externas (ArgentinaDatos, BCRA):
-cachea en Postgres y expone ``/macro/argdatos/{serie}`` y ``/interest-rate/ar/{serie}``.
-Aca solo se consumen y se arman como una tabla diaria lista para el modelo ``macro``.
-
-Retrasos conservadores (misma regla con la que se midio el modelo, ver
-``notebooks/investigacion_macro``): las cotizaciones y el riesgo pais se usan con 2
-dias de retraso y las series del BCRA, que se publican con demora, con 5. Nunca se usa
-un dato que a esa fecha todavia no estaba disponible.
-"""
+"""Series macro de Argentina servidas por el data-colector, como tabla diaria."""
 
 from __future__ import annotations
 
@@ -34,7 +24,6 @@ SERIES: dict[str, tuple[str, str, int]] = {
     "badlar": ("interest-rate/ar", "BADLAR", 5),
     "base_monetaria": ("interest-rate/ar", "BASE_MONETARIA", 5),
 }
-# Sin estas el modelo no puede calcular sus variables principales.
 REQUIRED = ("ccl", "oficial", "riesgo_pais", "badlar")
 
 
@@ -46,7 +35,7 @@ def _base_url() -> str:
 
 
 def fetch_collector_series(route: str, series: str) -> pd.Series:
-    """Una serie diaria del data-colector (``ts`` en ms, ``value`` como texto)."""
+    """Serie diaria del data-colector."""
     url = f"{_base_url()}/{route}/{series}"
     try:
         resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
@@ -55,7 +44,7 @@ def fetch_collector_series(route: str, series: str) -> pd.Series:
     except (requests.RequestException, ValueError) as exc:
         raise DataUnavailableError(f"no se pudo obtener {route}/{series}: {exc}") from exc
 
-    # data-colector responde siempre HTTP 200 y codifica el error en el body.
+    # el data-colector responde 200 y manda el error en el body
     if payload.get("status") != 200:
         reason = (payload.get("message") or {}).get("error", "error desconocido")
         raise DataUnavailableError(f"data-colector no pudo obtener {route}/{series}: {reason}")
@@ -71,7 +60,7 @@ def fetch_collector_series(route: str, series: str) -> pd.Series:
 
 
 def build_macro_frame(raw: dict[str, pd.Series], end: pd.Timestamp | None = None) -> pd.DataFrame:
-    """Tabla diaria (calendario completo, con relleno hacia adelante) y retrasos aplicados."""
+    """Tabla diaria con relleno hacia adelante y el retraso de cada serie."""
     if not raw:
         raise DataUnavailableError("no hay series macro disponibles")
     last = max(s.index[-1] for s in raw.values())
@@ -87,7 +76,7 @@ def build_macro_frame(raw: dict[str, pd.Series], end: pd.Timestamp | None = None
 
 
 def fetch_argentina_macro() -> pd.DataFrame:
-    """Descarga todas las series. Si falta alguna de ``REQUIRED`` no se predice (no se inventa)."""
+    """Descarga las series; falla si falta alguna de ``REQUIRED``."""
     raw: dict[str, pd.Series] = {}
     errors: list[str] = []
     for name, (route, series, _lag) in SERIES.items():
@@ -109,7 +98,7 @@ _CACHE: dict[str, pd.DataFrame] = {}
 
 
 def todays_macro_frame() -> pd.DataFrame:
-    """Macro de hoy: una descarga por dia y por proceso (el modelo predice por ticker)."""
+    """Macro de hoy, una descarga por dia y por proceso."""
     key = dt.date.today().isoformat()
     if key not in _CACHE:
         frame = fetch_argentina_macro()

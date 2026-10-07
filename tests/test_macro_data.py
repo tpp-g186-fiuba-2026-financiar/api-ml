@@ -1,4 +1,4 @@
-"""Tests del acceso a las series macro del data-colector (sin red)."""
+"""Tests de las series macro del data-colector."""
 
 from unittest.mock import Mock, patch
 
@@ -85,7 +85,6 @@ def test_build_macro_frame_is_daily_forward_filled_and_lagged() -> None:
         "reservas": series([1.0, 2.0, 3.0, 4.0, 5.0, 6.0, 7.0, 8.0]),
     }
     frame = build_macro_frame(raw)
-    # CCL se retrasa 2 dias y las reservas del BCRA 5: nunca se ve un dato de "hoy".
     assert SERIES["ccl"][2] == 2 and SERIES["reservas"][2] == 5
     assert frame.loc["2026-01-05", "ccl"] == 120.0  # el 5/1 solo se conoce lo del 3/1
     assert frame.loc["2026-01-08", "reservas"] == 3.0

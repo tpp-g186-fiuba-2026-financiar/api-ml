@@ -1,4 +1,4 @@
-"""Tests del control de series estancadas y del RSI sin movimiento de precio (sin red)."""
+"""Tests de series estancadas y RSI sin movimiento."""
 
 import numpy as np
 import pandas as pd

@@ -1,10 +1,4 @@
-"""Control de calidad de las series de precios antes de entrenar o predecir.
-
-Una serie cuyo precio casi no se mueve (ej. A3: sin cambio en ~91% de las ruedas)
-rompe cualquier indicador: el RSI daba 100 ("sobrecompra") sin que pasara nada, y
-las features derivadas no significan nada. Esas series se descartan del
-entrenamiento y no se predicen.
-"""
+"""Control de series de precios sin movimiento (ej. A3)."""
 
 from __future__ import annotations
 
@@ -14,7 +8,7 @@ STALE_MAX_UNCHANGED = 0.30
 
 
 def is_stale(df: pd.DataFrame) -> bool:
-    """True si el precio no cambia en mas del 30% de las ruedas (datos inutilizables)."""
+    """True si el precio no cambia en mas del 30% de las ruedas."""
     if len(df) < 2:
         return True
     unchanged = (df["close"].diff().dropna() == 0).mean()

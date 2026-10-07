@@ -1,10 +1,6 @@
 name: Reentrenar modelo macro
 
-# El modelo "macro" depende del regimen macro de Argentina (riesgo pais, dolar, tasas): entrenado
-# una sola vez pierde calidad (ver notebooks/investigacion_macro/README.md). Se reentrena el
-# primer dia habil de cada mes con las series que sirve el data-colector.
-# Ojo: necesita que el data-colector desplegado tenga los endpoints /macro/argdatos/* y el
-# arreglo de /interest-rate/ar/* (ver data-colector/ENDPOINTS.md).
+# Reentrena el modelo macro el primer dia de cada mes. Requiere el data-colector con /macro/*.
 on:
   schedule:
     - cron: "0 22 1 * *"
@@ -31,10 +27,7 @@ jobs:
 
       - name: Reentrenar
         env:
-          # Historicos y series macro salen del data-colector (settings.py trae su URL por default).
           DATA_SOURCE: collector
-        # Si el candidato no supera el AUC minimo fuera de muestra, no se guarda el artefacto
-        # (ver --min-auc en src/train_macro.py) y el paso siguiente no encuentra cambios.
         run: python -m src.train_macro
 
       - name: Commitear el artefacto actualizado

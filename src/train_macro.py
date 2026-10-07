@@ -1,18 +1,4 @@
-"""Entrenamiento del modelo "macro" (ver ``src.macro_trend``).
-
-Uso:
-
-    python -m src.train_macro                        # las 20 acciones del universo medido
-    python -m src.train_macro --tickers GGAL YPFD    # subconjunto
-
-Necesita el data-colector (historicos de precios y series macro). Pensado para correr
-seguido (ver ``.github/workflows/retrain-macro.yml``): el modelo depende del regimen
-macro y entrenado una sola vez pierde calidad.
-
-Gate de seguridad: si el candidato no supera ``--min-auc`` en validacion fuera de muestra,
-no se guarda y queda el artefacto vigente (un cron sin nadie mirando no debe pisar un
-buen modelo con uno peor).
-"""
+"""Entrena el modelo macro: ``python -m src.train_macro``."""
 
 from __future__ import annotations
 
@@ -30,7 +16,6 @@ DEFAULT_MIN_AUC = 0.52
 def main() -> None:
     parser = argparse.ArgumentParser(description="Entrena el modelo de tendencia 'macro'.")
     parser.add_argument("--tickers", nargs="*", help="Tickers a usar (default: universo medido).")
-    # Con toda la historia disponible (~10 anios): es con lo que se midio el modelo.
     parser.add_argument("--days", type=int, default=4000)
     parser.add_argument("--horizon", type=int, default=HORIZON)
     parser.add_argument("--out", default=settings.macro_model_path, help="Ruta del artefacto .pkl")

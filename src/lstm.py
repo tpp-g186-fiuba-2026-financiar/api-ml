@@ -461,7 +461,7 @@ def fetch_histories(symbols: Iterable[str], days: int, fetch_fn) -> dict[str, pd
             continue
         raw[symbol] = df
     histories: dict[str, pd.DataFrame] = {}
-    for symbol, df in drop_stale(raw).items():  # series estancadas (ej. A3) fuera
+    for symbol, df in drop_stale(raw).items():
         histories[symbol] = attach_macro_feature(df, MACRO_COLUMN, macro)
         print(f"  [ok]   {symbol}: {len(df)} ruedas")
     return histories

@@ -44,7 +44,7 @@ def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
 
 
 def _refuse_stale(df: pd.DataFrame, symbol: str) -> None:
-    """Sin movimiento de precio (ej. A3) ningun indicador significa nada: no se predice."""
+    """No se predicen series sin movimiento de precio."""
     if is_stale(df):
         raise NotEnoughDataError(
             f"{symbol}: la serie casi no tiene movimiento de precio (datos estancados)"
@@ -532,8 +532,6 @@ def build_registry(history_days: int) -> TrendRegistry:
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
-    # "macro": modelo aparte basado en la macro argentina (riesgo pais, dolar, brecha, tasas);
-    # alza/baja a 20 ruedas. Necesita las series del data-colector (src.macro_data).
     registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())

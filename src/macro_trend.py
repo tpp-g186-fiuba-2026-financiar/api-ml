@@ -1,29 +1,4 @@
-"""Modelo de tendencia "macro": alza/baja a 20 ruedas a partir de la macro argentina.
-
-Por que existe (ver ``notebooks/investigacion_macro/README.md``): con indicadores
-tecnicos de la propia accion ningun modelo distingue subas de bajas (AUC ~0.50: azar).
-Las variables macro de Argentina -- riesgo pais, dolar CCL/MEP/oficial y la brecha,
-tasa BADLAR, reservas y base monetaria -- si lo hacen, en los dos sentidos:
-AUC 0.60 a 20 ruedas (0.63 a 30, 0.66 a 40), medido con walk-forward 2020-2026
-(reentrenando cada ~6 meses), con intervalo de confianza por encima de 0.5 y positivo
-en 6 de los 7 anios; el placebo (macro desordenada en el tiempo) vuelve a 0.53-0.55.
-
-Es un modelo *aparte* de LSTM / XGBoost / Transformer / ARIMA: convive con ellos en el
-registro y entra solo al comparador, al consenso y al paper trading.
-
-Dos advertencias que el producto debe respetar:
-
-- La senal viene de **niveles** de variables lentas (riesgo pais, tasas, brecha): hay
-  pocos regimenes macro independientes en 6 anios, asi que el margen real es mas
-  incierto de lo que sugiere el intervalo. Hay que reentrenarlo seguido (los regimenes
-  cambian: entrenado una sola vez en 2022 cae a 0.53-0.56) y confirmarlo con paper trading.
-- "baja" es mas debil que "alza": acierta ~45-53% contra una base de ~38-42%. Por eso
-  cada senal se emite solo en los extremos de lo que el modelo vio fuera de muestra y la
-  respuesta incluye ``probability_down``.
-
-Ensamble de dos modelos distintos (gradient boosting y Extra Trees) sobre las mismas
-variables: lo medido es que el algoritmo importa poco, las variables si.
-"""
+"""Modelo "macro": predice alza/baja a 20 ruedas con variables macro de Argentina."""
 
 from __future__ import annotations
 
@@ -47,13 +22,11 @@ from src.macro_data import todays_macro_frame
 from src.trend_common import derive_trend_output
 
 HORIZON = 20
-MIN_ROWS = 260  # la ventana mas larga de las features (250 ruedas) + margen
-# Acciones locales del Merval con historia completa, con las que se midio el modelo.
+MIN_ROWS = 260
 UNIVERSE = (
     "CRES", "ALUA", "TECO2", "BBAR", "METR", "SUPV", "BYMA", "PAMP", "COME", "CEPU",
     "EDN", "TRAN", "GGAL", "TXAR", "VALO", "TGSU2", "TGNO4", "YPFD", "BMA", "LOMA",
 )  # fmt: skip
-# Fechas de elecciones nacionales (la ultima es la proxima, fijada por ley: 4to domingo de octubre).
 ELECTIONS = pd.to_datetime(
     [
         "2017-10-22", "2019-08-11", "2019-10-27", "2021-09-12", "2021-11-14",
@@ -74,16 +47,12 @@ MACRO_FEATURES = [
     "a_mep_ccl", "a_blue_gap", "a_of20", "a_rp", "a_rp_chg5", "a_rp_chg20", "a_rp_z",
     "a_res20", "a_res60", "a_badlar", "a_badlar_chg20", "a_bm20", "a_real_rate",
 ]  # fmt: skip
-# Sin el numero de mes ni el dia de la semana: con 6 anios de datos son puro sobreajuste.
 EVENT_FEATURES = ["e_days_to_el", "e_days_since_el", "e_el_window", "e_month_end", "e_aguinaldo"]
 FEATURES = TECH_FEATURES + MACRO_FEATURES + EVENT_FEATURES
 
 
-# --------------------------------------------------------------------------- #
-# Features
-# --------------------------------------------------------------------------- #
 def technical_features(df: pd.DataFrame) -> pd.DataFrame:
-    """Indicadores propios de la accion (solo datos <= t), una fila por rueda."""
+    """Indicadores tecnicos de la accion."""
     c, o, h, lo = df["close"], df["open"], df["high"], df["low"]
     volume = df["volume"].replace(0, np.nan)
     log_c = np.log(c)
@@ -135,7 +104,7 @@ def technical_features(df: pd.DataFrame) -> pd.DataFrame:
 
 
 def macro_features(macro: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame:
-    """Variables macro argentinas (ver ``src.macro_data``) alineadas hacia atras a ``index``."""
+    """Variables macro alineadas a ``index`` con el ultimo dato conocido."""
     ccl, oficial = macro["ccl"], macro["oficial"]
     rp = macro["riesgo_pais"]
     a = pd.DataFrame(index=macro.index)
@@ -158,19 +127,18 @@ def macro_features(macro: pd.DataFrame, index: pd.DatetimeIndex) -> pd.DataFrame
     a["a_badlar"] = macro["badlar"]
     a["a_badlar_chg20"] = macro["badlar"].diff(20)
     a["a_bm20"] = np.log(_col(macro, "base_monetaria")).diff(20)
-    # Tasa BADLAR contra la depreciacion del CCL anualizada: tasa real en dolares aproximada.
     a["a_real_rate"] = macro["badlar"] - (np.log(ccl).diff(20) * (365 / 20) * 100)
     a = a.replace([np.inf, -np.inf], np.nan)
     return a.reindex(index, method="ffill")[MACRO_FEATURES]
 
 
 def _col(macro: pd.DataFrame, name: str) -> pd.Series:
-    """Columna opcional: si el data-colector no la sirvio queda en NaN (el modelo la tolera)."""
+    """Columna opcional: si falta queda en NaN."""
     return macro[name] if name in macro.columns else pd.Series(np.nan, index=macro.index)
 
 
 def event_features(index: pd.DatetimeIndex) -> pd.DataFrame:
-    """Cercania a elecciones y fin de mes / aguinaldo (estructurales, no estacionalidad por mes)."""
+    """Cercania a elecciones, fin de mes y aguinaldo."""
     days = index.values.astype("datetime64[D]")
     elections = ELECTIONS.values.astype("datetime64[D]")
     to_next = [
@@ -193,15 +161,12 @@ def event_features(index: pd.DatetimeIndex) -> pd.DataFrame:
 
 
 def build_features(df: pd.DataFrame, macro: pd.DataFrame) -> pd.DataFrame:
-    """Matriz de variables de una accion (una fila por rueda), con el orden de ``FEATURES``."""
+    """Variables de una accion, en el orden de ``FEATURES``."""
     f = technical_features(df)
     f = f.join(macro_features(macro, df.index)).join(event_features(df.index))
     return f[FEATURES]
 
 
-# --------------------------------------------------------------------------- #
-# Modelo
-# --------------------------------------------------------------------------- #
 @dataclass
 class MacroConfig:
     horizon: int = HORIZON
@@ -258,7 +223,6 @@ class MacroTrendModel:
     def version(self) -> str:
         return "untrained" if self.trained_at is None else f"macro-{self.trained_at}"
 
-    # ------------------------------------------------------------------ #
     def _panel(self, histories: dict[str, pd.DataFrame], macro: pd.DataFrame) -> pd.DataFrame:
         h = self.config.horizon
         frames = []
@@ -268,18 +232,12 @@ class MacroTrendModel:
             f["ticker"] = symbol
             frames.append(f)
         panel = pd.concat(frames)
-        panel = panel[panel["fwd"].notna() & (panel["fwd"] != 0)]  # sin cambio no hay direccion
+        panel = panel[panel["fwd"].notna() & (panel["fwd"] != 0)]
         panel["down"] = (panel["fwd"] < 0).astype(int)
         return panel.sort_index(kind="stable")
 
     def _oos_scores(self, panel: pd.DataFrame) -> pd.DataFrame:
-        """Predicciones fuera de muestra del ultimo tramo de fechas, con reentrenos sucesivos.
-
-        Cada bloque se predice con un modelo entrenado solo con fechas anteriores (y una
-        purga de ``horizon`` ruedas): es exactamente lo que le pasa al modelo en produccion
-        entre un reentrenamiento y el siguiente, asi que sus puntajes sirven para calibrar
-        umbrales coherentes con el modelo final.
-        """
+        """Predicciones fuera de muestra del ultimo tramo, con reentrenos sucesivos."""
         cfg = self.config
         days = np.sort(panel.index.unique())
         first = int(len(days) * (1 - cfg.oos_fraction))
@@ -306,7 +264,7 @@ class MacroTrendModel:
         return pd.concat(parts)
 
     def fit_panel(self, panel: pd.DataFrame) -> dict[str, float]:
-        """Mide y calibra fuera de muestra, y entrena el modelo final con todo el panel."""
+        """Calibra umbrales fuera de muestra y entrena el modelo final."""
         cfg = self.config
         oos = self._oos_scores(panel)
         p, down = oos["p"].to_numpy(), oos["down"].to_numpy()
@@ -343,7 +301,6 @@ class MacroTrendModel:
         self.tickers = sorted(histories)
         return self.fit_panel(panel)
 
-    # ------------------------------------------------------------------ #
     def probability_down(self, df: pd.DataFrame) -> float:
         if self._models is None:
             raise NotEnoughDataError("el modelo no esta entrenado")
@@ -371,7 +328,6 @@ class MacroTrendModel:
         out["probability_up"] = round(1 - p_down, 4)
         return out
 
-    # ------------------------------------------------------------------ #
     def save(self, path: str | Path) -> None:
         if self._models is None:
             raise NotEnoughDataError("no hay un modelo entrenado para guardar")
@@ -413,8 +369,6 @@ class MacroTrendModel:
             )
             model._models = blob["models"]
         except (TypeError, KeyError) as exc:
-            # Un artefacto de una version anterior no debe tumbar el arranque de la API:
-            # el registro lo reporta como "no cargado" igual que a un modelo sin entrenar.
             raise StaleArtifactError(
                 f"el artefacto 'macro' tiene un formato desactualizado ({exc!r}): "
                 "hay que reentrenarlo"
