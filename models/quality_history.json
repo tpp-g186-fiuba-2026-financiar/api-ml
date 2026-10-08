@@ -21,5 +21,28 @@
       "xgboost-modal": 0.2784,
       "transformer": -0.0148
     }
+  },
+  {
+    "date": "2026-10-08",
+    "period": {
+      "from": "2026-07-22",
+      "to": "2026-09-29"
+    },
+    "n_resolved": 7574,
+    "paper_accuracy": {
+      "arima": 0.5176,
+      "lstm": 0.467,
+      "lstm-modal": 0.5046,
+      "transformer": 0.509,
+      "xgboost": 0.4843,
+      "xgboost-modal": 0.4885
+    },
+    "gap_accuracy": {
+      "lstm": 0.0423,
+      "lstm-modal": 0.0047,
+      "xgboost": 0.275,
+      "xgboost-modal": 0.2708,
+      "transformer": -0.009
+    }
   }
 ]
