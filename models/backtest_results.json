@@ -1,0 +1,154 @@
+{
+  "run_at": "2026-09-03T03:19:34Z",
+  "params": {
+    "days": 750,
+    "step": 10,
+    "min_history": 200,
+    "tickers": [
+      "GGAL",
+      "YPFD"
+    ]
+  },
+  "results": {
+    "lstm": {
+      "version": "lstm-20260831T233222Z",
+      "overall": {
+        "n_predictions": 108,
+        "mae_logret": 0.050109,
+        "rmse_logret": 0.071777,
+        "directional_accuracy": 0.5093,
+        "neutral_rate": 0.7685,
+        "avg_strategy_logret": 0.005025,
+        "avg_buy_hold_logret": 0.011475,
+        "signal_hit_rate": 0.48
+      },
+      "per_ticker": {
+        "GGAL": {
+          "n_predictions": 54,
+          "mae_logret": 0.05519,
+          "rmse_logret": 0.081264,
+          "directional_accuracy": 0.537,
+          "neutral_rate": 0.7037,
+          "avg_strategy_logret": 0.006005,
+          "avg_buy_hold_logret": 0.009553,
+          "signal_hit_rate": 0.4375
+        },
+        "YPFD": {
+          "n_predictions": 54,
+          "mae_logret": 0.045029,
+          "rmse_logret": 0.060829,
+          "directional_accuracy": 0.4815,
+          "neutral_rate": 0.8333,
+          "avg_strategy_logret": 0.004044,
+          "avg_buy_hold_logret": 0.013397,
+          "signal_hit_rate": 0.5556
+        }
+      }
+    },
+    "xgboost": {
+      "version": "xgb-20260829T024049Z",
+      "overall": {
+        "n_predictions": 108,
+        "mae_logret": 0.038533,
+        "rmse_logret": 0.053162,
+        "directional_accuracy": 0.7593,
+        "neutral_rate": 0.537,
+        "avg_strategy_logret": 0.030147,
+        "avg_buy_hold_logret": 0.011475,
+        "signal_hit_rate": 0.92
+      },
+      "per_ticker": {
+        "GGAL": {
+          "n_predictions": 54,
+          "mae_logret": 0.04061,
+          "rmse_logret": 0.054879,
+          "directional_accuracy": 0.7963,
+          "neutral_rate": 0.5,
+          "avg_strategy_logret": 0.033955,
+          "avg_buy_hold_logret": 0.009553,
+          "signal_hit_rate": 0.9259
+        },
+        "YPFD": {
+          "n_predictions": 54,
+          "mae_logret": 0.036455,
+          "rmse_logret": 0.051387,
+          "directional_accuracy": 0.7222,
+          "neutral_rate": 0.5741,
+          "avg_strategy_logret": 0.026339,
+          "avg_buy_hold_logret": 0.013397,
+          "signal_hit_rate": 0.913
+        }
+      }
+    },
+    "transformer": {
+      "version": "transformer-20260828T040100Z",
+      "overall": {
+        "n_predictions": 108,
+        "mae_logret": 0.049677,
+        "rmse_logret": 0.072249,
+        "directional_accuracy": 0.5,
+        "neutral_rate": 0.9537,
+        "avg_strategy_logret": 0.00199,
+        "avg_buy_hold_logret": 0.011475,
+        "signal_hit_rate": 0.6
+      },
+      "per_ticker": {
+        "GGAL": {
+          "n_predictions": 54,
+          "mae_logret": 0.054007,
+          "rmse_logret": 0.08132,
+          "directional_accuracy": 0.5556,
+          "neutral_rate": 0.9259,
+          "avg_strategy_logret": 0.004205,
+          "avg_buy_hold_logret": 0.009553,
+          "signal_hit_rate": 0.75
+        },
+        "YPFD": {
+          "n_predictions": 54,
+          "mae_logret": 0.045348,
+          "rmse_logret": 0.061861,
+          "directional_accuracy": 0.4444,
+          "neutral_rate": 0.9815,
+          "avg_strategy_logret": -0.000224,
+          "avg_buy_hold_logret": 0.013397,
+          "signal_hit_rate": 0.0
+        }
+      }
+    },
+    "ensemble": {
+      "version": "ensemble(xgboost:xgb-20260829T024049Z:0.704,lstm:lstm-20260831T233222Z:0.589,transformer:transformer-20260828T040100Z:0.569)",
+      "overall": {
+        "n_predictions": 108,
+        "mae_logret": 0.045066,
+        "rmse_logret": 0.063633,
+        "directional_accuracy": 0.6852,
+        "neutral_rate": 0.8148,
+        "avg_strategy_logret": 0.016101,
+        "avg_buy_hold_logret": 0.011475,
+        "signal_hit_rate": 1.0
+      },
+      "per_ticker": {
+        "GGAL": {
+          "n_predictions": 54,
+          "mae_logret": 0.048685,
+          "rmse_logret": 0.069656,
+          "directional_accuracy": 0.6852,
+          "neutral_rate": 0.7963,
+          "avg_strategy_logret": 0.019792,
+          "avg_buy_hold_logret": 0.009553,
+          "signal_hit_rate": 1.0
+        },
+        "YPFD": {
+          "n_predictions": 54,
+          "mae_logret": 0.041447,
+          "rmse_logret": 0.056977,
+          "directional_accuracy": 0.6852,
+          "neutral_rate": 0.8333,
+          "avg_strategy_logret": 0.012411,
+          "avg_buy_hold_logret": 0.013397,
+          "signal_hit_rate": 1.0
+        }
+      }
+    }
+  }
+}

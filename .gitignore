@@ -44,7 +44,9 @@ htmlcov/
 models/*.pkl
 models/*.joblib
 models/*.onnx
-models/backtest_results.json
+# models/backtest_results.json SI se commitea: es la linea base que lee
+# src/quality_report.py en el cron diario (paper-trading.yml).
+!models/backtest_results.json
 # models/paper_trading_ledger.json SI se commitea: es historial acumulado
 # entre corridas del cron diario (.github/workflows/paper-trading.yml), no
 # el output descartable de una corrida suelta como el backtest.
