@@ -1,6 +1,6 @@
 # Calidad de los modelos: backtest vs paper trading
 
-Generado el 2026-10-10. Periodo de paper trading analizado: 2026-07-22 a 2026-10-02 (7637 predicciones ya comprobadas, 860 pendientes). Backtest del 2026-09-03T03:19:34Z.
+Generado el 2026-10-13. Periodo de paper trading analizado: 2026-07-22 a 2026-10-06 (7639 predicciones ya comprobadas, 880 pendientes). Backtest del 2026-09-03T03:19:34Z.
 
 Lectura rapida: la **accuracy direccional** es el % de veces que el modelo acerto si el precio subia o bajaba (50% = azar). El backtest puede estar inflado porque los modelos ya vieron parte de esa historia al entrenar; el paper trading solo cuenta predicciones hechas antes de conocer el resultado, asi que es la medida real. Con menos de 30 predicciones no se saca ninguna conclusion.
 
@@ -9,15 +9,15 @@ Lectura rapida: la **accuracy direccional** es el % de veces que el modelo acert
 | Modelo (paper) | N paper | Acc. backtest | Acc. paper | Brecha | IC 95% paper | Paper vs azar | Ranking backtest → paper |
 | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
 | lstm | 1786 | 50.9% | 46.7% | +4.2 pp | 44.4% – 49.0% | peor que el azar | 2 → 3 |
-| lstm-modal | 246 | 50.9% | 50.4% | +0.5 pp | 44.2% – 56.6% | indistinguible del azar | — |
+| lstm-modal | 247 | 50.9% | 50.6% | +0.3 pp | 44.4% – 56.8% | indistinguible del azar | — |
 | xgboost | 1782 | 75.9% | 48.4% | +27.5 pp ⚠️ | 46.1% – 50.7% | indistinguible del azar | 1 → 2 |
-| xgboost-modal | 247 | 75.9% | 50.2% | +25.7 pp ⚠️ | 44.0% – 56.4% | indistinguible del azar | — |
+| xgboost-modal | 248 | 75.9% | 50.4% | +25.5 pp ⚠️ | 44.2% – 56.6% | indistinguible del azar | — |
 | transformer | 1786 | 50.0% | 50.9% | -0.9 pp | 48.6% – 53.2% | indistinguible del azar | 3 → 1 |
 
 **Alertas:**
 
 - xgboost: el backtest sobreestima la accuracy en 27.5 pp (umbral 10 pp)
-- xgboost-modal: el backtest sobreestima la accuracy en 25.7 pp (umbral 10 pp)
+- xgboost-modal: el backtest sobreestima la accuracy en 25.5 pp (umbral 10 pp)
 
 Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas:
 
@@ -91,6 +91,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 1 (pocos datos) | 100.0% | — | 100.0% | 54.9% |
 | 2026-W39 | 53 | 35.9% | 30.8% | 26.4% | 50.0% |
 | 2026-W40 | 40 | 52.5% | 54.5% | 17.5% | 50.4% |
+| 2026-W41 | 1 (pocos datos) | 100.0% | — | 100.0% | 50.6% |
 
 ### transformer
 
@@ -134,6 +135,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 1 (pocos datos) | 100.0% | — | 100.0% | 50.0% |
 | 2026-W39 | 53 | 45.3% | 41.2% | 35.9% | 48.8% |
 | 2026-W40 | 40 | 57.5% | 51.8% | 32.5% | 50.2% |
+| 2026-W41 | 1 (pocos datos) | 100.0% | — | 100.0% | 50.4% |
 
 ## 3. Que se probo y si mejoro (por version del modelo)
 
