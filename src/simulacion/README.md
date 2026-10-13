@@ -1,0 +1,82 @@
+# Simulacion historica
+
+Responde "si hubiera seguido las recomendaciones del sistema desde tal fecha, como le habria ido
+a la cartera". Se para en una fecha pasada, entrena los modelos locales con datos hasta ese dia y
+avanza rueda por rueda: reentrena como el cron de produccion, predice, rebalancea carteras y las
+valoriza al cierre. Nunca usa datos posteriores al dia simulado.
+
+Solo modelos locales de api_ml (LSTM, XGBoost, Transformer, ARIMA, macro). Los de Modal quedan
+afuera. No toca `models/` ni ningun servicio de produccion: todo corre contra un snapshot en disco.
+
+## Pasos
+
+```bash
+# 1. Bajar los datos una vez (Yahoo + data-colector) a simulacion/snapshot/
+python -m src.simulacion.snapshot
+
+# 2. Correr la simulacion (se puede cortar y retomar; con un --hasta posterior la extiende)
+python -m src.simulacion.simulador --nombre desde-2026-06-semanal --desde 2026-06-01 --reentreno semanal
+
+# 3. Reporte: resumen.json, reporte.md y graficos/ (no vuelve a correr nada)
+python -m src.simulacion.reporte --nombre desde-2026-06-semanal
+
+# Opcional: rehacer las carteras con otras reglas, sin reentrenar
+python -m src.simulacion.rearmar --nombre desde-2026-06-semanal --salida comision-1pct --comision 0.01
+python -m src.simulacion.reporte --nombre desde-2026-06-semanal --rearmado comision-1pct
+```
+
+En PC-Escritorio, con la imagen de api_ml:
+
+```bash
+docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e MPLCONFIGDIR=/tmp -v "$PWD":/app -w /app \
+  api_ml-service_api_ml:latest python -m src.simulacion.simulador --nombre ... --desde ...
+```
+
+## Que replica de produccion
+
+| Pieza | Como en produccion |
+|---|---|
+| Reentreno LSTM / XGBoost / Transformer | `promote_if_better` (`src/retrain_guard.py`), con el sidecar `.score.json` del vigente. `--reentreno diario` (como `retrain.yml`) o `semanal` (ultima rueda de cada semana) |
+| Reentreno macro | El 1 de cada mes, se guarda si el AUC fuera de muestra llega a `DEFAULT_MIN_AUC` |
+| ARIMA | Se ajusta por ticker en cada prediccion |
+| Backtest en vivo | `backtest_predict_df` (ultimas 60 ruedas, paso 5). Macro, solo sobre predicciones con vista (`backtest_sin_neutrales`) |
+| Consenso | `compute_consensus` con el backtest solo de LSTM / XGBoost (`_LIVE_BACKTEST_MODELS`) |
+| Black-Litterman | `entry` con cartera ancla equal weight, GARCH en la diagonal y universo panel lider |
+
+## Carteras
+
+Todas parten de `--capital` (default $1.000.000), pagan `--comision` (default 0,5%) por operacion,
+se rebalancean al cierre cada `--rebalanceo` ruedas (default 5) y solo invierten en el panel lider.
+Lo que no se asigna queda en efectivo, sin interes.
+
+- `senal_<modelo>`: partes iguales entre los tickers donde el modelo da "alza".
+- `bl_<modelo>_<perfil>`: pesos de Black-Litterman con las predicciones del modelo.
+- `consenso_<perfil>`: partes iguales entre los tickers con consenso de compra.
+- `senal_mejor_<seleccion>` y `bl_mejor_<seleccion>_<perfil>`: en cada ticker sigue al modelo con
+  mejor accuracy del backtest en vivo, ajustada por cantidad de casos (mismo criterio que
+  `pick_best_model` del back). `prod` elige entre LSTM y XGBoost; `todos`, entre los cinco.
+- Benchmarks: equal weight con rebalanceo, equal weight buy & hold y Merval.
+
+## Archivos de una corrida (`simulacion/resultados/<nombre>/`)
+
+| Archivo | Contenido |
+|---|---|
+| `config.json`, `estado.json` | Parametros y estado para retomar |
+| `predicciones.jsonl` | Cada prediccion de cada modelo, ticker y rueda |
+| `backtests.jsonl` | Backtest en vivo por modelo y ticker en los dias de rebalanceo |
+| `elecciones.jsonl` | Modelo elegido por ticker en cada rebalanceo |
+| `promociones.jsonl` | Cada reentreno: score del candidato, del vigente y si se promovio |
+| `pesos.jsonl`, `operaciones.jsonl`, `valores.jsonl` | Pesos objetivo, operaciones y valor diario de cada cartera (con CCL) |
+| `errores.jsonl` | Rebalanceos de Black-Litterman que fallaron (la cartera queda como estaba) |
+| `artefactos/versiones/` | Cada version promovida de cada modelo, por fecha |
+
+Las metricas y el reporte salen de estos archivos, asi que cambiarlos no obliga a volver a
+correr. `rearmar` rehace las carteras a partir de `predicciones.jsonl` y `backtests.jsonl`; con
+los mismos parametros reproduce `valores.jsonl` exacto. Como el backtest se guarda solo en los
+dias de rebalanceo, el `--rebalanceo` de un rearmado tiene que ser multiplo del original.
+
+## Limitaciones
+
+Estan listadas al final de cada `reporte.md`: ejecucion al cierre, efectivo sin interes, sesgo de
+supervivencia del universo, macro entrenado con el historico del snapshot, consenso sin los
+modelos de Modal, horizontes mezclados en Black-Litterman "todos" y un unico periodo de mercado.
