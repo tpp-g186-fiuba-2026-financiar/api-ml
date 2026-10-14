@@ -10,6 +10,7 @@ mismos umbrales, mismo formato de respuesta).
 
 from __future__ import annotations
 
+from collections.abc import Iterable
 from typing import Protocol
 
 import numpy as np
@@ -32,6 +33,106 @@ class _DfPredictor(Protocol):
     def predict_df(self, df: pd.DataFrame) -> dict: ...
 
 
+def senal(expected_return: float, neutral_band: float) -> str:
+    """alza / baja / neutral segun el retorno esperado y la banda neutral."""
+    if expected_return > neutral_band:
+        return "alza"
+    if expected_return < -neutral_band:
+        return "baja"
+    return "neutral"
+
+
+def centrar_predicciones(
+    resultados: dict[str, dict],
+    neutral_band: float,
+    universo: Iterable[str] | None = None,
+    minimo: int = 3,
+) -> dict[str, dict]:
+    """Resta a cada prediccion el promedio del dia y recalcula la senal.
+
+    Para modelos con target relativo (exceso sobre el promedio del mercado,
+    ver ``TransformerTrainConfig.target``): el modelo predice cada ticker por
+    separado y a veces predice que casi todos le ganan al mercado el mismo
+    dia, lo que no puede pasar. Centrando el retorno log predicho (el
+    promedio se toma sobre ``universo``, default todos) la senal queda como
+    "mejor / peor que el resto" de verdad. ``resultados`` es
+    ``{ticker: respuesta de predict_df}``; si hay menos de ``minimo`` tickers
+    del universo no hay promedio representativo y se devuelve sin cambios.
+    """
+    universo = set(universo) if universo is not None else None
+    retornos = {
+        t: float(np.log(r["predicted_close"] / r["last_close"]))
+        for t, r in resultados.items()
+        if r.get("predicted_close") and r.get("last_close")
+    }
+    base = [v for t, v in retornos.items() if universo is None or t in universo]
+    if len(base) < minimo:
+        return resultados
+    media = float(np.mean(base))
+    centrados = {}
+    for t, r in resultados.items():
+        if t not in retornos:
+            centrados[t] = r
+            continue
+        lr = retornos[t] - media
+        centrados[t] = {
+            **r,
+            "predicted_close": round(float(r["last_close"] * np.exp(lr)), 4),
+            "signal": senal(float(np.expm1(lr)), neutral_band),
+        }
+    return centrados
+
+
+def senal_por_cuantil(
+    resultados: dict[str, dict], cuantil: float, minimo: int = 5
+) -> dict[str, dict]:
+    """Recalcula la senal por posicion en el dia en vez de por banda fija.
+
+    Para modelos de panel, cuyo retorno predicho es relativo (sin la media del
+    dia) y chico frente a la banda de +-1%: "alza" para el ``cuantil``
+    superior de los retornos predichos del dia, "baja" para el inferior y
+    "neutral" el resto (con 20 tickers y 0,15: 3 y 3). Con menos de ``minimo``
+    tickers no hay ranking representativo y todo queda "neutral". No cambia
+    ``predicted_close``.
+    """
+    if not 0 < cuantil < 0.5:
+        raise ValueError("cuantil tiene que estar entre 0 y 0,5")
+    retornos = pd.Series(
+        {t: float(np.log(r["predicted_close"] / r["last_close"])) for t, r in resultados.items()},
+        dtype=float,
+    )
+    rango = retornos.rank(pct=True)
+    salida = {}
+    for t, r in resultados.items():
+        if len(retornos) < minimo:
+            signal = "neutral"
+        elif rango[t] > 1 - cuantil:
+            signal = "alza"
+        elif rango[t] <= cuantil:
+            signal = "baja"
+        else:
+            signal = "neutral"
+        salida[t] = {**r, "signal": signal}
+    return salida
+
+
+def ic_por_fecha(pred: np.ndarray, real: np.ndarray, fechas: np.ndarray) -> float:
+    """Promedio, entre fechas, de la correlacion de rangos (Spearman) entre
+    prediccion y retorno real de los tickers de esa fecha.
+
+    Mide si el modelo ordena bien los tickers, independientemente del nivel
+    general del mercado. Fechas con menos de 3 tickers o prediccion constante
+    no cuentan; sin ninguna fecha valida devuelve 0.
+    """
+    df = pd.DataFrame({"fecha": fechas, "pred": pred, "real": real})
+    ics = []
+    for _, g in df.groupby("fecha"):
+        if len(g) < 3 or g["pred"].nunique() < 2 or g["real"].nunique() < 2:
+            continue
+        ics.append(g["pred"].rank().corr(g["real"].rank()))
+    return float(np.mean(ics)) if ics else 0.0
+
+
 def derive_trend_output(
     df: pd.DataFrame,
     log_return: float,
@@ -51,12 +152,7 @@ def derive_trend_output(
     expected_return = float(np.expm1(log_return))
     predicted_close = float(last_close * np.exp(log_return))
 
-    if expected_return > neutral_band:
-        signal = "alza"
-    elif expected_return < -neutral_band:
-        signal = "baja"
-    else:
-        signal = "neutral"
+    signal = senal(expected_return, neutral_band)
 
     rsi_value = rsi(df["close"].to_numpy(dtype=np.float64))
     if rsi_value is None:
