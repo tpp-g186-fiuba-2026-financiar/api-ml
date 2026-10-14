@@ -2,17 +2,24 @@ from __future__ import annotations
 
 import numpy as np
 import pytest
-from conftest import make_predict_function
+from conftest import fake_ohlcv, make_predict_function
 
 from src.black_litterman.black_litterman import (
+    AVERSION_AL_RIESGO,
+    DELTA_MERCADO,
     MIN_RUEDAS,
+    PESO_MAXIMO_POR_PERFIL,
+    TAU,
     BlackLittermanPrediction,
     Prediccion,
-    construir_omega_tradicional,
+    construir_omega,
     entry,
     get_data,
     get_predicciones,
+    horizonte_comun,
+    obtener_aversion_al_riesgo,
     obtener_precios_actuales,
+    tasa_al_horizonte,
 )
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
@@ -66,20 +73,36 @@ class TestPrediccion:
         )
         p = Prediccion(t)
         assert p.ticker == "YPFD"
+        assert p.horizonte == 5
 
 
 class TestGetPredicciones:
-    def test_arma_q_en_el_mismo_orden_que_tickers(self):
+    def test_mantiene_el_orden_de_tickers(self):
         tickers = ["GGAL", "YPFD", "PAMP"]
         predict = make_predict_function({"GGAL": 0.05, "YPFD": -0.01, "PAMP": 0.0})
-        q = get_predicciones(tickers, predict)
-        assert q == pytest.approx([0.05, -0.01, 0.0])
+        predicciones = get_predicciones(tickers, predict)
+        assert [p.ticker for p in predicciones] == tickers
+        assert [p.prediccion for p in predicciones] == pytest.approx([0.05, -0.01, 0.0])
 
-    def test_devuelve_lista_no_objetos(self):
-        tickers = ["GGAL"]
-        predict = make_predict_function({"GGAL": 0.02})
-        q = get_predicciones(tickers, predict)
-        assert all(isinstance(x, float) for x in q)
+
+class TestHorizonteComun:
+    def test_devuelve_el_horizonte_compartido(self):
+        predicciones = get_predicciones(["GGAL", "YPFD"], make_predict_function({}))
+        assert horizonte_comun(predicciones) == 5
+
+    def test_horizontes_distintos_lanza_error(self):
+        predicciones = get_predicciones(["GGAL", "YPFD"], make_predict_function({}))
+        predicciones[1].horizonte = 10
+        with pytest.raises(ValueError, match="horizontes distintos"):
+            horizonte_comun(predicciones)
+
+
+class TestTasaAlHorizonte:
+    def test_tna_a_5_ruedas(self):
+        assert tasa_al_horizonte(0.252, 5) == pytest.approx(0.005)
+
+    def test_tasa_cero(self):
+        assert tasa_al_horizonte(0.0, 5) == 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -119,26 +142,50 @@ class TestObtenerPreciosActuales:
 
 
 # --------------------------------------------------------------------------- #
-# construir_omega_tradicional
+# construir_omega
 # --------------------------------------------------------------------------- #
-class TestConstruirOmegaTradicional:
+class TestConstruirOmega:
     def test_omega_es_diagonal(self):
         sigma = np.array([[4e-4, 1e-5, 0.0], [1e-5, 5e-4, 0.0], [0.0, 0.0, 3e-4]])
-        omega = construir_omega_tradicional(sigma, tau=0.05)
+        omega = construir_omega(sigma, tau=0.05, confianza=0.3)
         off_diagonal = omega - np.diag(np.diag(omega))
         assert np.all(off_diagonal == 0)
 
-    def test_omega_ii_es_tau_por_sigma_ii(self):
+    def test_confianza_media_es_el_omega_clasico(self):
+        # c = 0.5 => Omega_ii = tau * Sigma_ii (mezcla mitad prior, mitad vista).
         sigma = np.diag([4e-4, 5e-4, 3e-4])
-        tau = 0.05
-        omega = construir_omega_tradicional(sigma, tau)
-        assert np.diag(omega) == pytest.approx(tau * np.diag(sigma))
+        omega = construir_omega(sigma, tau=0.05, confianza=0.5)
+        assert np.diag(omega) == pytest.approx(0.05 * np.diag(sigma))
 
-    def test_mayor_tau_da_mayor_incertidumbre(self):
+    def test_menos_confianza_da_mas_incertidumbre(self):
         sigma = np.diag([4e-4, 5e-4])
-        omega_bajo = construir_omega_tradicional(sigma, tau=0.01)
-        omega_alto = construir_omega_tradicional(sigma, tau=0.1)
-        assert np.all(np.diag(omega_alto) > np.diag(omega_bajo))
+        omega_baja = construir_omega(sigma, tau=0.05, confianza=0.05)
+        omega_alta = construir_omega(sigma, tau=0.05, confianza=0.8)
+        assert np.all(np.diag(omega_baja) > np.diag(omega_alta))
+
+    def test_acepta_una_confianza_por_ticker(self):
+        sigma = np.diag([4e-4, 4e-4])
+        omega = construir_omega(sigma, tau=0.05, confianza=np.array([0.5, 0.2]))
+        assert omega[0, 0] == pytest.approx(0.05 * 4e-4)
+        assert omega[1, 1] == pytest.approx(0.05 * 4e-4 * 4)
+
+    @pytest.mark.parametrize("confianza", [0.0, 1.0, -0.1, 1.5])
+    def test_confianza_fuera_de_rango_lanza_error(self, confianza):
+        with pytest.raises(ValueError, match="confianza"):
+            construir_omega(np.diag([4e-4]), tau=0.05, confianza=confianza)
+
+    def test_mueve_el_posterior_una_fraccion_c_hacia_la_vista(
+        self, usuario_sin_cartera, historiales_3_tickers, precios_3_tickers
+    ):
+        # Con un solo activo (sin correlaciones que mezclen vistas) el
+        # retorno posterior es exactamente Pi + c * (Q - Pi).
+        historiales = {"GGAL": historiales_3_tickers["GGAL"]}
+        matriz = MatrizDeCovarianza(["GGAL"], historiales, horizonte=5)
+        ancla = CarteraAncla(usuario_sin_cartera, ["GGAL"], precios_3_tickers)
+        c = 0.2
+        omega = construir_omega(matriz.matriz, TAU, c)
+        bl = BlackLittermanPrediction(usuario_sin_cartera, matriz, ancla, [0.04], omega)
+        assert bl.bl_mu()[0] == pytest.approx(bl.pi[0] + c * (0.04 - bl.pi[0]))
 
 
 # --------------------------------------------------------------------------- #
@@ -232,75 +279,74 @@ class TestGetDataFiltraPorMinimoDeRuedas:
 def bl_prediction(usuario_con_cartera, historiales_3_tickers, precios_3_tickers):
     tickers = list(historiales_3_tickers.keys())
     cartera_ancla = CarteraAncla(usuario_con_cartera, tickers, precios_3_tickers)
-    matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
+    matriz = MatrizDeCovarianza(tickers, historiales_3_tickers, horizonte=5)
     q = [0.02, -0.01, 0.0]
-    omega = construir_omega_tradicional(matriz.matriz, tau=0.05)
+    omega = construir_omega(matriz.matriz, TAU, 0.3)
     return BlackLittermanPrediction(usuario_con_cartera, matriz, cartera_ancla, q, omega)
 
 
-class TestObtenerAlfa:
-    @pytest.mark.parametrize(
-        "perfil,esperado",
-        [
-            (PerfilRiesgo.CONSERVADOR, 0.75),
-            (PerfilRiesgo.MODERADO, 0.5),
-            (PerfilRiesgo.ARRIESGADO, 0.25),
-        ],
-    )
-    def test_mapeo_de_perfil(self, perfil, esperado, historiales_3_tickers, precios_3_tickers):
+class TestPerfilDeRiesgo:
+    @pytest.mark.parametrize("perfil", list(PerfilRiesgo))
+    def test_usa_aversion_y_techo_del_perfil(
+        self, perfil, historiales_3_tickers, precios_3_tickers
+    ):
         usuario = Usuario(perfil_riesgo=perfil, tenencias=[{"ticker": "GGAL", "cantidad": 1}])
         tickers = list(historiales_3_tickers.keys())
         cartera_ancla = CarteraAncla(usuario, tickers, precios_3_tickers)
         matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
-        omega = construir_omega_tradicional(matriz.matriz, tau=0.05)
+        omega = construir_omega(matriz.matriz, TAU, 0.3)
         bl = BlackLittermanPrediction(usuario, matriz, cartera_ancla, [0.0, 0.0, 0.0], omega)
-        assert bl.perfil_de_riesgo == esperado
+        assert bl.aversion_al_riesgo == AVERSION_AL_RIESGO[perfil]
+        assert bl.peso_maximo == PESO_MAXIMO_POR_PERFIL[perfil]
 
-    def test_orden_correcto_conservador_mayor_que_arriesgado(self):
-        # Regresion conceptual: conservador tiene que pesar MAS (se pega mas
-        # al equilibrio), no menos, que arriesgado.
-        from src.black_litterman.black_litterman import (
-            ALFA_ARRIESGADO,
-            ALFA_CONSERVADOR,
-            ALFA_MODERADO,
+    def test_conservador_mas_averso_y_con_menos_techo_que_arriesgado(self):
+        assert (
+            AVERSION_AL_RIESGO[PerfilRiesgo.CONSERVADOR]
+            > AVERSION_AL_RIESGO[PerfilRiesgo.MODERADO]
+            > AVERSION_AL_RIESGO[PerfilRiesgo.ARRIESGADO]
+        )
+        assert (
+            PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.CONSERVADOR]
+            < PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.MODERADO]
+            < PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.ARRIESGADO]
         )
 
-        assert ALFA_CONSERVADOR > ALFA_MODERADO > ALFA_ARRIESGADO
-
-
-class TestInvTauSigmaCache:
-    def test_segundo_llamado_no_explota(self, bl_prediction):
-        # Regresion del bug "== None" contra un ndarray ya calculado
-        # (ValueError: the truth value of an array...).
-        primero = bl_prediction._inv_tau_sigma()
-        segundo = bl_prediction._inv_tau_sigma()
-        assert primero is segundo  # mismo objeto cacheado, no recalculado
-
-    def test_valor_correcto(self, bl_prediction):
-        esperado = np.linalg.inv(bl_prediction.tau * bl_prediction.matriz_de_covarianza.matriz)
-        assert bl_prediction._inv_tau_sigma() == pytest.approx(esperado)
-
-    def test_bl_mu_no_explota_al_llamar_dos_veces_internamente(self, bl_prediction):
-        # bl_mu() llama a _inv_tau_sigma() mas de una vez -- si el cacheo
-        # estuviera roto, esto es justamente lo que explotaba antes.
-        mu = bl_prediction.bl_mu()
-        assert mu.shape == (3,)
-        assert not np.isnan(mu).any()
+    def test_perfil_desconocido_lanza_error(self):
+        with pytest.raises(ValueError, match="perfil de riesgo desconocido"):
+            obtener_aversion_al_riesgo("inexistente")
 
 
 class TestGetPi:
-    def test_pi_es_delta_por_sigma_por_w_ref(self, bl_prediction):
-        esperado = bl_prediction.perfil_de_riesgo * np.dot(
-            bl_prediction.matriz_de_covarianza.matriz, bl_prediction.cartera_ancla.vector
+    def test_pi_es_delta_mercado_por_sigma_por_w_ancla(self, bl_prediction):
+        esperado = DELTA_MERCADO * (
+            bl_prediction.matriz_de_covarianza.matriz @ bl_prediction.cartera_ancla.vector
         )
         assert bl_prediction.pi == pytest.approx(esperado)
 
-    def test_pi_reproduce_w_ref_si_omega_es_infinito(
+    def test_pi_no_depende_del_perfil_del_usuario(self, historiales_3_tickers, precios_3_tickers):
+        # El equilibrio es del mercado: el perfil solo entra en el optimizador.
+        tickers = list(historiales_3_tickers.keys())
+        matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
+        omega = construir_omega(matriz.matriz, TAU, 0.3)
+        pis = []
+        for perfil in PerfilRiesgo:
+            usuario = Usuario(perfil_riesgo=perfil, tenencias=[{"ticker": "GGAL", "cantidad": 1}])
+            ancla = CarteraAncla(usuario, tickers, precios_3_tickers)
+            pis.append(BlackLittermanPrediction(usuario, matriz, ancla, [0.0] * 3, omega).pi)
+        assert pis[0] == pytest.approx(pis[1])
+        assert pis[0] == pytest.approx(pis[2])
+
+
+class TestBlMu:
+    def test_vistas_iguales_al_prior_devuelven_el_prior(self, bl_prediction):
+        # Si las vistas coinciden con el equilibrio no hay nada que mover,
+        # cualquiera sea Omega.
+        bl_prediction.q = bl_prediction.pi.copy()
+        assert bl_prediction.bl_mu() == pytest.approx(bl_prediction.pi)
+
+    def test_sin_confianza_en_las_vistas_queda_en_el_prior(
         self, usuario_con_cartera, historiales_3_tickers, precios_3_tickers
     ):
-        # Chequeo de sanidad clasico de Black-Litterman: si las vistas no
-        # tienen ninguna confianza (Omega enorme), el resultado optimo
-        # deberia reproducir la cartera de referencia.
         tickers = list(historiales_3_tickers.keys())
         cartera_ancla = CarteraAncla(usuario_con_cartera, tickers, precios_3_tickers)
         matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
@@ -308,8 +354,15 @@ class TestGetPi:
         bl = BlackLittermanPrediction(
             usuario_con_cartera, matriz, cartera_ancla, [0.5, 0.5, 0.5], omega_gigante
         )
-        mu_bl = bl.bl_mu()
-        assert mu_bl == pytest.approx(bl.pi, abs=1e-6)
+        assert bl.bl_mu() == pytest.approx(bl.pi, abs=1e-6)
+
+    def test_coincide_con_la_formula_cerrada(self, bl_prediction):
+        tau_sigma_inv = np.linalg.inv(bl_prediction.tau * bl_prediction.sigma)
+        omega_inv = np.linalg.inv(bl_prediction.omega)
+        esperado = np.linalg.inv(tau_sigma_inv + omega_inv) @ (
+            tau_sigma_inv @ bl_prediction.pi + omega_inv @ bl_prediction.q
+        )
+        assert bl_prediction.bl_mu() == pytest.approx(esperado)
 
 
 class TestBlSigma:
@@ -422,9 +475,9 @@ class TestEntryEndToEnd:
         variancias_garch = {"GGAL": 0.05, "YPFD": 1e-6, "PAMP": 0.05}
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
+            def forecast_variance_horizonte(self, df, horizonte):
                 # identificamos el ticker por el precio base (unico por ticker
-                # en la fixture), ya que forecast_daily_variance solo recibe el df
+                # en la fixture), ya que el forecast solo recibe el df
                 ultimo_close = float(df["close"].iloc[0])
                 if ultimo_close == pytest.approx(100.0, abs=5):
                     return variancias_garch["GGAL"]
@@ -459,7 +512,7 @@ class TestEntryEndToEnd:
         capturada = {}
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
+            def forecast_variance_horizonte(self, df, horizonte):
                 return 0.0123
 
         import src.black_litterman.black_litterman as bl_mod
@@ -505,3 +558,69 @@ class TestEntryEndToEnd:
         concentracion_conservador = np.max(resultados[PerfilRiesgo.CONSERVADOR])
         concentracion_arriesgado = np.max(resultados[PerfilRiesgo.ARRIESGADO])
         assert concentracion_conservador <= concentracion_arriesgado + 1e-6
+
+    def test_vista_fuerte_gana_peso_sobre_la_ancla(self, usuario_sin_cartera):
+        # Regresion: con el delta del optimizador inflado (x1000) las vistas
+        # no movian nada y salia la cartera de minima varianza. Con un
+        # universo de 6 acciones y ancla equal weight, la que tiene una vista
+        # muy positiva tiene que terminar con mas que su 1/6.
+        historiales = {f"T{i}": fake_ohlcv(seed=10 + i, n=300) for i in range(6)}
+        tickers = list(historiales)
+        predict = make_predict_function({"T0": 0.10})
+
+        _, pesos = entry(
+            Usuario(perfil_riesgo=PerfilRiesgo.ARRIESGADO, tenencias=[]),
+            predict,
+            tickers=tickers,
+            fetch_hist=self._fetch_hist(historiales),
+        )
+        assert pesos[0] > 1 / 6 + 0.02
+
+    def test_descuenta_la_tasa_libre_de_riesgo_de_las_vistas(
+        self, usuario_con_cartera, historiales_3_tickers, monkeypatch
+    ):
+        import src.black_litterman.black_litterman as bl_mod
+
+        capturado = {}
+        original = bl_mod.BlackLittermanPrediction
+
+        class SpyBlackLitterman(original):
+            def __init__(self, usuario, matriz, ancla, q, omega, **kwargs):
+                capturado["q"] = list(q)
+                super().__init__(usuario, matriz, ancla, q, omega, **kwargs)
+
+        monkeypatch.setattr(bl_mod, "BlackLittermanPrediction", SpyBlackLitterman)
+        tickers_in = list(historiales_3_tickers.keys())
+        entry(
+            usuario_con_cartera,
+            make_predict_function({"GGAL": 0.02, "YPFD": -0.01, "PAMP": 0.0}),
+            tickers=tickers_in,
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
+            tasa_libre_riesgo_anual=0.252,  # 0.5% a 5 ruedas
+        )
+        assert capturado["q"] == pytest.approx([0.015, -0.015, -0.005])
+
+    def test_sigma_queda_al_horizonte_de_las_vistas(
+        self, usuario_con_cartera, historiales_3_tickers, monkeypatch
+    ):
+        import src.black_litterman.black_litterman as bl_mod
+
+        capturado = {}
+        original = bl_mod.BlackLittermanPrediction
+
+        class SpyBlackLitterman(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                capturado["matriz"] = self.matriz_de_covarianza
+
+        monkeypatch.setattr(bl_mod, "BlackLittermanPrediction", SpyBlackLitterman)
+        tickers_in = list(historiales_3_tickers.keys())
+        entry(
+            usuario_con_cartera,
+            make_predict_function({}),
+            tickers=tickers_in,
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
+        )
+        diaria = MatrizDeCovarianza(tickers_in, historiales_3_tickers).matriz
+        assert capturado["matriz"].horizonte == 5
+        assert capturado["matriz"].matriz == pytest.approx(5 * diaria)

@@ -63,6 +63,26 @@ class TestComportamientoEsperado:
         assert concentracion_alto < concentracion_bajo
 
 
+class TestEscala:
+    def test_optimiza_aunque_el_objetivo_sea_muy_chico(self):
+        # Regresion: con varianzas ~1e-6 el objetivo quedaba por debajo de
+        # la tolerancia por defecto de SLSQP y devolvia w0 (pesos iguales).
+        # Con mu = 0 la solucion es la de minima varianza: 0.8 / 0.2.
+        mu = np.zeros(2)
+        sigma = np.diag([1e-6, 4e-6])
+        w = optimizar_pesos(mu, sigma, delta=2.5)
+        assert w == pytest.approx([0.8, 0.2], abs=1e-4)
+
+    def test_reproduce_la_cartera_de_equilibrio(self):
+        # Si mu = delta * Sigma * w_eq (prior de Black-Litterman) y se
+        # optimiza con el mismo delta, el optimo es w_eq.
+        sigma = np.array([[4e-3, 1.5e-3, 1e-3], [1.5e-3, 6e-3, 2e-3], [1e-3, 2e-3, 5e-3]])
+        w_eq = np.array([0.5, 0.2, 0.3])
+        mu = 2.5 * sigma @ w_eq
+        w = optimizar_pesos(mu, sigma, delta=2.5)
+        assert w == pytest.approx(w_eq, abs=1e-4)
+
+
 class TestCasosBorde:
     def test_un_solo_activo_se_lleva_todo(self):
         mu = np.array([0.03])

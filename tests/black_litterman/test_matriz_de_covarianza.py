@@ -30,6 +30,40 @@ class TestConstruccionBasica:
         assert m.tickers == tickers
 
 
+class TestEstimacion:
+    def test_escala_por_el_horizonte(self, historiales_3_tickers):
+        tickers = list(historiales_3_tickers.keys())
+        diaria = MatrizDeCovarianza(tickers, historiales_3_tickers).matriz
+        semanal = MatrizDeCovarianza(tickers, historiales_3_tickers, horizonte=5).matriz
+        assert semanal == pytest.approx(5 * diaria)
+
+    def test_shrinkage_mejora_el_condicionamiento(self):
+        # Pocas ruedas y activos casi colineales: la muestral queda casi
+        # singular, Ledoit-Wolf la vuelve invertible sin problemas.
+        base = fake_ohlcv(seed=1, n=30)
+        historiales = {f"T{i}": fake_ohlcv(seed=1, n=30) for i in range(3)}
+        historiales["T3"] = base.assign(close=base["close"] * 1.0001)
+        tickers = list(historiales)
+        m = MatrizDeCovarianza(tickers, historiales)
+
+        retornos = np.column_stack(
+            [
+                np.diff(historiales[t]["close"]) / historiales[t]["close"].to_numpy()[:-1]
+                for t in tickers
+            ]
+        )
+        muestral = np.cov(retornos, rowvar=False)
+        assert np.linalg.cond(m.matriz) < np.linalg.cond(muestral)
+
+    def test_un_solo_dia_en_comun_lanza_error(self):
+        historiales = {
+            "A": fake_ohlcv(seed=1, n=10, start="2024-01-01"),
+            "B": fake_ohlcv(seed=2, n=10, start="2024-01-09"),
+        }
+        with pytest.raises(ValueError, match="no hay fechas en comun"):
+            MatrizDeCovarianza(["A", "B"], historiales)
+
+
 class TestAlineacionDeFechas:
     def test_sin_fechas_en_comun_lanza_error(self):
         historiales = {
@@ -73,7 +107,7 @@ class TestMatrizGarch:
         correlacion_original = m.matriz / np.outer(desvios_originales, desvios_originales)
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
+            def forecast_variance_horizonte(self, df, horizonte):
                 # devuelve una varianza bien distinta a la muestral, para
                 # poder chequear que efectivamente se reemplaza.
                 return 0.01
@@ -95,11 +129,25 @@ class TestMatrizGarch:
         llamados = []
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
-                llamados.append(df)
+            def forecast_variance_horizonte(self, df, horizonte):
+                llamados.append((df, horizonte))
                 return 0.005
 
         m.matriz_garch(historiales_3_tickers, FakeGarch())
         assert len(llamados) == 3
-        for df in llamados:
+        for df, horizonte in llamados:
             assert isinstance(df, pd.DataFrame)
+            assert horizonte == 1
+
+    def test_pide_el_forecast_al_horizonte_de_la_matriz(self, historiales_3_tickers):
+        tickers = list(historiales_3_tickers.keys())
+        m = MatrizDeCovarianza(tickers, historiales_3_tickers, horizonte=5)
+        horizontes = []
+
+        class FakeGarch:
+            def forecast_variance_horizonte(self, df, horizonte):
+                horizontes.append(horizonte)
+                return 0.005
+
+        m.matriz_garch(historiales_3_tickers, FakeGarch())
+        assert horizontes == [5, 5, 5]

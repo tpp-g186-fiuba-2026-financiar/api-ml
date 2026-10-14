@@ -34,6 +34,9 @@ class Settings(BaseSettings):
     # de agregar esta feature estaba caida del lado de data-colector.
     macro_rate_source: str = "us"
     macro_rate_series: str = "TNX"
+    # Serie del BCRA (via data-colector, /interest-rate/ar/{serie}) usada
+    # como tasa libre de riesgo en Black-Litterman (TNA en %).
+    tasa_libre_riesgo_series: str = "BADLAR"
 
     # --- Modelos alternativos deployados en Modal (repo `models`) ---
     # Ninguno configurado por default: hay que pegar la URL de `modal deploy`
