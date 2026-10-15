@@ -1,8 +1,8 @@
 """Modelo "contexto": alza/baja a 20 ruedas usando el contexto del mercado local.
 
-Los modelos que miran solo la serie de la accion miden ~azar (AUC 0.51 en la
-exploracion de ``notebooks/exploracion_prediccion``). Lo unico que mejoro de
-forma consistente fue sumar contexto del mercado: hacia donde viene la canasta
+Los modelos que miran solo la serie de la accion miden ~azar (AUC ~0.51 en
+validacion walk-forward). Lo unico que mejoro de forma consistente fue sumar
+contexto del mercado: hacia donde viene la canasta
 de lideres, cuan abierta o cerrada esta la suba (amplitud) y como viene la
 accion frente a esa canasta (fuerza relativa y beta). Ensamble de arboles con
 peso decreciente en el tiempo y senal solo en los extremos, con umbrales

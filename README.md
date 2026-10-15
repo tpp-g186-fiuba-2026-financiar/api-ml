@@ -190,8 +190,6 @@ si fuera de muestra no le ganó a su tasa base.
 
 - Código: `src/context_trend.py`, `src/train_context.py` (`make train-context`).
 - Se reentrena el primer día de cada mes (`.github/workflows/retrain-contexto.yml`, usa Yahoo directo).
-- Validación walk-forward y justificación: [`notebooks/exploracion_prediccion/INFORME.md`](notebooks/exploracion_prediccion/INFORME.md)
-  y `validar_modelo_contexto.py` (usa el mismo código de producción).
 
 ## Modelo macro de tendencia
 
