@@ -3,7 +3,13 @@
 import numpy as np
 import pytest
 
-from src.trend_common import centrar_predicciones, ic_por_fecha, senal, senal_por_cuantil
+from src.trend_common import (
+    acierto_balanceado,
+    centrar_predicciones,
+    ic_por_fecha,
+    senal,
+    senal_por_cuantil,
+)
 
 
 def _pred(last: float, predicted: float, signal: str = "alza") -> dict:
@@ -63,3 +69,15 @@ def test_ic_por_fecha() -> None:
     assert ic_por_fecha(pred, real, fechas) == pytest.approx(0.0)
     assert ic_por_fecha(pred[:4], real[:4], fechas[:4]) == pytest.approx(1.0)
     assert ic_por_fecha(pred[8:], real[8:], fechas[8:]) == 0.0
+
+
+def test_acierto_balanceado() -> None:
+    real = np.array([0.02, 0.01, 0.03, -0.01])
+    # Decir siempre "sube" da 0,5 aunque acierte 3 de 4.
+    assert acierto_balanceado(np.ones(4), real) == pytest.approx(0.5)
+    assert acierto_balanceado(np.sign(real), real) == pytest.approx(1.0)
+    # Acierta 2 de 3 subas y la baja: (2/3 + 1) / 2.
+    assert acierto_balanceado(np.array([1, 1, -1, -1]), real) == pytest.approx(5 / 6)
+    # Sin bajas cuenta solo el acierto en subas; sin casos, 0,5.
+    assert acierto_balanceado(np.array([1, -1]), np.array([0.1, 0.2])) == pytest.approx(0.5)
+    assert acierto_balanceado(np.array([]), np.array([])) == 0.5

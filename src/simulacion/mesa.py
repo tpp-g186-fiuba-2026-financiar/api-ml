@@ -25,6 +25,9 @@ from src.simulacion.estrategias import (
     normalizar,
     pesos_black_litterman,
     pesos_consenso,
+    pesos_cuantil,
+    pesos_histeresis,
+    pesos_inclinacion,
     pesos_senal,
     predicciones_del_mejor,
 )
@@ -38,6 +41,20 @@ MODELOS = ("lstm", "xgboost", "transformer", "arima", "macro")
 # eleccion de produccion (solo los que tienen backtest en vivo); "todos" suma
 # el resto de los locales.
 SELECCIONES = {"prod": MODELOS_CON_BACKTEST, "todos": MODELOS}
+# Modelos de panel (``predict_panel``) con predicciones generadas aparte
+# (``predicciones_panel``). Solo arman sus propias carteras: no entran en el
+# consenso ni en la eleccion del mejor modelo (no tienen backtest en vivo), asi
+# que sumarlos no cambia ninguna cartera de ``MODELOS``.
+MODELOS_PANEL = ("ensamble", "panel_transformer", "reversion")
+# Reglas de cartera que rotan menos que ``senal_`` (solo para modelos de panel):
+# prefijo -> descripcion.
+REGLAS_PANEL = {
+    "histeresis": "compra el 15% superior y mantiene mientras siga en el 30% superior",
+    "cuantil30": "partes iguales en el 30% superior",
+    "inclinado": "todo el panel, 1,5 partes a las 'alza' y 0,5 a las 'baja'",
+}
+CUANTIL_ENTRAR, CUANTIL_MANTENER = 0.15, 0.30
+INCLINACION = 0.5
 BENCHMARK_BUY_HOLD = "benchmark_equal_weight_buy_hold"
 BENCHMARK_REBALANCEO = "benchmark_equal_weight_rebalanceo"
 BENCHMARK_MERVAL = "benchmark_merval"
@@ -45,14 +62,20 @@ BENCHMARK_MERVAL = "benchmark_merval"
 Predicciones = dict[str, dict[str, dict]]  # modelo -> ticker -> prediccion o backtest
 
 
-def nombres_estrategias() -> list[str]:
+def nombres_estrategias(modelos_panel: tuple[str, ...] = ()) -> list[str]:
+    """Carteras de la mesa; las de ``modelos_panel`` van al final, despues de los benchmarks."""
     nombres = [f"senal_{m}" for m in MODELOS]
     nombres += [f"bl_{m}_{p.value}" for m in MODELOS for p in PERFILES]
     nombres += [f"consenso_{p.value}" for p in PERFILES]
     for seleccion in SELECCIONES:
         nombres.append(f"senal_mejor_{seleccion}")
         nombres += [f"bl_mejor_{seleccion}_{p.value}" for p in PERFILES]
-    return nombres + [BENCHMARK_BUY_HOLD, BENCHMARK_REBALANCEO]
+    nombres += [BENCHMARK_BUY_HOLD, BENCHMARK_REBALANCEO]
+    for m in modelos_panel:
+        nombres.append(f"senal_{m}")
+        nombres += [f"bl_{m}_{p.value}" for p in PERFILES]
+        nombres += [f"{regla}_{m}" for regla in REGLAS_PANEL]
+    return nombres
 
 
 @dataclass
@@ -66,12 +89,24 @@ class ResultadoRueda:
 
 
 class Mesa:
-    def __init__(self, snapshot: Snapshot, capital: float, comision: float, rebalanceo: int):
+    def __init__(
+        self,
+        snapshot: Snapshot,
+        capital: float,
+        comision: float,
+        rebalanceo: int,
+        modelos_panel: tuple[str, ...] = (),
+    ):
+        desconocidos = set(modelos_panel) - set(MODELOS_PANEL)
+        if desconocidos:
+            raise ValueError(f"modelos de panel desconocidos: {sorted(desconocidos)}")
         self.snapshot = snapshot
         self.capital = capital
         self.rebalanceo = rebalanceo
+        self.modelos_panel = tuple(modelos_panel)
         self.carteras = {
-            n: Cartera(n, efectivo=capital, comision=comision) for n in nombres_estrategias()
+            n: Cartera(n, efectivo=capital, comision=comision)
+            for n in nombres_estrategias(self.modelos_panel)
         }
         self.merval_base: float | None = None
         self.ruedas = 0
@@ -116,6 +151,15 @@ class Mesa:
 
         for modelo in MODELOS:
             senal_y_bl(modelo, predicciones.get(modelo, {}))
+        for modelo in self.modelos_panel:
+            preds = predicciones.get(modelo, {})
+            senal_y_bl(modelo, preds)
+            tenencias = set(self.carteras[f"histeresis_{modelo}"].tenencias)
+            objetivos[f"histeresis_{modelo}"] = pesos_histeresis(
+                preds, universo, tenencias, CUANTIL_ENTRAR, CUANTIL_MANTENER
+            )
+            objetivos[f"cuantil30_{modelo}"] = pesos_cuantil(preds, universo, CUANTIL_MANTENER)
+            objetivos[f"inclinado_{modelo}"] = pesos_inclinacion(preds, universo, INCLINACION)
 
         elecciones: list[dict] = []
         for seleccion, candidatos in SELECCIONES.items():

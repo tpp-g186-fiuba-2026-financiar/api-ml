@@ -38,8 +38,11 @@ from src.macro_data import SERIES, build_macro_frame, fetch_collector_series
 
 DEFAULT_DIR = "simulacion/snapshot"
 # Ruedas a descargar por ticker: alcanza para las 750 que usa produccion
-# antes de la fecha de inicio. No subir de 1825: con mas, ``fetch_history_yahoo``
-# pide ``range=max`` y Yahoo responde con velas mensuales en vez de diarias.
+# antes de la fecha de inicio. No subir de 1825 si los precios vienen de Yahoo:
+# con mas, ``fetch_history_yahoo`` pide ``range=max`` y Yahoo responde con velas
+# mensuales en vez de diarias. Desde el collector (``DATA_SOURCE=collector``) se
+# puede pedir mas (tiene ~10 anios diarios); el Merval, que siempre sale de
+# Yahoo, se baja igual con ``DEFAULT_DAYS`` como maximo.
 DEFAULT_DAYS = 1825
 
 _PRECIOS = "precios"
@@ -101,7 +104,7 @@ def download(directory: str | Path, days: int = DEFAULT_DAYS) -> dict:
 
     merval_ok = True
     try:
-        merval = fetch_merval(days)
+        merval = fetch_merval(min(days, DEFAULT_DAYS))
         _normalize_index(merval).to_csv(root / _MERVAL, index_label="date")
         print(f"  [ok]   merval: {len(merval)} ruedas")
     except ApiMlError as exc:
@@ -220,6 +223,17 @@ class Snapshot:
     def ccl_on(self, fecha: pd.Timestamp) -> float | None:
         """Dolar CCL publicado a ``fecha`` (para expresar las carteras en dolares)."""
         return self._last_until(self.macro_raw.get("ccl"), fecha)
+
+    def ccl_hasta(self, hasta: pd.Timestamp) -> pd.Series | None:
+        """Serie diaria del CCL hasta ``hasta`` inclusive, **sin** el retraso de
+        ``macro_frame``: cada dato con su propia fecha. Es para pasar precios a
+        dolares (``src.panel_datos``): el CCL de un dia se conoce al cierre de ese
+        dia; el retraso de produccion cubre la cache del data-colector, no la
+        fecha del dato."""
+        serie = self.macro_raw.get("ccl")
+        if serie is None:
+            return None
+        return serie.loc[serie.index <= hasta]
 
     def close_on(self, symbol: str, fecha: pd.Timestamp) -> float | None:
         """Ultimo cierre conocido de ``symbol`` a ``fecha`` (None si no cotizaba)."""

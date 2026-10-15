@@ -11,6 +11,10 @@ backtest se usa el ultimo guardado (de hasta ``rebalanceo original - 1`` ruedas
 antes). Solo lo usan el consenso y la eleccion del mejor modelo; las carteras
 de senal y Black-Litterman no dependen del backtest.
 
+Si ``predicciones.jsonl`` trae predicciones de modelos de panel
+(``mesa.MODELOS_PANEL``, generadas con ``predicciones_panel``), se suman sus
+carteras; las del resto quedan iguales.
+
 Uso:
     python -m src.simulacion.rearmar --nombre junio --salida comision-1pct --comision 0.01
     python -m src.simulacion.rearmar --nombre junio --salida rebalanceo-10 --rebalanceo 10
@@ -27,7 +31,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.simulacion.mesa import MODELOS_CON_BACKTEST, Mesa, Predicciones
+from src.simulacion.mesa import MODELOS_CON_BACKTEST, MODELOS_PANEL, Mesa, Predicciones
 from src.simulacion.simulador import RESULTADOS_DIR, guardar_rueda, silenciar_warnings
 from src.simulacion.snapshot import Snapshot
 
@@ -95,13 +99,19 @@ def rearmar(
     fechas = sorted(predicciones)
     if not fechas:
         raise SystemExit(f"{corrida} no tiene predicciones guardadas")
+    presentes = {m for por_modelo in predicciones.values() for m in por_modelo}
+    modelos_panel = tuple(m for m in MODELOS_PANEL if m in presentes)
+    if modelos_panel:
+        config["modelos_panel"] = list(modelos_panel)
 
     if salida.exists():
         shutil.rmtree(salida)
     salida.mkdir(parents=True)
     (salida / "config.json").write_text(json.dumps(config, indent=2))
 
-    mesa = Mesa(snapshot, config["capital"], config["comision"], config["rebalanceo"])
+    mesa = Mesa(
+        snapshot, config["capital"], config["comision"], config["rebalanceo"], modelos_panel
+    )
     for fecha in fechas:
         guardar_rueda(
             salida, mesa.operar(pd.Timestamp(fecha), predicciones[fecha], backtests[fecha])

@@ -97,6 +97,20 @@ def test_retorno_crudo_y_target_crudo() -> None:
     np.testing.assert_allclose(fp.target, fp.retorno, equal_nan=True)
 
 
+def test_target_absoluto_conserva_la_direccion() -> None:
+    panel = _panel()
+    sin_media = construir(panel, PreprocesoConfig())
+    absoluto = construir(panel, PreprocesoConfig(target="absoluto"))
+    m = absoluto.mascara_target
+    assert np.array_equal(sin_media.mascara_target, m)
+    assert np.array_equal(np.sign(absoluto.target[m]), np.sign(absoluto.retorno[m]))
+    assert np.abs(absoluto.target[m]).max() <= PreprocesoConfig().clip_target
+    # Restarle la media del dia da el target "sin_media".
+    centrado = np.where(m, absoluto.target, np.nan)
+    centrado = centrado - np.nanmean(centrado, axis=1, keepdims=True)
+    np.testing.assert_allclose(centrado[m], sin_media.target[m])
+
+
 def test_target_residual_saca_el_mercado() -> None:
     panel = _panel()
     sin_media = construir(panel, PreprocesoConfig())
@@ -130,7 +144,7 @@ def test_normalizar_por_vol_recorta() -> None:
         assert f[nombre].abs().max().max() <= 1.0
 
 
-@pytest.mark.parametrize("target", ["sin_media", "residual", "crudo"])
+@pytest.mark.parametrize("target", ["sin_media", "residual", "absoluto", "crudo"])
 def test_no_mira_el_futuro(target) -> None:
     """Features y mascara de la fecha t no cambian si se borran los datos
     posteriores a t; el target de t solo usa datos hasta t + horizonte."""

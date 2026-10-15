@@ -23,12 +23,16 @@ Cada muestra es un dia (todas sus acciones); un batch es un conjunto de dias.
 Perdida (``perdida``): ``"huber"`` sobre el target, ``"ic"`` (menos la
 correlacion de Pearson por dia entre score y target: IC diferenciable) o
 ``"combinada"`` (``huber + lambda_ic * (-ic)``). Cada dia pesa segun su
-antiguedad (``pesos_temporales``). Early stopping por IC (Spearman por dia) en
-validacion, con ``particion`` (gap = horizonte). ``n_semillas`` redes se
-promedian.
+antiguedad (``pesos_temporales``). Early stopping en validacion, con
+``particion`` (gap = horizonte), segun ``seleccion``: ``"ic"`` (Spearman por
+dia: ordenar bien las acciones) o ``"direccion"`` (``acierto_balanceado`` del
+signo del score contra el del target: acertar si sube o baja; tiene sentido
+con ``target="absoluto"``, que no le resta la media del dia). ``n_semillas``
+redes se promedian.
 
 Como los demas modelos de panel, predice con ``predict_panel(dfs)`` y recibe el
-CCL / la macro por ``proveedor(hasta) -> (ccl, macro)``.
+CCL / la macro por ``proveedor(hasta) -> (ccl, macro)``. ``save`` / ``load``
+persisten redes, config y normalizadores (no el proveedor: se pasa al cargar).
 """
 
 from __future__ import annotations
@@ -36,6 +40,7 @@ from __future__ import annotations
 import datetime as dt
 import math
 from dataclasses import asdict, dataclass
+from pathlib import Path
 
 import numpy as np
 import pandas as pd
@@ -43,9 +48,10 @@ import torch
 import torch.nn.functional as F
 from torch import nn
 
-from src.errors import ApiMlError, NotEnoughDataError
+from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
 from src.panel_datos import SECTORES, universo
 from src.panel_features import (
+    NOMBRES,
     FeaturesPanel,
     Normalizador,
     PreprocesoConfig,
@@ -53,9 +59,10 @@ from src.panel_features import (
     pesos_temporales,
 )
 from src.panel_gbm import RUEDAS_PREDICCION, Proveedor, features_y_contexto
-from src.trend_common import derive_trend_output, ic_por_fecha
+from src.trend_common import acierto_balanceado, derive_trend_output, ic_por_fecha
 
 PERDIDAS = ("huber", "ic", "combinada")
+SELECCIONES = ("ic", "direccion")
 SECTORES_LISTA = [*sorted(set(SECTORES.values())), "otro"]
 MIN_DIAS = 100
 
@@ -83,6 +90,8 @@ class PanelTransformerConfig:
     perdida: str = "combinada"
     lambda_ic: float = 1.0
     huber_delta: float = 1.0
+    # Metrica de early stopping en validacion (ver docstring del modulo).
+    seleccion: str = "ic"
     # Entrenamiento
     epocas: int = 60
     batch_dias: int = 16
@@ -95,10 +104,16 @@ class PanelTransformerConfig:
     n_semillas: int = 1
     seed: int = 0
 
+    def perdidas_validas(self) -> tuple[str, ...]:
+        """Perdidas que acepta la config (una subclase puede sumar las suyas)."""
+        return PERDIDAS
+
     def __post_init__(self) -> None:
         universo(self.universo)
-        if self.perdida not in PERDIDAS:
-            raise ValueError(f"perdida {self.perdida!r} desconocida ({PERDIDAS})")
+        if self.perdida not in self.perdidas_validas():
+            raise ValueError(f"perdida {self.perdida!r} desconocida ({self.perdidas_validas()})")
+        if self.seleccion not in SELECCIONES:
+            raise ValueError(f"seleccion {self.seleccion!r} desconocida ({SELECCIONES})")
         if self.d_model % self.nhead != 0:
             raise ValueError(
                 f"d_model ({self.d_model}) debe ser divisible por nhead ({self.nhead})"
@@ -203,13 +218,17 @@ def ic_pearson_por_dia(score: torch.Tensor, y: torch.Tensor, m: torch.Tensor) ->
 # Modelo
 # --------------------------------------------------------------------------- #
 class PanelTransformerModel:
+    # Lo que identifica al artefacto; una subclase con otra config los redefine.
+    ARQUITECTURA = "panel_transformer"
+    CONFIG = PanelTransformerConfig
+
     def __init__(
         self,
         config: PanelTransformerConfig | None = None,
         proveedor: Proveedor | None = None,
         dispositivo: str = "cpu",
     ):
-        self.config = config or PanelTransformerConfig()
+        self.config = config or self.CONFIG()
         self.proveedor = proveedor
         # Dispositivo de entrenamiento; las redes vuelven a CPU al terminar.
         self.dispositivo = dispositivo
@@ -289,7 +308,7 @@ class PanelTransformerModel:
         self.metrics = {
             "dias_train": int(len(dias_tr)),
             "dias_val": int(len(dias_va)),
-            "val_ic": round(float(np.mean([i["val_ic"] for i in por_red])), 4),
+            f"val_{cfg.seleccion}": round(float(np.mean([i["val"] for i in por_red])), 4),
             "epoca_mejor": [i["epoca_mejor"] for i in por_red],
         }
         return self.metrics
@@ -318,16 +337,20 @@ class PanelTransformerModel:
             total = total - peso * (ic * w).sum() / w.sum()
         return total
 
-    def _ic_validacion(self, red: _RedPanel, datos: dict, dias: torch.Tensor) -> float:
-        """IC de Spearman medio por dia en ``dias`` (la metrica de early stopping)."""
+    def _metrica_validacion(self, red: _RedPanel, datos: dict, dias: torch.Tensor) -> float:
+        """Metrica de early stopping en ``dias`` (mayor es mejor): IC de Spearman
+        medio por dia o acierto balanceado de la direccion, segun ``seleccion``."""
         red.eval()
         with torch.no_grad():
             scores = torch.cat(
                 [self._forward(red, datos, dias[i : i + 64]) for i in range(0, len(dias), 64)]
             )
         m = datos["m"][dias].cpu().numpy()
+        score, y = scores.cpu().numpy()[m], datos["y"][dias].cpu().numpy()[m]
+        if self.config.seleccion == "direccion":
+            return acierto_balanceado(score, y)
         fila, _ = np.nonzero(m)
-        return ic_por_fecha(scores.cpu().numpy()[m], datos["y"][dias].cpu().numpy()[m], fila)
+        return ic_por_fecha(score, y, fila)
 
     def _entrenar_red(
         self,
@@ -356,7 +379,7 @@ class PanelTransformerModel:
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizador, lr_lambda)
         va_t = torch.tensor(dias_va, device=disp)
-        mejor_ic, mejor_estado, epoca_mejor, sin_mejora = -math.inf, None, 0, 0
+        mejor, mejor_estado, epoca_mejor, sin_mejora = -math.inf, None, 0, 0
         for epoca in range(cfg.epocas):
             red.train()
             orden = rng.permutation(dias_tr)
@@ -371,25 +394,25 @@ class PanelTransformerModel:
                 perdida_epoca += perdida.item() * len(lote)
             scheduler.step()
 
-            ic_val = self._ic_validacion(red, datos, va_t)
-            ic_val = ic_val if np.isfinite(ic_val) else -1.0
-            if ic_val > mejor_ic + 1e-5:
-                mejor_ic, epoca_mejor, sin_mejora = ic_val, epoca + 1, 0
+            val = self._metrica_validacion(red, datos, va_t)
+            val = val if np.isfinite(val) else -1.0
+            if val > mejor + 1e-5:
+                mejor, epoca_mejor, sin_mejora = val, epoca + 1, 0
                 mejor_estado = {k: v.detach().clone() for k, v in red.state_dict().items()}
             else:
                 sin_mejora += 1
             if (epoca + 1) % 10 == 0 or epoca == 0:
                 print(
                     f"  epoca {epoca + 1:>3}/{cfg.epocas}  "
-                    f"perdida={perdida_epoca / len(orden):.5f}  val_ic={ic_val:.4f}"
+                    f"perdida={perdida_epoca / len(orden):.5f}  val_{cfg.seleccion}={val:.4f}"
                 )
             if sin_mejora >= cfg.paciencia:
-                print(f"  early stopping en epoca {epoca + 1} (mejor val_ic={mejor_ic:.4f})")
+                print(f"  early stopping en epoca {epoca + 1} (mejor val={mejor:.4f})")
                 break
 
         red.load_state_dict(mejor_estado)
         red.eval()
-        return red.cpu(), {"val_ic": mejor_ic, "epoca_mejor": epoca_mejor}
+        return red.cpu(), {"val": mejor, "epoca_mejor": epoca_mejor}
 
     # -------------------------------------------------------------- prediccion
     def predict_panel(self, dfs: dict[str, pd.DataFrame]) -> dict[str, dict]:
@@ -421,19 +444,84 @@ class PanelTransformerModel:
             scores = np.mean(
                 [self._forward(red, datos, dia)[0].numpy() for red in self._redes], axis=0
             )
-        h = self.config.horizonte
+        scores = self._ajustar_scores(scores, fp, ultimo)
         resultados = {}
         for n in np.nonzero(presentes)[0]:
             symbol = fp.tickers[n]
-            # El score esta en unidades de vol a `horizonte` ruedas: se lleva a retorno log.
-            log_return = float(scores[n]) * float(fp.vol[ultimo, n]) * np.sqrt(h)
-            resultados[symbol] = derive_trend_output(recortes[symbol], log_return, h)
+            log_return = self._a_log_return(float(scores[n]), float(fp.vol[ultimo, n]))
+            resultados[symbol] = derive_trend_output(
+                recortes[symbol], log_return, self.config.horizonte
+            )
         return resultados
+
+    def _ajustar_scores(self, scores: np.ndarray, fp: FeaturesPanel, dia: int) -> np.ndarray:
+        """Post-proceso de los scores ``[N]`` del dia ``dia`` antes de pasarlos a
+        retorno (una subclase puede, p. ej., centrarlos o ensamblarlos)."""
+        return scores
+
+    def _a_log_return(self, score: float, vol: float) -> float:
+        """El score esta en unidades de vol a ``horizonte`` ruedas: se lleva a retorno log."""
+        return score * vol * float(np.sqrt(self.config.horizonte))
 
     def predict_df(self, df: pd.DataFrame) -> dict:
         raise ApiMlError(
             "el Transformer de panel predice con todos los tickers del dia (predict_panel)"
         )
+
+    # ----------------------------------------------------------- persistencia
+    def save(self, path: str | Path) -> None:
+        if not self._redes:
+            raise NotEnoughDataError("no hay un modelo de panel entrenado para guardar")
+        path = Path(path)
+        path.parent.mkdir(parents=True, exist_ok=True)
+        macro = self._normalizador_macro
+        torch.save(
+            {
+                "architecture": self.ARQUITECTURA,
+                "config": asdict(self.config),
+                "state_dicts": [red.state_dict() for red in self._redes],
+                "normalizador": (self._normalizador.media, self._normalizador.desvio),
+                "normalizador_macro": None if macro is None else (macro.media, macro.desvio),
+                "columnas_macro": self._columnas_macro,
+                # Para detectar artefactos viejos: las features y el universo (indice
+                # del embedding de ticker) tienen que coincidir con los actuales.
+                "feature_names": list(NOMBRES),
+                "universo": self.universo,
+                "trained_at": self.trained_at,
+                "metrics": self.metrics,
+            },
+            path,
+        )
+
+    @classmethod
+    def load(
+        cls, path: str | Path, proveedor: Proveedor | None = None, dispositivo: str = "cpu"
+    ) -> PanelTransformerModel:
+        blob = torch.load(Path(path), map_location="cpu", weights_only=False)
+        if blob.get("architecture") != cls.ARQUITECTURA:
+            raise ApiMlError(f"{path} no es un artefacto de {cls.ARQUITECTURA}")
+        modelo = cls(cls.CONFIG(**blob["config"]), proveedor, dispositivo)
+        for campo, actual in (("feature_names", list(NOMBRES)), ("universo", modelo.universo)):
+            if list(blob[campo]) != actual:
+                raise StaleArtifactError(
+                    f"artefacto entrenado con otro {campo} (guardado={list(blob[campo])}, "
+                    f"actual={actual}); hay que reentrenar"
+                )
+        modelo._normalizador = Normalizador(*blob["normalizador"])
+        if blob["normalizador_macro"] is not None:
+            modelo._normalizador_macro = Normalizador(*blob["normalizador_macro"])
+        modelo._columnas_macro = list(blob["columnas_macro"])
+        modelo.trained_at = blob["trained_at"]
+        modelo.metrics = blob["metrics"]
+        # +1 por el canal "presente" que agrega _tensores.
+        n_features = len(modelo._normalizador.media) + 1
+        n_macro = len(modelo._columnas_macro) if modelo.config.macro else 0
+        for state in blob["state_dicts"]:
+            red = _RedPanel(modelo.config, n_features, n_macro, len(modelo.universo))
+            red.load_state_dict(state)
+            red.eval()
+            modelo._redes.append(red)
+        return modelo
 
     def resumen(self) -> dict:
         return {"version": self.version, "config": asdict(self.config), "metrics": self.metrics}

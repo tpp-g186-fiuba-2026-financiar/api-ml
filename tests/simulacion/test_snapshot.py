@@ -23,6 +23,8 @@ def test_load_y_cortes_por_fecha(snapshot) -> None:
     assert snapshot.close_on(TICKER_CORTO, dias[0]) is None
     assert snapshot.merval_on(corte) is not None
     assert snapshot.ccl_on(corte) is not None
+    ccl = snapshot.ccl_hasta(corte)
+    assert ccl.index[-1] == corte and ccl.iloc[-1] == snapshot.macro_raw["ccl"].loc[corte]
 
     macro = snapshot.macro_frame(corte)
     # La serie entra con su retraso de publicacion: nunca un dato posterior al corte.
@@ -36,6 +38,7 @@ def test_snapshot_sin_tasa_ni_merval(snapshot) -> None:
     assert vacio.rate_until(dia) is None
     assert vacio.merval_on(dia) is None
     assert vacio.ccl_on(dia) is None
+    assert vacio.ccl_hasta(dia) is None
 
 
 def test_load_sin_snapshot(tmp_path) -> None:

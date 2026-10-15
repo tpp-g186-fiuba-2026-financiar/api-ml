@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 import torch
 
-from src.errors import ApiMlError, NotEnoughDataError
+from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
 from src.panel_gbm import features_y_contexto
 from src.panel_transformer import (
     PanelTransformerConfig,
@@ -12,6 +12,7 @@ from src.panel_transformer import (
     _ventanas,
     ic_pearson_por_dia,
 )
+from src.trend_common import acierto_balanceado
 
 RUEDAS = pd.bdate_range("2023-01-02", periods=600)
 TICKERS = ["GGAL", "BMA", "YPFD", "PAMP", "ALUA", "TXAR", "CEPU", "EDN"]
@@ -59,6 +60,7 @@ def _modelo(**extra) -> PanelTransformerModel:
         ({"ventana": 100}, "ventana"),
         ({"universo": "todos"}, "universo"),
         ({"n_semillas": 0}, "n_semillas"),
+        ({"seleccion": "mse"}, "seleccion"),
         ({"capas_temporales": 0}, "capa temporal"),
     ],
 )
@@ -73,6 +75,7 @@ def test_config_invalida(extra, match) -> None:
         {},
         {"macro": True, "emb_ticker": True, "perdida": "huber", "capas_cruzadas": 2},
         {"capas_cruzadas": 0},
+        {"target": "absoluto", "seleccion": "direccion", "perdida": "huber"},
         {"moneda": "ars", "perdida": "ic", "n_semillas": 2, "vida_media_anios": None,
          "emb_sector": False, "epocas": 8, "paciencia": 1},
     ],
@@ -193,8 +196,8 @@ def test_anti_leakage_el_score_de_t_no_ve_datos_posteriores() -> None:
     assert np.allclose(original, alterado, atol=1e-5) and original.std() > 0
 
 
-def test_aprende_una_senal_de_reversion() -> None:
-    """Con retornos que revierten la semana anterior, el modelo ordena bien."""
+def _historias_con_reversion() -> tuple[dict[str, pd.DataFrame], np.ndarray, list[str]]:
+    """Retornos que revierten la semana anterior de cada accion."""
     rng = np.random.default_rng(7)
     n, k = len(RUEDAS), 12
     tickers = [*TICKERS, "SUPV", "BBAR", "TGSU2", "LOMA"]
@@ -208,7 +211,13 @@ def test_aprende_una_senal_de_reversion() -> None:
                          index=RUEDAS)
         for j, tk in enumerate(tickers)
     }  # fmt: skip
-    corte = 450
+    return histories, close, tickers
+
+
+def test_aprende_una_senal_de_reversion() -> None:
+    """Con retornos que revierten la semana anterior, el modelo ordena bien."""
+    histories, close, tickers = _historias_con_reversion()
+    n, corte = len(RUEDAS), 450
     modelo = PanelTransformerModel(
         PanelTransformerConfig(**(CHICO | {"epocas": 15, "moneda": "ars", "seed": 1}))
     )
@@ -225,3 +234,56 @@ def test_aprende_una_senal_de_reversion() -> None:
         )
         ics.append(p.rank().corr(real[p.index].rank()))
     assert np.mean(ics) > 0.1
+
+
+def test_aprende_la_direccion_con_target_absoluto() -> None:
+    """Con target absoluto y seleccion por direccion, acierta si cada accion
+    sube o baja (la reversion es de la accion, no relativa al panel)."""
+    histories, close, tickers = _historias_con_reversion()
+    n, corte = len(RUEDAS), 450
+    config = CHICO | dict(
+        epocas=40, learning_rate=3e-3, moneda="ars", seed=1,
+        target="absoluto", seleccion="direccion", perdida="huber",
+    )  # fmt: skip
+    modelo = PanelTransformerModel(PanelTransformerConfig(**config))
+    info = modelo.fit({tk: df.iloc[:corte] for tk, df in histories.items()})
+    assert info["val_direccion"] > 0.55 and "val_ic" not in info
+    pred, real = [], []
+    for t in range(corte, n - 5, 5):
+        dia = modelo.predict_panel({tk: df.iloc[: t + 1] for tk, df in histories.items()})
+        for j, tk in enumerate(tickers):
+            pred.append(np.log(dia[tk]["predicted_close"] / dia[tk]["last_close"]))
+            real.append(np.log(close[t + 5, j] / close[t, j]))
+    assert acierto_balanceado(np.array(pred), np.array(real)) > 0.55
+
+
+@pytest.mark.parametrize("extra", [{}, {"macro": True, "n_semillas": 2, "emb_ticker": True}])
+def test_save_y_load_predicen_igual(tmp_path, extra) -> None:
+    modelo = _modelo(**extra)
+    modelo.fit(_histories())
+    ruta = tmp_path / "sub" / "panel.pt"
+    modelo.save(ruta)
+    cargado = PanelTransformerModel.load(ruta, proveedor=_proveedor)
+    assert cargado.config == modelo.config and len(cargado._redes) == len(modelo._redes)
+    assert cargado.metrics == modelo.metrics and cargado.trained_at == modelo.trained_at
+    original, nuevo = modelo.predict_panel(_histories()), cargado.predict_panel(_histories())
+    assert set(nuevo) == set(original)
+    for t in original:
+        assert nuevo[t]["predicted_close"] == pytest.approx(original[t]["predicted_close"])
+
+
+def test_save_y_load_errores(tmp_path) -> None:
+    with pytest.raises(NotEnoughDataError, match="guardar"):
+        _modelo().save(tmp_path / "x.pt")
+    modelo = _modelo()
+    modelo.fit(_histories())
+    ruta = tmp_path / "panel.pt"
+    modelo.save(ruta)
+    blob = torch.load(ruta, weights_only=False)
+    for campo, valor in (("feature_names", ["otra"]), ("universo", ["GGAL"])):
+        torch.save({**blob, campo: valor}, tmp_path / "viejo.pt")
+        with pytest.raises(StaleArtifactError, match=campo):
+            PanelTransformerModel.load(tmp_path / "viejo.pt")
+    torch.save({**blob, "architecture": "transformer"}, tmp_path / "otro.pt")
+    with pytest.raises(ApiMlError, match="no es un artefacto"):
+        PanelTransformerModel.load(tmp_path / "otro.pt")

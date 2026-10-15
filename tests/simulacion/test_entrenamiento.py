@@ -49,6 +49,10 @@ def test_build_modelos_diarios(tmp_path) -> None:
     modelos = build_modelos_diarios(tmp_path / "artefactos")
     assert [m.name for m in modelos] == ["lstm", "xgboost", "transformer"]
     assert (tmp_path / "artefactos").is_dir()
+    assert modelos[2].factory().config.target == "absoluto"
+    variante = build_modelos_diarios(tmp_path / "artefactos", {"target": "relativo"})
+    assert variante[2].factory().config.target == "relativo"
+    assert (modelos[2].metrica, variante[2].metrica) == ("accuracy", "ic")
 
 
 class _MacroOk(FakeMacro):

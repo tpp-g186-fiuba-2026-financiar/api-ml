@@ -30,7 +30,7 @@ from src.macro_trend import UNIVERSE, MacroConfig, MacroTrendModel
 from src.retrain_guard import force_promote, promote_if_better
 from src.simulacion.snapshot import Snapshot
 from src.train_macro import DEFAULT_MIN_AUC
-from src.transformer import TransformerTrendModel
+from src.transformer import TransformerTrainConfig, TransformerTrendModel
 from src.xgb_trend import XGBTrendModel
 
 # Minimo de ruedas por ticker para entrar al entrenamiento (``fetch_histories``).
@@ -68,12 +68,15 @@ class ModeloDiario:
     model_path: Path
     horizon: int = 5
     vigente: object | None = None
+    metrica: str = "accuracy"  # metrica del gate (ver src.retrain_guard.METRICAS)
 
     def bootstrap(self, histories: dict[str, pd.DataFrame]) -> dict:
         """Modelo vigente al arrancar la simulacion (entrenado y guardado sin gate)."""
         candidate = self.factory()
         candidate.fit(histories)
-        score = force_promote(candidate, str(self.model_path), histories, self.horizon)
+        score = force_promote(
+            candidate, str(self.model_path), histories, self.horizon, self.metrica
+        )
         self.vigente = candidate
         return {"model": self.name, "promoted": True, "bootstrap": True, **score}
 
@@ -86,23 +89,30 @@ class ModeloDiario:
         candidate = self.factory()
         candidate.fit(histories)
         promoted, score = promote_if_better(
-            candidate, str(self.model_path), self.loader, histories, self.horizon
+            candidate, str(self.model_path), self.loader, histories, self.horizon, self.metrica
         )
         if promoted:
             self.vigente = candidate
         return {"model": self.name, "promoted": promoted, **score}
 
 
-def build_modelos_diarios(artifacts_dir: Path) -> list[ModeloDiario]:
+def build_modelos_diarios(
+    artifacts_dir: Path, transformer: dict | None = None
+) -> list[ModeloDiario]:
+    """Modelos con reentreno diario/semanal. ``transformer`` cambia campos de
+    ``TransformerTrainConfig`` para probar una variante (vacio = produccion).
+    Con target relativo el gate del Transformer compara IC en vez de accuracy."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
+    cambios = transformer or {}
     return [
         ModeloDiario("lstm", TrendModel, TrendModel.load, artifacts_dir / "lstm.pt"),
         ModeloDiario("xgboost", XGBTrendModel, XGBTrendModel.load, artifacts_dir / "xgb.pkl"),
         ModeloDiario(
             "transformer",
-            TransformerTrendModel,
+            lambda: TransformerTrendModel(config=TransformerTrainConfig(**cambios)),
             TransformerTrendModel.load,
             artifacts_dir / "transformer.pt",
+            metrica="ic" if cambios.get("target") == "relativo" else "accuracy",
         ),
     ]
 

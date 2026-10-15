@@ -13,8 +13,12 @@ from src.simulacion.estrategias import (
     normalizar,
     pesos_black_litterman,
     pesos_consenso,
+    pesos_cuantil,
+    pesos_histeresis,
+    pesos_inclinacion,
     pesos_senal,
     predicciones_del_mejor,
+    ranking_del_dia,
 )
 from tests.simulacion.conftest import TICKERS, FakeMacro, FakeTrend
 
@@ -99,12 +103,13 @@ def test_consenso() -> None:
 def test_garch_cache_reusa_el_forecast() -> None:
     cache = GarchCache()
     llamadas = []
-    cache._model.forecast_daily_variance = lambda df: llamadas.append(1) or 0.0004
+    cache._model.forecast_variance_horizonte = lambda df, h: llamadas.append(h) or 0.0004 * h
     df = pd.DataFrame(
         {"close": np.linspace(1, 2, 10)}, index=pd.bdate_range("2026-01-01", periods=10)
     )
-    assert cache.forecast_daily_variance(df) == cache.forecast_daily_variance(df) == 0.0004
-    assert len(llamadas) == 1
+    assert cache.forecast_variance_horizonte(df, 5) == cache.forecast_variance_horizonte(df, 5)
+    assert cache.forecast_variance_horizonte(df, 1) == pytest.approx(0.0004)
+    assert llamadas == [5, 1]  # una vez por horizonte
 
 
 def test_pesos_black_litterman(snapshot) -> None:
@@ -124,3 +129,30 @@ def test_pesos_black_litterman(snapshot) -> None:
     assert all(w >= 0 for w in pesos.values())
     assert sum(pesos.values()) == pytest.approx(1.0, abs=1e-6)
     assert pesos_black_litterman({}, PerfilRiesgo.MODERADO, fetch_hist, GarchCache(), TICKERS) == {}
+
+
+def test_reglas_de_cuantil_histeresis_e_inclinacion() -> None:
+    preds = {
+        t: {"predicted_close": 100.0 + i, "last_close": 100.0, "signal": s}
+        for i, (t, s) in enumerate(
+            zip(TICKERS, ["baja", "neutral", "neutral", "neutral", "neutral", "alza", "alza"],
+                strict=True)
+        )
+    }  # fmt: skip
+    rango = ranking_del_dia({**preds, "OTRO": preds["GGAL"]}, TICKERS[:-1])
+    assert list(rango.index) == TICKERS[:-1] and rango["COME"] == 1.0  # solo el universo
+    assert pesos_cuantil(preds, TICKERS, 0.30) == pytest.approx(
+        {t: 1 / 3 for t in ("CEPU", "COME", "GGAL")}
+    )
+    assert pesos_histeresis(preds, TICKERS, set(), 0.15, 0.30) == pytest.approx(
+        {"COME": 0.5, "GGAL": 0.5}
+    )
+    con_tenencia = pesos_histeresis(preds, TICKERS, {"CEPU", "ALUA"}, 0.15, 0.40)
+    assert set(con_tenencia) == {"CEPU", "COME", "GGAL"}
+    inclinado = pesos_inclinacion(preds, [*TICKERS, "SIN_PRED"], 0.5)
+    assert sum(inclinado.values()) == pytest.approx(1.0)
+    assert inclinado["GGAL"] == pytest.approx(3 * inclinado["ALUA"])
+    assert inclinado["SIN_PRED"] == pytest.approx(inclinado["BMA"])
+    assert pesos_inclinacion(preds, [], 0.5) == {}
+    with pytest.raises(ValueError):
+        pesos_inclinacion(preds, TICKERS, 1.5)

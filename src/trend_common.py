@@ -116,6 +116,24 @@ def senal_por_cuantil(
     return salida
 
 
+def acierto_balanceado(pred: np.ndarray, real: np.ndarray) -> float:
+    """Promedio entre el acierto en las subas (de los casos con ``real > 0``,
+    cuantos tienen ``pred > 0``) y en las bajas (``real <= 0`` y ``pred <= 0``).
+
+    A diferencia del acierto comun, no se infla con el sesgo alcista: decir
+    siempre "sube" (o siempre "baja") da 0,5. Si no hay casos de uno de los
+    dos lados cuenta solo el otro; sin casos devuelve 0,5.
+    """
+    pred, real = np.asarray(pred), np.asarray(real)
+    sube = real > 0
+    partes = []
+    if sube.any():
+        partes.append(np.mean(pred[sube] > 0))
+    if (~sube).any():
+        partes.append(np.mean(pred[~sube] <= 0))
+    return float(np.mean(partes)) if partes else 0.5
+
+
 def ic_por_fecha(pred: np.ndarray, real: np.ndarray, fechas: np.ndarray) -> float:
     """Promedio, entre fechas, de la correlacion de rangos (Spearman) entre
     prediccion y retorno real de los tickers de esa fecha.

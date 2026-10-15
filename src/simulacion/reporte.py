@@ -24,6 +24,8 @@ from src.simulacion.mesa import (
     BENCHMARK_MERVAL,
     BENCHMARK_REBALANCEO,
     MODELOS,
+    MODELOS_PANEL,
+    REGLAS_PANEL,
     SELECCIONES,
 )
 from src.simulacion.metricas import (
@@ -53,6 +55,16 @@ COLOR_MODELO = {
     "transformer": "#1baf7a",
     "arima": "#eda100",
     "macro": "#e87ba4",
+    "ensamble": "#8250df",
+    "panel_transformer": "#0e7c86",
+    "reversion": "#8a5a2b",
+}
+# Reglas de cartera de los modelos de panel (``senal_`` y ``REGLAS_PANEL``).
+COLOR_REGLA = {
+    "senal": "#2a78d6",
+    "histeresis": "#eb6834",
+    "cuantil30": "#1baf7a",
+    "inclinado": "#e87ba4",
 }
 COLOR_PERFIL = {"conservative": "#4a3aa7", "moderate": "#008300", "aggressive": "#e34948"}
 TINTA = "#1f2328"
@@ -236,7 +248,7 @@ def _series_benchmark() -> list[tuple[str, str, str, object]]:
 
 
 def _series_por_modelo(prefijo: str, sufijo: str = "") -> list[tuple[str, str, str, object]]:
-    series = [(f"{prefijo}{m}{sufijo}", m, COLOR_MODELO[m], "-") for m in MODELOS]
+    series = [(f"{prefijo}{m}{sufijo}", m, COLOR_MODELO[m], "-") for m in MODELOS + MODELOS_PANEL]
     series += [
         (f"{prefijo}mejor_{s}{sufijo}", f"mejor ({s})", TINTA, ESTILO_MEJOR[f"mejor_{s}"])
         for s in SELECCIONES
@@ -285,6 +297,14 @@ def graficos(datos: dict, resumen_: dict, destino: Path) -> list[str]:
         fig, ax = _figura(f"Black-Litterman, perfil {etiqueta.lower()}", subtitulo)
         _curvas(ax, base100, _series_por_modelo("bl_", f"_{perfil.value}"))
         guardar(fig, f"carteras_bl_{perfil.value}.png")
+
+    for modelo in MODELOS_PANEL:
+        if f"senal_{modelo}" not in base100:
+            continue
+        fig, ax = _figura(f"Reglas de cartera con las senales de {modelo}", subtitulo)
+        series = [(f"{r}_{modelo}", r, COLOR_REGLA[r], "-") for r in ("senal", *REGLAS_PANEL)]
+        _curvas(ax, base100, series + _series_benchmark())
+        guardar(fig, f"carteras_reglas_{modelo}.png")
 
     fig, ax = _figura("Consenso de modelos por perfil", subtitulo)
     series = [
@@ -476,7 +496,7 @@ def bloques(resumen_: dict, imagenes: list[str]) -> list[Bloque]:
         if not por_modelo:
             continue
         filas = []
-        for modelo in MODELOS:
+        for modelo in MODELOS + MODELOS_PANEL:
             if modelo not in por_modelo:
                 continue
             m = por_modelo[modelo]["overall"]

@@ -37,6 +37,60 @@ def pesos_senal(predicciones: dict[str, dict], universo: list[str]) -> dict[str,
     return equal_weight(elegidos)
 
 
+def ranking_del_dia(predicciones: dict[str, dict], universo: list[str]) -> pd.Series:
+    """Rango percentil (0-1] del retorno predicho de cada ticker de ``universo`` con prediccion."""
+    retornos = pd.Series(
+        {
+            t: float(np.log(p["predicted_close"] / p["last_close"]))
+            for t in universo
+            if (p := predicciones.get(t)) and p.get("last_close")
+        },
+        dtype=float,
+    )
+    return retornos.rank(pct=True)
+
+
+def pesos_cuantil(
+    predicciones: dict[str, dict], universo: list[str], cuantil: float
+) -> dict[str, float]:
+    """Partes iguales en el ``cuantil`` superior del retorno predicho del dia."""
+    rango = ranking_del_dia(predicciones, universo)
+    return equal_weight([t for t in rango.index if rango[t] > 1 - cuantil])
+
+
+def pesos_histeresis(
+    predicciones: dict[str, dict],
+    universo: list[str],
+    tenencias: set[str],
+    entrar: float,
+    mantener: float,
+) -> dict[str, float]:
+    """Partes iguales en lo que se compra (``entrar`` superior del dia) y en lo
+    que ya se tenia y sigue en el ``mantener`` superior: rota menos que
+    rehacer la seleccion de cero en cada rebalanceo."""
+    rango = ranking_del_dia(predicciones, universo)
+    elegidos = [
+        t
+        for t in rango.index
+        if rango[t] > 1 - entrar or (t in tenencias and rango[t] > 1 - mantener)
+    ]
+    return equal_weight(elegidos)
+
+
+def pesos_inclinacion(
+    predicciones: dict[str, dict], universo: list[str], inclinacion: float
+) -> dict[str, float]:
+    """Todo el universo, con ``1 + inclinacion`` partes a las "alza", ``1 -
+    inclinacion`` a las "baja" y una al resto (sin prediccion incluido).
+    Rota menos que entrar y salir del todo."""
+    if not 0 <= inclinacion <= 1:
+        raise ValueError("inclinacion tiene que estar entre 0 y 1")
+    ajuste = {"alza": 1 + inclinacion, "baja": 1 - inclinacion}
+    partes = {t: ajuste.get((predicciones.get(t) or {}).get("signal"), 1.0) for t in universo}
+    total = sum(partes.values())
+    return {t: w / total for t, w in partes.items() if w > 0} if total > 0 else {}
+
+
 def consenso_por_ticker(
     predicciones_por_modelo: dict[str, dict[str, dict]],
     universo: list[str],
@@ -153,10 +207,10 @@ class GarchCache:
         self._model = GarchVolatilityModel()
         self._cache: dict[tuple, float] = {}
 
-    def forecast_daily_variance(self, df: pd.DataFrame) -> float:
-        key = (len(df), df.index[-1], float(df["close"].iloc[-1]))
+    def forecast_variance_horizonte(self, df: pd.DataFrame, horizonte: int) -> float:
+        key = (len(df), df.index[-1], float(df["close"].iloc[-1]), horizonte)
         if key not in self._cache:
-            self._cache[key] = self._model.forecast_daily_variance(df)
+            self._cache[key] = self._model.forecast_variance_horizonte(df, horizonte)
         return self._cache[key]
 
 

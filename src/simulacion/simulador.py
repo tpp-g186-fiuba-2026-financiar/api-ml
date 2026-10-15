@@ -26,6 +26,8 @@ vigentes en ``artefactos/``. Las carteras se pueden rehacer sin reentrenar con
 Uso:
     python -m src.simulacion.simulador --nombre junio --desde 2026-06-01 --reentreno semanal
     python -m src.simulacion.simulador --nombre prueba --desde 2026-09-01 --hasta 2026-09-15
+    python -m src.simulacion.simulador --nombre tr-relativo --desde 2026-06-01 --reentreno semanal \
+        --transformer '{"target": "relativo", "universo": "panel", "n_semillas": 5}'
 """
 
 from __future__ import annotations
@@ -37,12 +39,13 @@ import json
 import shutil
 import time
 import warnings
-from dataclasses import asdict, dataclass
+from dataclasses import asdict, dataclass, field
 from pathlib import Path
 
 import pandas as pd
 
 from src.arima_trend import ArimaTrendModel
+from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
 from src.config import settings
 from src.data import MACRO_COLUMN, attach_macro_feature
 from src.data_quality import is_stale
@@ -60,7 +63,7 @@ from src.simulacion.estrategias import backtest_sin_neutrales
 from src.simulacion.mesa import MODELOS_CON_BACKTEST, Mesa, Predicciones, ResultadoRueda
 from src.simulacion.snapshot import DEFAULT_DIR as SNAPSHOT_DIR
 from src.simulacion.snapshot import Snapshot
-from src.trend_common import backtest_predict_df
+from src.trend_common import backtest_predict_df, centrar_predicciones
 
 RESULTADOS_DIR = "simulacion/resultados"
 REBALANCEO_DEFAULT = 5
@@ -80,6 +83,8 @@ class Config:
     reentreno: str = "diario"
     history_days: int = settings.history_days
     snapshot_dir: str = SNAPSHOT_DIR
+    # Campos de TransformerTrainConfig a cambiar (vacio = el de produccion).
+    transformer: dict = field(default_factory=dict)
 
 
 def append_jsonl(path: Path, rows: list[dict]) -> None:
@@ -115,7 +120,7 @@ class Simulacion:
         self.snapshot = snapshot
         self.out = Path(RESULTADOS_DIR) / config.nombre
         self.artefactos = self.out / "artefactos"
-        self.modelos = build_modelos_diarios(self.artefactos)
+        self.modelos = build_modelos_diarios(self.artefactos, config.transformer)
         self.macro = ModeloMacro(snapshot, self.artefactos / "macro.pkl")
         self.arima = ArimaTrendModel()
         self.mesa = Mesa(snapshot, config.capital, config.comision, config.rebalanceo)
@@ -213,7 +218,9 @@ class Simulacion:
         modelos (solo hace falta en los dias de rebalanceo). Como en
         produccion, solo el de ``MODELOS_CON_BACKTEST`` viaja dentro de la
         prediccion (y pondera el consenso); el resto se usa solo para elegir
-        el mejor modelo por ticker.
+        el mejor modelo por ticker. Las predicciones de modelos con target
+        relativo se centran con el promedio del panel lider del dia
+        (``centrar_predicciones``).
         """
         self.macro.set_today(dia)
         vigentes = {m.name: m.vigente for m in self.modelos}
@@ -240,6 +247,12 @@ class Simulacion:
                         if name in MODELOS_CON_BACKTEST:
                             result["backtest"] = bt
                 predicciones[name][symbol] = result
+        for name, model in vigentes.items():
+            config = getattr(model, "config", None)
+            if getattr(config, "target", None) == "relativo":
+                predicciones[name] = centrar_predicciones(
+                    predicciones[name], config.neutral_band, PANEL_LIDER_TICKERS
+                )
         return predicciones, backtests
 
     # ------------------------------------------------------------------ #
@@ -300,6 +313,8 @@ class Simulacion:
             guardada = json.loads(config_path.read_text())
             ignorar = {"hasta", "snapshot"}
             actual = asdict(cfg)
+            # Corridas anteriores a la opcion "transformer" no la guardaban.
+            guardada.setdefault("transformer", {})
             if any(guardada.get(k) != v for k, v in actual.items() if k not in ignorar):
                 raise SystemExit(
                     f"{self.out} ya tiene una corrida con otra configuracion: usar otro --nombre"
@@ -349,6 +364,12 @@ def main(argv: list[str] | None = None) -> None:
     parser.add_argument("--comision", type=float, default=COMISION_DEFAULT)
     parser.add_argument("--reentreno", choices=FRECUENCIAS_REENTRENO, default="diario")
     parser.add_argument("--snapshot", default=SNAPSHOT_DIR)
+    parser.add_argument(
+        "--transformer",
+        type=json.loads,
+        default={},
+        help="Variante del Transformer: JSON con campos de TransformerTrainConfig.",
+    )
     args = parser.parse_args(argv)
     silenciar_warnings()
 
@@ -362,6 +383,7 @@ def main(argv: list[str] | None = None) -> None:
         comision=args.comision,
         reentreno=args.reentreno,
         snapshot_dir=args.snapshot,
+        transformer=args.transformer,
     )
     Simulacion(config, snapshot).correr()
 

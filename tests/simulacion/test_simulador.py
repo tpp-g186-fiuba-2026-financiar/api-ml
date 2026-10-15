@@ -10,6 +10,7 @@ from src.simulacion.entrenamiento import ModeloDiario
 from src.simulacion.mesa import BENCHMARK_MERVAL, nombres_estrategias
 from src.simulacion.rearmar import rearmar
 from src.simulacion.simulador import Config, Simulacion, ultima_rueda_completa
+from src.trend_common import derive_trend_output
 from tests.simulacion.conftest import FakeMacro, FakeTrend
 
 DESDE, HASTA = "2026-06-15", "2026-06-24"
@@ -43,7 +44,7 @@ class FakeArima(FakeTrend):
         return super().predict_df(df)
 
 
-def _modelos(artefactos):
+def _modelos(artefactos, transformer=None):
     artefactos.mkdir(parents=True, exist_ok=True)
     return [
         ModeloDiario("lstm", FakeTrend, FakeTrend.load, artefactos / "lstm.pkl"),
@@ -151,11 +152,12 @@ def test_ultima_rueda_completa(snapshot) -> None:
 
 def test_main_y_rearmar_main(entorno, snapshot_dir, monkeypatch) -> None:
     args = ["--nombre", "cli", "--desde", HASTA, "--snapshot", str(snapshot_dir),
-            "--reentreno", "semanal"]  # fmt: skip
+            "--reentreno", "semanal", "--transformer", '{"target": "relativo"}']  # fmt: skip
     simulador.main(args)
     config = json.loads((entorno / "cli" / "config.json").read_text())
     assert config["hasta"] == "2026-06-30"
     assert config["reentreno"] == "semanal"
+    assert config["transformer"] == {"target": "relativo"}
 
     monkeypatch.setattr(rearmar_module, "RESULTADOS_DIR", str(entorno))
     rearmar_module.main(["--nombre", "cli", "--salida", "otra", "--comision", "0.01"])
@@ -221,3 +223,26 @@ def test_reporte_formatos() -> None:
     assert "ultimo backtest disponible" in markdown(resumen, [])
     assert _tex("a_b `c%d` $1 & #2") == r"a\_b \texttt{c\%d} \$1 \& \#2"
     assert _tex("{x}~^\\") == r"\{x\}\textasciitilde{}\textasciicircum{}\textbackslash{}"
+
+
+class _Relativo(FakeTrend):
+    """Modelo con target relativo: predice +5% en todos los tickers."""
+
+    class config:  # noqa: N801
+        target = "relativo"
+        neutral_band = 0.001
+
+    def predict_df(self, df):
+        return derive_trend_output(df, 0.05, 5)
+
+
+def test_predecir_centra_los_modelos_relativos(entorno, snapshot) -> None:
+    sim = Simulacion(_config(), snapshot)
+    sim.modelos[0].vigente = _Relativo()
+    sim.modelos[1].vigente = FakeTrend()
+    predicciones, _ = sim.predecir(pd.Timestamp(HASTA), set())
+    relativas = predicciones["lstm"]
+    assert relativas and all(r["signal"] == "neutral" for r in relativas.values())
+    assert all(
+        r["predicted_close"] == pytest.approx(r["last_close"], rel=1e-3) for r in relativas.values()
+    )

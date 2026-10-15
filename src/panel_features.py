@@ -18,8 +18,9 @@ Parte de un ``Panel`` (``src.panel_datos``) y devuelve tensores
 4. **Target**: retorno log a ``horizonte`` ruedas, dividido por la vol del
    ticker, recortado a +-``clip_target`` y con la media del dia restada
    (``"sin_media"``), o residuo despues de sacar ``beta * mercado``
-   (``"residual"``), o el retorno crudo (``"crudo"``). Se guarda tambien el
-   retorno crudo para evaluar.
+   (``"residual"``), o igual que ``"sin_media"`` pero sin restar la media
+   (``"absoluto"``: conserva si sube o baja, para predecir la direccion), o el
+   retorno crudo (``"crudo"``). Se guarda tambien el retorno crudo para evaluar.
 
 El "mercado" es el promedio de los retornos de los tickers validos de cada
 dia (no el Merval): sale del mismo panel y no depende de otra serie.
@@ -55,8 +56,10 @@ RETORNOS = {
 # Copias sin rankear (nivel de la accion, no su posicion en el dia).
 NIVEL = ["ret_5_nivel", "vol_20_nivel"]
 FLAGS = ["historia_corta"]
+# Todas las features, en el orden de la ultima dimension de ``FeaturesPanel.valores``.
+NOMBRES = FEATURES_ACCION + NIVEL + FLAGS
 
-TARGETS = ("sin_media", "residual", "crudo")
+TARGETS = ("sin_media", "residual", "absoluto", "crudo")
 
 
 @dataclass(frozen=True)
@@ -201,7 +204,7 @@ def construir(panel: Panel, config: PreprocesoConfig | None = None) -> FeaturesP
     retorno, target, mascara_target = _target(panel, mascara, vol, mercado, crudas, config)
     return FeaturesPanel(
         valores=valores,
-        nombres=FEATURES_ACCION + NIVEL + FLAGS,
+        nombres=list(NOMBRES),
         fechas=panel.fechas,
         tickers=panel.tickers,
         sectores=panel.sectores(),
@@ -236,7 +239,8 @@ def _target(
             retorno_target = retorno
         escala = vol * np.sqrt(h)
         target = (retorno_target / escala).clip(-config.clip_target, config.clip_target)
-        target = target.sub(target.mean(axis=1), axis=0)
+        if config.target != "absoluto":
+            target = target.sub(target.mean(axis=1), axis=0)
     valido &= target.notna()
     return (
         retorno.where(valido).to_numpy(dtype=float),
