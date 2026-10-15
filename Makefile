@@ -27,3 +27,5 @@ lint:
 fmt:
 	ruff format src tests
  
+train-context:
+	python -m src.train_context

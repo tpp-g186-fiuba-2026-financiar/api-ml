@@ -399,6 +399,13 @@ def test_predict_volatility_modal_data_unavailable(client: TestClient, monkeypat
 # --- /portfolio/recomendacion (Black-Litterman) ---
 
 
+@pytest.fixture(autouse=True)
+def _clear_recomendacion_cache():
+    main._recomendacion_cache.clear()
+    yield
+    main._recomendacion_cache.clear()
+
+
 def usuario_payload() -> dict:
     return {
         "perfil_riesgo": "moderate",
@@ -453,3 +460,39 @@ def test_portfolio_recomendacion_maps_errors(client: TestClient, monkeypatch, ex
     response = client.post("/portfolio/recomendacion", json=usuario_payload())
 
     assert response.status_code == status
+
+
+def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monkeypatch) -> None:
+    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    monkeypatch.setattr(main, "entry", fake_entry)
+
+    first = client.post("/portfolio/recomendacion", json=usuario_payload())
+    second = client.post("/portfolio/recomendacion", json=usuario_payload())
+
+    assert first.json() == second.json()
+    fake_entry.assert_called_once()
+
+
+def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
+    client: TestClient, monkeypatch
+) -> None:
+    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    monkeypatch.setattr(main, "entry", fake_entry)
+    other = {"perfil_riesgo": "moderate", "tenencias": [{"ticker": "BMA", "cantidad": 1.0}]}
+
+    client.post("/portfolio/recomendacion", json=usuario_payload())
+    client.post("/portfolio/recomendacion", json=other)
+    assert fake_entry.call_count == 2  # otra cartera, otra corrida
+
+    monkeypatch.setattr(main, "RECOMENDACION_TTL_SEGUNDOS", -1)
+    client.post("/portfolio/recomendacion", json=usuario_payload())
+    assert fake_entry.call_count == 3  # vencido, se recalcula
+
+
+def test_portfolio_recomendacion_errors_are_not_cached(client: TestClient, monkeypatch) -> None:
+    fake_entry = MagicMock(side_effect=ValueError("sin datos"))
+    monkeypatch.setattr(main, "entry", fake_entry)
+
+    assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422
+    assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422
+    assert fake_entry.call_count == 2

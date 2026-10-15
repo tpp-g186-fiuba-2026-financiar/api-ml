@@ -83,6 +83,16 @@ class PerfilRiesgo(enum.StrEnum):
     ARRIESGADO = "aggressive"
 
 
+class ConsensusTrackRecord(BaseModel):
+    """Cuantas veces acerto este consenso en paper trading (ya resuelto, sin
+    mirar hacia adelante). Ver ``src.paper_trading``."""
+
+    n_resolved: int
+    signal_hit_rate: float | None  # aciertos / veces que dio alza o baja
+    neutral_rate: float | None  # % de veces que no se animo a dar senal
+    scope: str  # "ticker" | "global"
+
+
 class ConsensusResponse(BaseModel):
     """Lectura unica (sobrecompra/sobreventa/neutral) combinando todos los
     modelos de tendencia, ajustada por perfil de riesgo. Ver src.consensus.
@@ -98,6 +108,7 @@ class ConsensusResponse(BaseModel):
     confidence_min: float
     models_considered: int
     explanation: str
+    track_record: ConsensusTrackRecord | None = None
 
 
 class Tenencia(BaseModel):
