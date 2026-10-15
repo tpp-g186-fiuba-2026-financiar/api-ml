@@ -180,6 +180,17 @@ Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
 
+## Modelo "contexto" de tendencia
+
+Se registra como `contexto`. Predice alza o baja a 20 ruedas combinando indicadores técnicos de la acción con el
+**contexto del mercado local** (canasta de 8 líderes como proxy del Merval: retorno a 5/20/60 ruedas, volatilidad,
+caída desde el máximo, amplitud, fuerza relativa de la acción y beta). Ensamble de 6 árboles con peso decreciente en
+el tiempo. Solo emite señal en los extremos (umbrales calibrados fuera de muestra) y apaga un lado (`alza`/`baja`)
+si fuera de muestra no le ganó a su tasa base.
+
+- Código: `src/context_trend.py`, `src/train_context.py` (`make train-context`).
+- Se reentrena el primer día de cada mes (`.github/workflows/retrain-contexto.yml`, usa Yahoo directo).
+
 ## Modelo macro de tendencia
 
 Modelo aparte de los demás (se registra como `macro`). Predice alza o baja a 20 ruedas con variables

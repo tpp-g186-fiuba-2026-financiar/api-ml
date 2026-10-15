@@ -194,3 +194,49 @@ def test_compute_consensus_neutral_when_models_disagree_with_enough_confidence()
 def test_build_explanation_branches(classification, expected_snippet) -> None:
     text = _build_explanation(classification, 3, 2, 1, 0.65, 0.5).lower()
     assert expected_snippet in text
+
+
+def test_load_track_record_prefers_ticker_then_global(tmp_path) -> None:
+    import json
+
+    from src.consensus import load_track_record
+
+    ledger = tmp_path / "ledger.json"
+    ledger.write_text(
+        json.dumps(
+            {
+                "summary": {
+                    "consensus-moderate": {
+                        "overall": {
+                            "n_predictions": 50,
+                            "signal_hit_rate": 0.6,
+                            "neutral_rate": 0.7,
+                        },
+                        "per_ticker": {
+                            "GGAL": {
+                                "n_predictions": 12,
+                                "signal_hit_rate": 0.75,
+                                "neutral_rate": 0.5,
+                            },
+                            "YPFD": {
+                                "n_predictions": 3,
+                                "signal_hit_rate": 1.0,
+                                "neutral_rate": 0.0,
+                            },
+                        },
+                    }
+                }
+            }
+        )
+    )
+    ggal = load_track_record(PerfilRiesgo.MODERADO, "ggal", ledger)
+    assert ggal == {
+        "n_resolved": 12,
+        "signal_hit_rate": 0.75,
+        "neutral_rate": 0.5,
+        "scope": "ticker",
+    }
+    ypfd = load_track_record(PerfilRiesgo.MODERADO, "YPFD", ledger)
+    assert ypfd["scope"] == "global" and ypfd["n_resolved"] == 50
+    assert load_track_record(PerfilRiesgo.ARRIESGADO, "GGAL", ledger) is None
+    assert load_track_record(PerfilRiesgo.MODERADO, "GGAL", tmp_path / "missing.json") is None

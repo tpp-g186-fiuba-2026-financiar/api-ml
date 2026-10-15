@@ -62,9 +62,18 @@ def fetch_history_yahoo(symbol: str, days: int | None = None) -> pd.DataFrame:
     """Descarga el historico diario desde la API de Yahoo Finance."""
     days = days or settings.history_days
     yf_symbol = to_yahoo_symbol(symbol)
-    # ``range`` admite valores tipo "2y"; pedimos con margen y luego recortamos.
-    range_param = "max" if days > 1825 else f"{max(days // 252 + 1, 1)}y"
-    params = {"range": range_param, "interval": "1d", "includeAdjustedClose": "true"}
+    # Fechas explicitas en vez de ``range``: con ``range=max`` (o rangos muy largos)
+    # Yahoo ignora ``interval=1d`` y devuelve velas MENSUALES (~320 filas en 25
+    # anios), lo que dejaba entrenando con 4000 "ruedas" a modelos que en
+    # realidad recibian meses. Se pide con margen de calendario y luego se recorta.
+    now = int(time.time())
+    period1 = now - int(days * 1.6 * 86400) - 30 * 86400
+    params = {
+        "period1": period1,
+        "period2": now + 86400,
+        "interval": "1d",
+        "includeAdjustedClose": "true",
+    }
     headers = {"User-Agent": "Mozilla/5.0 (financiar-api-ml)"}
 
     try:

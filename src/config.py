@@ -13,6 +13,7 @@ class Settings(BaseSettings):
     xgb_model_path: str = "models/xgb.pkl"
     transformer_model_path: str = "models/transformer.pt"
     macro_model_path: str = "models/macro.pkl"
+    context_model_path: str = "models/contexto.pkl"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import numpy as np
+import pandas as pd
 import pytest
 from conftest import make_predict_function
 
@@ -505,3 +506,42 @@ class TestEntryEndToEnd:
         concentracion_conservador = np.max(resultados[PerfilRiesgo.CONSERVADOR])
         concentracion_arriesgado = np.max(resultados[PerfilRiesgo.ARRIESGADO])
         assert concentracion_conservador <= concentracion_arriesgado + 1e-6
+
+
+def test_get_data_downloads_in_parallel_but_keeps_ticker_order() -> None:
+    import threading
+    import time
+
+    from src.black_litterman import black_litterman as bl
+
+    seen = set()
+
+    def slow_fetch(ticker, days):
+        seen.add(threading.get_ident())
+        time.sleep(0.05)
+        idx = pd.bdate_range("2024-01-01", periods=80)
+        return pd.DataFrame({"close": np.linspace(100, 110, 80)}, index=idx)
+
+    tickers = ["AAA", "BBB", "CCC", "DDD"]
+    started = time.perf_counter()
+    validos, historiales, _ = bl.get_data(tickers, slow_fetch)
+    elapsed = time.perf_counter() - started
+
+    assert validos == tickers
+    assert list(historiales) == tickers
+    assert elapsed < 0.05 * len(tickers)  # en serie tardaria >= 0.2 s
+    assert len(seen) > 1
+
+
+def test_get_predicciones_keeps_ticker_order_when_run_in_parallel() -> None:
+    from src.black_litterman import black_litterman as bl
+
+    class FakeTrend:
+        def __init__(self, symbol, ratio):
+            self.symbol = symbol
+            self.last_close = 100.0
+            self.predicted_close = 100.0 * ratio
+
+    ratios = {"AAA": 1.01, "BBB": 0.98, "CCC": 1.05}
+    q = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
+    assert q == pytest.approx([0.01, -0.02, 0.05])

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pandas as pd
 from numpy.linalg import inv
@@ -55,6 +57,9 @@ PESO_MAXIMO_POR_TICKER = 0.20
 # demas tickers. Se filtra aca, antes de que nada lo vea, en vez de dejar
 # que explote mas abajo.
 MIN_RUEDAS = 60
+
+# Hilos para descargar historicos y predecir en paralelo (I/O dominante).
+MAX_WORKERS_DESCARGA = 6
 
 # Universo de Black-Litterman: panel lider del Merval, nada mas. Reemplaza
 # al blocklist TICKERS_NO_INVERTIBLES (que solo tapaba GOLD/OIL) por un
@@ -198,8 +203,12 @@ def get_data(
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
-    for ticker in tickers:
-        df = fetch_hist(ticker, settings.history_days)
+    # Las descargas son I/O puro e independientes entre si: en paralelo la
+    # corrida pasa de ~20 pedidos en fila a unos pocos segundos. ``map``
+    # conserva el orden de ``tickers``.
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
+        descargas = list(pool.map(lambda t: fetch_hist(t, settings.history_days), tickers))
+    for ticker, df in zip(tickers, descargas, strict=True):
         # Log de cada historial tal como llega en ESTA corrida real (no un
         # diagnostico aparte): si algo explota mas abajo por pocas ruedas,
         # esto deja la foto exacta -- ticker, cantidad y rango de fechas --
@@ -235,8 +244,11 @@ def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, 
 
 def get_predicciones(tickers, predict_functions):
     r = {}
-    for ticker in tickers:
-        prediction: TrendResponse = predict_functions(ticker)
+    # Cada prediccion baja su propio historico: se hacen en paralelo (mismo
+    # orden de resultados que ``tickers``).
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
+        predictions = list(pool.map(predict_functions, tickers))
+    for ticker, prediction in zip(tickers, predictions, strict=True):
         r[ticker] = Prediccion(prediction)
     q = [r[ticker].prediccion for ticker in tickers]
     return q

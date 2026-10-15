@@ -37,7 +37,9 @@ inventado.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass
+from pathlib import Path
 
 import numpy as np
 
@@ -239,3 +241,35 @@ def compute_consensus(
         "models_considered": considered,
         "explanation": explanation,
     }
+
+
+LEDGER_PATH = Path(__file__).resolve().parent.parent / "models" / "paper_trading_ledger.json"
+# Con menos resueltas que esto el porcentaje es ruido: no se muestra.
+TRACK_RECORD_MIN_RESOLVED = 10
+
+
+def load_track_record(
+    profile: PerfilRiesgo, symbol: str, ledger_path: Path = LEDGER_PATH
+) -> dict | None:
+    """Historial de aciertos del consenso (``consensus-<perfil>``) segun el
+    ledger de paper trading: del ticker si hay suficientes casos resueltos, si
+    no el global del perfil. None si todavia no hay datos suficientes."""
+    try:
+        summary = json.loads(ledger_path.read_text()).get("summary", {})
+    except (OSError, ValueError):
+        return None
+    data = summary.get(f"consensus-{profile.value}")
+    if not data:
+        return None
+    for scope, stats in (
+        ("ticker", data.get("per_ticker", {}).get(symbol.strip().upper())),
+        ("global", data.get("overall")),
+    ):
+        if stats and stats.get("n_predictions", 0) >= TRACK_RECORD_MIN_RESOLVED:
+            return {
+                "n_resolved": stats["n_predictions"],
+                "signal_hit_rate": stats.get("signal_hit_rate"),
+                "neutral_rate": stats.get("neutral_rate"),
+                "scope": scope,
+            }
+    return None
