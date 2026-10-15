@@ -1,6 +1,6 @@
 # Calidad de los modelos: backtest vs paper trading
 
-Generado el 2026-10-14. Periodo de paper trading analizado: 2026-07-22 a 2026-10-06 (7645 predicciones ya comprobadas, 1168 pendientes). Backtest del 2026-09-03T03:19:34Z.
+Generado el 2026-10-15. Periodo de paper trading analizado: 2026-07-22 a 2026-10-09 (8147 predicciones ya comprobadas, 1376 pendientes). Backtest del 2026-09-03T03:19:34Z.
 
 Lectura rapida: la **accuracy direccional** es el % de veces que el modelo acerto si el precio subia o bajaba (50% = azar). El backtest puede estar inflado porque los modelos ya vieron parte de esa historia al entrenar; el paper trading solo cuenta predicciones hechas antes de conocer el resultado, asi que es la medida real. Con menos de 30 predicciones no se saca ninguna conclusion.
 
@@ -8,26 +8,26 @@ Lectura rapida: la **accuracy direccional** es el % de veces que el modelo acert
 
 | Modelo (paper) | N paper | Acc. backtest | Acc. paper | Brecha | IC 95% paper | Paper vs azar | Ranking backtest → paper |
 | --- | ---: | ---: | ---: | ---: | --- | --- | --- |
-| lstm | 1786 | 50.9% | 46.7% | +4.2 pp | 44.4% – 49.0% | peor que el azar | 2 → 3 |
-| lstm-modal | 250 | 50.9% | 51.2% | -0.3 pp | 45.0% – 57.3% | indistinguible del azar | — |
-| xgboost | 1782 | 75.9% | 48.4% | +27.5 pp ⚠️ | 46.1% – 50.7% | indistinguible del azar | 1 → 2 |
-| xgboost-modal | 251 | 75.9% | 50.2% | +25.7 pp ⚠️ | 44.1% – 56.3% | indistinguible del azar | — |
-| transformer | 1786 | 50.0% | 50.9% | -0.9 pp | 48.6% – 53.2% | indistinguible del azar | 3 → 1 |
+| lstm | 1852 | 50.9% | 46.8% | +4.1 pp | 44.5% – 49.1% | peor que el azar | 2 → 3 |
+| lstm-modal | 270 | 50.9% | 51.8% | -0.9 pp | 45.9% – 57.7% | indistinguible del azar | — |
+| xgboost | 1848 | 75.9% | 48.3% | +27.7 pp ⚠️ | 46.0% – 50.5% | indistinguible del azar | 1 → 2 |
+| xgboost-modal | 271 | 75.9% | 50.5% | +25.4 pp ⚠️ | 44.6% – 56.5% | indistinguible del azar | — |
+| transformer | 1852 | 50.0% | 50.8% | -0.8 pp | 48.5% – 53.0% | indistinguible del azar | 3 → 1 |
 
 **Alertas:**
 
-- xgboost: el backtest sobreestima la accuracy en 27.5 pp (umbral 10 pp)
-- xgboost-modal: el backtest sobreestima la accuracy en 25.7 pp (umbral 10 pp)
+- xgboost: el backtest sobreestima la accuracy en 27.7 pp (umbral 10 pp)
+- xgboost-modal: el backtest sobreestima la accuracy en 25.4 pp (umbral 10 pp)
 
 Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas:
 
 | Modelo (paper) | N | Acc. backtest | Acc. paper | Hit rate señales paper | Retorno estrategia paper |
 | --- | ---: | ---: | ---: | ---: | ---: |
-| lstm | 81 | 50.9% | 45.7% | 55.6% | 2.7% |
-| lstm-modal | 10 | 50.9% | 60.0% | 42.9% | -0.1% |
-| xgboost | 81 | 75.9% | 40.7% | 31.2% | -5.7% |
-| xgboost-modal | 10 | 75.9% | 50.0% | 50.0% | 0.9% |
-| transformer | 81 | 50.0% | 55.6% | — | 0.0% |
+| lstm | 85 | 50.9% | 45.9% | 55.6% | 2.6% |
+| lstm-modal | 12 | 50.9% | 58.3% | 44.4% | 0.1% |
+| xgboost | 85 | 75.9% | 41.2% | 35.3% | -5.4% |
+| xgboost-modal | 12 | 75.9% | 58.3% | 57.1% | 0.8% |
+| transformer | 85 | 50.0% | 55.3% | — | 0.0% |
 
 ## 2. Evolucion semanal en paper trading
 
@@ -46,24 +46,28 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 390 | 52.0% | 52.9% | 95.6% | 51.0% |
 | 2026-W39 | 133 | 62.4% | 60.0% | 96.2% | 51.9% |
 | 2026-W40 | 62 | 48.4% | 85.7% | 88.7% | 51.8% |
+| 2026-W41 | 66 | 47.0% | 100.0% | 98.5% | 51.6% |
 
 ### consensus-aggressive
 
 | Semana | N | Acc. semana | Hit rate señales | % neutral | Acc. acumulada |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 2026-W40 | 1 (pocos datos) | 100.0% | — | 100.0% | 100.0% |
+| 2026-W41 | 66 | 50.0% | 48.1% | 59.1% | 50.7% |
 
 ### consensus-conservative
 
 | Semana | N | Acc. semana | Hit rate señales | % neutral | Acc. acumulada |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 2026-W40 | 1 (pocos datos) | 100.0% | — | 100.0% | 100.0% |
+| 2026-W41 | 66 | 50.0% | — | 100.0% | 50.7% |
 
 ### consensus-moderate
 
 | Semana | N | Acc. semana | Hit rate señales | % neutral | Acc. acumulada |
 | --- | ---: | ---: | ---: | ---: | ---: |
 | 2026-W40 | 1 (pocos datos) | 100.0% | — | 100.0% | 100.0% |
+| 2026-W41 | 66 | 50.0% | 40.0% | 92.4% | 50.7% |
 
 ### lstm
 
@@ -80,6 +84,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 390 | 53.6% | 34.8% | 94.1% | 48.0% |
 | 2026-W39 | 133 | 35.3% | 50.0% | 98.5% | 47.0% |
 | 2026-W40 | 62 | 38.7% | 33.3% | 95.2% | 46.7% |
+| 2026-W41 | 66 | 50.0% | 50.0% | 93.9% | 46.8% |
 
 ### lstm-modal
 
@@ -91,7 +96,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 1 (pocos datos) | 100.0% | — | 100.0% | 54.9% |
 | 2026-W39 | 53 | 35.9% | 30.8% | 26.4% | 50.0% |
 | 2026-W40 | 41 | 53.7% | 55.9% | 17.1% | 50.6% |
-| 2026-W41 | 3 (pocos datos) | 100.0% | 100.0% | 33.3% | 51.2% |
+| 2026-W41 | 23 (pocos datos) | 65.2% | 65.0% | 13.0% | 51.8% |
 
 ### transformer
 
@@ -108,6 +113,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 390 | 67.4% | 53.1% | 91.8% | 51.9% |
 | 2026-W39 | 133 | 35.3% | 100.0% | 99.2% | 50.6% |
 | 2026-W40 | 62 | 58.1% | — | 100.0% | 50.9% |
+| 2026-W41 | 66 | 47.0% | — | 100.0% | 50.8% |
 
 ### xgboost
 
@@ -124,6 +130,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 390 | 54.1% | 59.7% | 85.4% | 49.1% |
 | 2026-W39 | 133 | 33.8% | 6.7% | 88.7% | 48.0% |
 | 2026-W40 | 62 | 61.3% | 57.8% | 27.4% | 48.4% |
+| 2026-W41 | 66 | 43.9% | 44.0% | 62.1% | 48.3% |
 
 ### xgboost-modal
 
@@ -135,7 +142,7 @@ Mismos tickers que el backtest (GGAL, YPFD), para comparar manzanas con manzanas
 | 2026-W38 | 1 (pocos datos) | 100.0% | — | 100.0% | 50.0% |
 | 2026-W39 | 53 | 45.3% | 41.2% | 35.9% | 48.8% |
 | 2026-W40 | 41 | 58.5% | 53.6% | 31.7% | 50.4% |
-| 2026-W41 | 3 (pocos datos) | 33.3% | 0.0% | 66.7% | 50.2% |
+| 2026-W41 | 23 (pocos datos) | 52.2% | 54.5% | 52.2% | 50.5% |
 
 ## 3. Que se probo y si mejoro (por version del modelo)
 
@@ -145,26 +152,32 @@ Solo se listan versiones con al menos 30 predicciones comprobadas. "Mejoro"/"emp
 
 | Version | Desde | N | Acc. | IC 95% | vs version anterior |
 | --- | --- | ---: | ---: | --- | --- |
-| arima-1-1-1 | 2026-07-22 | 1787 | 51.8% | 49.4% – 54.1% | primera |
+| arima-1-1-1 | 2026-07-22 | 1853 | 51.6% | 49.3% – 53.9% | primera |
 
 ### consensus-aggressive
 
-Ninguna version alcanza la muestra minima todavia.
+| Version | Desde | N | Acc. | IC 95% | vs version anterior |
+| --- | --- | ---: | ---: | --- | --- |
+| consensus-v1 | 2026-10-02 | 67 | 50.7% | 39.1% – 62.4% | primera |
 
 ### consensus-conservative
 
-Ninguna version alcanza la muestra minima todavia.
+| Version | Desde | N | Acc. | IC 95% | vs version anterior |
+| --- | --- | ---: | ---: | --- | --- |
+| consensus-v1 | 2026-10-02 | 67 | 50.7% | 39.1% – 62.4% | primera |
 
 ### consensus-moderate
 
-Ninguna version alcanza la muestra minima todavia.
+| Version | Desde | N | Acc. | IC 95% | vs version anterior |
+| --- | --- | ---: | ---: | --- | --- |
+| consensus-v1 | 2026-10-02 | 67 | 50.7% | 39.1% – 62.4% | primera |
 
 ### lstm
 
 | Version | Desde | N | Acc. | IC 95% | vs version anterior |
 | --- | --- | ---: | ---: | --- | --- |
 | lstm-20260716T233804Z | 2026-07-22 | 751 | 44.7% | 41.2% – 48.3% | primera |
-| lstm-20260831T233222Z | 2026-09-01 | 1035 | 48.1% | 45.1% – 51.2% | sin diferencia significativa |
+| lstm-20260831T233222Z | 2026-09-01 | 1101 | 48.2% | 45.3% – 51.2% | sin diferencia significativa |
 
 ### lstm-modal
 
@@ -175,14 +188,14 @@ Ninguna version alcanza la muestra minima todavia.
 | Version | Desde | N | Acc. | IC 95% | vs version anterior |
 | --- | --- | ---: | ---: | --- | --- |
 | transformer-20260716T233905Z | 2026-07-22 | 751 | 46.9% | 43.3% – 50.4% | primera |
-| transformer-20260828T040100Z | 2026-09-01 | 1035 | 53.8% | 50.8% – 56.8% | mejoro |
+| transformer-20260828T040100Z | 2026-09-01 | 1101 | 53.4% | 50.4% – 56.3% | sin diferencia significativa |
 
 ### xgboost
 
 | Version | Desde | N | Acc. | IC 95% | vs version anterior |
 | --- | --- | ---: | ---: | --- | --- |
 | xgb-20260716T233824Z | 2026-07-22 | 747 | 48.1% | 44.5% – 51.6% | primera |
-| xgb-20260829T024049Z | 2026-09-01 | 1035 | 48.7% | 45.7% – 51.7% | sin diferencia significativa |
+| xgb-20260829T024049Z | 2026-09-01 | 1101 | 48.4% | 45.5% – 51.4% | sin diferencia significativa |
 
 ### xgboost-modal
 
