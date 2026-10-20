@@ -19,7 +19,7 @@ from __future__ import annotations
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
@@ -35,6 +35,9 @@ from src.errors import (
 )
 from src.modal_client import call_modal
 from src.trend_common import backtest_predict_df, derive_trend_output
+
+if TYPE_CHECKING:
+    from src.panel.servicio import PanelTrendService
 
 
 def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
@@ -358,7 +361,12 @@ class TrendRegistry:
     def __init__(self, history_days: int):
         self._history_days = history_days
         self._services: dict[
-            str, TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService
+            str,
+            TrendService
+            | OnDemandTrendService
+            | RemoteTrendService
+            | EnsembleTrendService
+            | PanelTrendService,
         ] = {}
         self._default: str | None = None
         # (symbol, dia) -> resultado de compare() ya calculado. Los datos son
@@ -406,6 +414,34 @@ class TrendRegistry:
             self._default = key
         return self
 
+    def register_panel(
+        self,
+        name: str,
+        model_path: str,
+        loader: LoaderFn,
+        *,
+        respaldo: str,
+        proveedor_factory: Callable[[], Callable] | None = None,
+        default: bool = False,
+    ) -> TrendRegistry:
+        """Registra un modelo de panel (predice todo el panel lider junto, ver
+        ``src.panel.servicio``). ``respaldo`` es un modelo ya registrado que
+        responde por los tickers de fuera del panel o si el artefacto no carga."""
+        from src.panel.servicio import PanelTrendService
+
+        key = name.strip().lower()
+        self._services[key] = PanelTrendService(
+            key,
+            model_path,
+            loader,
+            self.resolve(respaldo),
+            self._history_days,
+            proveedor_factory=proveedor_factory,
+        )
+        if default:
+            self._default = key
+        return self
+
     def register_ensemble(
         self, name: str, weights: dict[str, float], *, default: bool = False
     ) -> TrendRegistry:
@@ -440,7 +476,13 @@ class TrendRegistry:
 
     def resolve(
         self, name: str | None
-    ) -> TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService:
+    ) -> (
+        TrendService
+        | OnDemandTrendService
+        | RemoteTrendService
+        | EnsembleTrendService
+        | PanelTrendService
+    ):
         key = (name or self._default or "").strip().lower()
         if key not in self._services:
             available = ", ".join(self._services) or "(ninguno)"
@@ -526,13 +568,25 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.context_trend import ContextTrendModel
     from src.lstm import TrendModel
     from src.macro_trend import MacroTrendModel
+    from src.panel.train_transformer_v2 import proveedor_collector
+    from src.panel.transformer_v2 import TransformerV2Model
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
     registry = TrendRegistry(history_days)
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
-    registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
+    # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
+    # predice las acciones del panel lider ordenandolas entre si. El original queda
+    # como "transformer-v1" y responde por los tickers de fuera del panel.
+    registry.register("transformer-v1", settings.transformer_model_path, TransformerTrendModel.load)
+    registry.register_panel(
+        "transformer",
+        settings.transformer_v2_model_path,
+        TransformerV2Model.load,
+        respaldo="transformer-v1",
+        proveedor_factory=proveedor_collector,
+    )
     registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
     registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.

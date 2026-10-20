@@ -35,7 +35,7 @@ class GarchVolatilityModel:
     def version(self) -> str:
         return "garch-1-1"
 
-    def _forecast_variance_pct2(self, close: np.ndarray) -> np.ndarray:
+    def _forecast_variance_pct2(self, close: np.ndarray, horizon: int | None = None) -> np.ndarray:
         if len(close) < MIN_ROWS:
             raise NotEnoughDataError(f"se necesitan al menos {MIN_ROWS} ruedas, hay {len(close)}")
 
@@ -44,7 +44,7 @@ class GarchVolatilityModel:
         model = arch_model(returns_pct, vol="Garch", p=1, q=1)
         result = model.fit(update_freq=0, disp="off")
 
-        forecast = result.forecast(horizon=self.horizon)
+        forecast = result.forecast(horizon=horizon or self.horizon)
         return forecast.variance.to_numpy()[-1]
 
     def predict_df(self, df: pd.DataFrame) -> dict:
@@ -62,8 +62,10 @@ class GarchVolatilityModel:
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
         }
 
-    def forecast_daily_variance(self, df: pd.DataFrame) -> float:
+    def forecast_variance_horizonte(self, df: pd.DataFrame, horizonte: int) -> float:
+        """Varianza acumulada de los proximos ``horizonte`` dias (suma de las
+        varianzas diarias del forecast), en unidades de retorno (no %^2).
+        """
         close = df["close"].to_numpy(dtype=np.float64)
-        variance_pct2 = self._forecast_variance_pct2(close)
-        primer_dia_pct2 = float(variance_pct2[0])
-        return primer_dia_pct2 / (100.0**2)
+        variance_pct2 = self._forecast_variance_pct2(close, horizonte)
+        return float(variance_pct2.sum()) / (100.0**2)

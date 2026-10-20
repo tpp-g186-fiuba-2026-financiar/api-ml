@@ -9,6 +9,11 @@ on:
 permissions:
   contents: write
 
+# Los runners de GitHub no llegan al data-colector local (default de
+# settings.py): se usa el deployado.
+env:
+  DATA_COLLECTOR_URL: https://data-colector.onrender.com
+
 jobs:
   paper-trade:
     runs-on: ubuntu-latest
@@ -27,15 +32,14 @@ jobs:
 
       - name: Correr paper trading
         env:
-          # DATA_COLLECTOR_URL no se pisa: settings.py ya trae un default
-          # (el data-colector deployado). Si el secret no esta seteado,
-          # GitHub lo resuelve como "" y pydantic lo toma como valor
-          # explicito en vez de usar el default -- por eso las URLs de
-          # Modal solo se mandan si de verdad estan configuradas.
+          # DATA_COLLECTOR_URL viene del env del workflow. Si un secret no
+          # esta seteado, GitHub lo resuelve como "" y pydantic lo toma como
+          # valor explicito en vez de usar el default -- por eso las URLs de
+          # Modal van fijas en vez de salir de secrets.
           MODAL_LSTM_URL: https://matimorales01--lstm-trend-model-main.modal.run
           MODAL_XGBOOST_URL: https://matimorales01--xgboost-trend-model-main.modal.run
           MODAL_ARIMA_URL: https://matimorales01--arima-model-main.modal.run
-        run: python -m src.paper_trading --models lstm xgboost transformer macro contexto arima lstm-modal xgboost-modal arima-modal
+        run: python -m src.paper_trading --models lstm xgboost transformer transformer-v1 macro contexto arima lstm-modal xgboost-modal arima-modal
 
       - name: Actualizar reporte de calidad (backtest vs paper trading)
         run: python -m src.quality_report

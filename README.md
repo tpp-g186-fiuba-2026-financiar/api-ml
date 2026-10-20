@@ -180,6 +180,30 @@ Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
 
+## Transformer V2 (el modelo `transformer`)
+
+`transformer` es el **Transformer V2** (`src/panel/transformer_v2.py`), un modelo de
+panel: entrena y predice las acciones del panel líder juntas, en dólares CCL, y lo que
+aprende es **el orden relativo** de las acciones (cuál va a andar mejor que el resto a 5
+ruedas), no si el mercado sube. La API lo sirve con `src/panel/servicio.py`:
+
+- **Señal relativa**: `alza` = el 15% del panel con mejor predicción del día, `baja` =
+  el 15% peor, `neutral` el resto. "Alza" no quiere decir "va a subir".
+- **`predicted_close` en pesos**: al retorno relativo se le suma la tendencia del
+  panel (retorno medio del último año, sobre todo inflación y dólar), para que quede
+  en la escala de los demás modelos. Esa parte no la predice el modelo.
+- **Fuera del panel** (o si el artefacto no carga) responde el Transformer original,
+  registrado como `transformer-v1`; `model_version` dice `respaldo:<versión>`.
+- Datos: históricos y CCL del data-colector (`DATA_COLLECTOR_URL`), como al entrenar.
+
+Se reentrena el 1 de cada mes (`.github/workflows/retrain-transformer-v2.yml`) con un
+**gate por IC fuera de muestra** (`src/panel/gate.py`): entrena sin las últimas 60
+ruedas, mide el IC ahí y solo si es positivo reentrena con todo y commitea
+`models/transformer_v2.pt` (+ `.score.json`). A mano: `make train-transformer-v2`
+(con el collector local: `ARGS="--collector-url http://localhost:3000 --dispositivo cuda"`;
+`--force` salta el gate). Los hiperparámetros salen de la búsqueda con Optuna
+(`src/simulacion/optuna_v2.py`).
+
 ## Modelo "contexto" de tendencia
 
 Se registra como `contexto`. Predice alza o baja a 20 ruedas combinando indicadores técnicos de la acción con el

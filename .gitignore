@@ -56,3 +56,11 @@ models/*.onnx
 # Idem el modelo 'macro' (src/macro_trend.py).
 !models/macro.pkl
 !models/.gitkeep
+
+# Simulacion historica (src/simulacion): snapshot de datos y resultados de
+# cada corrida, se regeneran con `python -m src.simulacion.*`.
+simulacion/snapshot*/
+simulacion/resultados/
+simulacion/*.log
+simulacion/experimentos/
+simulacion/automl/

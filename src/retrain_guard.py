@@ -25,9 +25,15 @@ import json
 from collections.abc import Callable
 from pathlib import Path
 
+import numpy as np
 import pandas as pd
 
-from src.trend_common import BACKTEST_DAYS, backtest_predict_df
+from src.errors import ApiMlError
+from src.trend_common import BACKTEST_DAYS, backtest_predict_df, ic_por_fecha
+
+# Metricas del gate: "accuracy" (produccion) o "ic", para modelos con target
+# relativo (ver `pooled_ic`).
+METRICAS = ("accuracy", "ic")
 
 
 def _score_path(model_path: str) -> Path:
@@ -60,6 +66,45 @@ def pooled_directional_accuracy(
     return {
         "directional_accuracy": total_correct / total_observations,
         "observations": total_observations,
+    }
+
+
+def pooled_ic(
+    model,
+    histories: dict[str, pd.DataFrame],
+    horizon: int,
+    backtest_days: int = BACKTEST_DAYS,
+) -> dict:
+    """IC (correlacion de rangos por dia entre retorno predicho y real) sobre
+    las ultimas `backtest_days` ruedas, todos los dias.
+
+    Es la metrica que corresponde a un modelo con target relativo: predice si
+    un ticker le gana al resto, no si sube, asi que comparar su signo con el
+    del retorno absoluto (`pooled_directional_accuracy`) no mide lo que
+    predice. Se evalua sobre los tickers con los que se entreno el modelo
+    (`model.tickers`, si lo tiene), que son el universo del que es relativo.
+    La accuracy direccional se calcula igual y se devuelve como referencia.
+    """
+    universo = [t for t in (getattr(model, "tickers", None) or histories) if t in histories]
+    fechas, pred, real = [], [], []
+    for symbol in universo:
+        df = histories[symbol]
+        close = df["close"].to_numpy(dtype=np.float64)
+        for cutoff in range(max(len(df) - backtest_days - horizon, 1), len(df) - horizon):
+            try:
+                result = model.predict_df(df.iloc[: cutoff + 1])
+            except ApiMlError:
+                continue
+            fechas.append(df.index[cutoff])
+            pred.append(np.log(result["predicted_close"] / close[cutoff]))
+            real.append(np.log(close[cutoff + horizon] / close[cutoff]))
+    if not pred:
+        return {"ic": None, "directional_accuracy": None, "observations": 0}
+    pred_arr, real_arr = np.asarray(pred), np.asarray(real)
+    return {
+        "ic": ic_por_fecha(pred_arr, real_arr, np.asarray(fechas)),
+        "directional_accuracy": float(np.mean(np.sign(pred_arr) == np.sign(real_arr))),
+        "observations": len(pred),
     }
 
 
@@ -97,19 +142,48 @@ def incumbent_score(
     return score["directional_accuracy"]
 
 
-def promote_if_better(
+def _promote_by_ic(
     model,
     model_path: str,
     loader: Callable[[Path], object],
     histories: dict[str, pd.DataFrame],
     horizon: int,
 ) -> tuple[bool, dict]:
+    """Gate por IC. A diferencia del de accuracy, el vigente se re-evalua sobre
+    la misma ventana que el candidato en vez de reusar el score de cuando se
+    promovio: un score viejo y alto no se compara contra datos nuevos."""
+    candidate = pooled_ic(model, histories, horizon)
+    incumbent = None
+    if Path(model_path).exists():
+        incumbent = pooled_ic(loader(Path(model_path)), histories, horizon)
+        candidate["incumbent_directional_accuracy"] = incumbent["directional_accuracy"]
+        incumbent = incumbent["ic"]
+    candidate["incumbent_ic"] = incumbent
+    ic = candidate["ic"]
+    should_promote = ic is not None and (incumbent is None or ic > incumbent)
+    if should_promote:
+        model.save(model_path)
+        _save_score(model_path, candidate)
+    return should_promote, candidate
+
+
+def promote_if_better(
+    model,
+    model_path: str,
+    loader: Callable[[Path], object],
+    histories: dict[str, pd.DataFrame],
+    horizon: int,
+    metrica: str = "accuracy",
+) -> tuple[bool, dict]:
     """Backtestea `model` y lo guarda en `model_path` solo si supera al vigente.
 
     Devuelve `(promovido, candidate_score)`. No tirar si no se puede medir:
     un candidato sin observaciones suficientes no se promueve (mas vale
-    quedarse con el vigente que arriesgar a ciegas).
+    quedarse con el vigente que arriesgar a ciegas). `metrica="ic"` usa
+    `pooled_ic` (modelos con target relativo).
     """
+    if metrica == "ic":
+        return _promote_by_ic(model, model_path, loader, histories, horizon)
     candidate = pooled_directional_accuracy(model, histories, horizon)
     incumbent = incumbent_score(model_path, loader, histories, horizon)
     accuracy = candidate["directional_accuracy"]
@@ -121,9 +195,18 @@ def promote_if_better(
     return should_promote, candidate
 
 
-def force_promote(model, model_path: str, histories: dict[str, pd.DataFrame], horizon: int) -> dict:
+def force_promote(
+    model,
+    model_path: str,
+    histories: dict[str, pd.DataFrame],
+    horizon: int,
+    metrica: str = "accuracy",
+) -> dict:
     """Guarda `model` sin comparar contra el vigente (uso manual, `--force`)."""
-    score = pooled_directional_accuracy(model, histories, horizon)
+    if metrica == "ic":
+        score = pooled_ic(model, histories, horizon)
+    else:
+        score = pooled_directional_accuracy(model, histories, horizon)
     model.save(model_path)
     if score["directional_accuracy"] is not None:
         _save_score(model_path, score)

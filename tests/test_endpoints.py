@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -399,6 +400,14 @@ def test_predict_volatility_modal_data_unavailable(client: TestClient, monkeypat
 # --- /portfolio/recomendacion (Black-Litterman) ---
 
 
+@pytest.fixture
+def tasa_badlar(monkeypatch) -> MagicMock:
+    """Evita pegarle a data-colector: BADLAR fija en 36% TNA."""
+    fake = MagicMock(return_value=pd.Series([35.0, 36.0]))
+    monkeypatch.setattr(main, "fetch_interest_rate", fake)
+    return fake
+
+
 @pytest.fixture(autouse=True)
 def _clear_recomendacion_cache():
     main._recomendacion_cache.clear()
@@ -416,7 +425,7 @@ def usuario_payload() -> dict:
     }
 
 
-def test_portfolio_recomendacion_success(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_success(client: TestClient, monkeypatch, tasa_badlar) -> None:
     fake_entry = MagicMock(return_value=(["GGAL", "YPFD"], np.array([0.6, 0.4])))
     monkeypatch.setattr(main, "entry", fake_entry)
 
@@ -425,10 +434,11 @@ def test_portfolio_recomendacion_success(client: TestClient, monkeypatch) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["pesos_recomendados"] == {"GGAL": 0.6, "YPFD": 0.4}
+    assert fake_entry.call_args.kwargs["tasa_libre_riesgo_anual"] == pytest.approx(0.36)
 
 
 def test_portfolio_recomendacion_with_model_and_cartera_ancla(
-    client: TestClient, monkeypatch
+    client: TestClient, monkeypatch, tasa_badlar
 ) -> None:
     fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
     monkeypatch.setattr(main, "entry", fake_entry)
@@ -454,7 +464,9 @@ def test_portfolio_recomendacion_with_model_and_cartera_ancla(
         (ValueError("pesos no suman 1"), 422),
     ],
 )
-def test_portfolio_recomendacion_maps_errors(client: TestClient, monkeypatch, exc, status) -> None:
+def test_portfolio_recomendacion_maps_errors(
+    client: TestClient, monkeypatch, tasa_badlar, exc, status
+) -> None:
     monkeypatch.setattr(main, "entry", MagicMock(side_effect=exc))
 
     response = client.post("/portfolio/recomendacion", json=usuario_payload())
@@ -462,7 +474,22 @@ def test_portfolio_recomendacion_maps_errors(client: TestClient, monkeypatch, ex
     assert response.status_code == status
 
 
-def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_sin_tasa_usa_cero(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(
+        main, "fetch_interest_rate", MagicMock(side_effect=DataUnavailableError("BCRA caido"))
+    )
+    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    monkeypatch.setattr(main, "entry", fake_entry)
+
+    response = client.post("/portfolio/recomendacion", json=usuario_payload())
+
+    assert response.status_code == 200
+    assert fake_entry.call_args.kwargs["tasa_libre_riesgo_anual"] == 0.0
+
+
+def test_portfolio_recomendacion_reuses_a_recent_result(
+    client: TestClient, monkeypatch, tasa_badlar
+) -> None:
     fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
     monkeypatch.setattr(main, "entry", fake_entry)
 
@@ -474,7 +501,7 @@ def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monk
 
 
 def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
-    client: TestClient, monkeypatch
+    client: TestClient, monkeypatch, tasa_badlar
 ) -> None:
     fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
     monkeypatch.setattr(main, "entry", fake_entry)
@@ -489,7 +516,9 @@ def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
     assert fake_entry.call_count == 3  # vencido, se recalcula
 
 
-def test_portfolio_recomendacion_errors_are_not_cached(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_errors_are_not_cached(
+    client: TestClient, monkeypatch, tasa_badlar
+) -> None:
     fake_entry = MagicMock(side_effect=ValueError("sin datos"))
     monkeypatch.setattr(main, "entry", fake_entry)
 
