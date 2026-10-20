@@ -86,6 +86,7 @@ class PanelGBMConfig:
     macro: bool = False  # sumar el contexto macro (comun a todas las acciones del dia)
     vida_media_anios: float | None = 2.0
     horizonte: int = 5
+    zona_neutral: float = 0.0  # ver PreprocesoConfig
     # GBM
     max_iter: int = 200
     learning_rate: float = 0.05
@@ -112,6 +113,7 @@ class PanelGBMConfig:
             normalizar_vol=self.normalizar_vol,
             rankear=self.rankear,
             target=self.target,
+            zona_neutral=self.zona_neutral,
         )
 
 

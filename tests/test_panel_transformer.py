@@ -76,6 +76,7 @@ def test_config_invalida(extra, match) -> None:
         {"macro": True, "emb_ticker": True, "perdida": "huber", "capas_cruzadas": 2},
         {"capas_cruzadas": 0},
         {"target": "absoluto", "seleccion": "direccion", "perdida": "huber"},
+        {"seleccion": "perdida", "perdida": "huber", "zona_neutral": 0.3},
         {"moneda": "ars", "perdida": "ic", "n_semillas": 2, "vida_media_anios": None,
          "emb_sector": False, "epocas": 8, "paciencia": 1},
     ],
@@ -96,6 +97,13 @@ def test_fit_y_predict_panel(extra) -> None:
     assert (
         modelo.resumen()["version"] == modelo.version == f"panel-transformer-{modelo.config.moneda}"
     )
+
+
+def test_seleccion_por_perdida_elige_la_epoca_con_menos_perdida_de_validacion() -> None:
+    modelo = _modelo(seleccion="perdida", perdida="huber", epocas=4, paciencia=10)
+    info = modelo.fit(_histories())
+    # La metrica es menos la perdida: negativa, y la mejor es la mas alta.
+    assert info["val_perdida"] < 0 and 1 <= info["epoca_mejor"][0] <= 4
 
 
 def test_ticker_sin_dato_el_ultimo_dia_queda_afuera() -> None:

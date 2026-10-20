@@ -25,10 +25,12 @@ correlacion de Pearson por dia entre score y target: IC diferenciable) o
 ``"combinada"`` (``huber + lambda_ic * (-ic)``). Cada dia pesa segun su
 antiguedad (``pesos_temporales``). Early stopping en validacion, con
 ``particion`` (gap = horizonte), segun ``seleccion``: ``"ic"`` (Spearman por
-dia: ordenar bien las acciones) o ``"direccion"`` (``acierto_balanceado`` del
+dia: ordenar bien las acciones), ``"direccion"`` (``acierto_balanceado`` del
 signo del score contra el del target: acertar si sube o baja; tiene sentido
-con ``target="absoluto"``, que no le resta la media del dia). ``n_semillas``
-redes se promedian.
+con ``target="absoluto"``, que no le resta la media del dia) o ``"perdida"``
+(la misma perdida del entrenamiento: con ~75 dias de validacion, las otras dos
+son tan ruidosas que la epoca elegida es casi al azar). ``n_semillas`` redes
+se promedian.
 
 Como los demas modelos de panel, predice con ``predict_panel(dfs)`` y recibe el
 CCL / la macro por ``proveedor(hasta) -> (ccl, macro)``. ``save`` / ``load``
@@ -62,7 +64,7 @@ from src.panel_gbm import RUEDAS_PREDICCION, Proveedor, features_y_contexto
 from src.trend_common import acierto_balanceado, derive_trend_output, ic_por_fecha
 
 PERDIDAS = ("huber", "ic", "combinada")
-SELECCIONES = ("ic", "direccion")
+SELECCIONES = ("ic", "direccion", "perdida")
 SECTORES_LISTA = [*sorted(set(SECTORES.values())), "otro"]
 MIN_DIAS = 100
 
@@ -76,6 +78,7 @@ class PanelTransformerConfig:
     macro: bool = False  # token macro del dia
     vida_media_anios: float | None = 2.0
     horizonte: int = 5
+    zona_neutral: float = 0.0  # ver PreprocesoConfig
     # Red
     ventana: int = 40
     d_model: int = 32
@@ -126,7 +129,9 @@ class PanelTransformerConfig:
             raise ValueError("n_semillas debe ser al menos 1")
 
     def preproceso(self) -> PreprocesoConfig:
-        return PreprocesoConfig(horizonte=self.horizonte, target=self.target)
+        return PreprocesoConfig(
+            horizonte=self.horizonte, target=self.target, zona_neutral=self.zona_neutral
+        )
 
 
 # --------------------------------------------------------------------------- #
@@ -339,12 +344,17 @@ class PanelTransformerModel:
 
     def _metrica_validacion(self, red: _RedPanel, datos: dict, dias: torch.Tensor) -> float:
         """Metrica de early stopping en ``dias`` (mayor es mejor): IC de Spearman
-        medio por dia o acierto balanceado de la direccion, segun ``seleccion``."""
+        medio por dia, acierto balanceado de la direccion o menos la perdida de
+        entrenamiento (la mas estable con pocos dias de validacion), segun
+        ``seleccion``."""
         red.eval()
         with torch.no_grad():
             scores = torch.cat(
                 [self._forward(red, datos, dias[i : i + 64]) for i in range(0, len(dias), 64)]
             )
+        if self.config.seleccion == "perdida":
+            with torch.no_grad():
+                return -float(self._perdida(scores, datos, dias))
         m = datos["m"][dias].cpu().numpy()
         score, y = scores.cpu().numpy()[m], datos["y"][dias].cpu().numpy()[m]
         if self.config.seleccion == "direccion":

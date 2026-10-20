@@ -21,6 +21,8 @@ Parte de un ``Panel`` (``src.panel_datos``) y devuelve tensores
    (``"residual"``), o igual que ``"sin_media"`` pero sin restar la media
    (``"absoluto"``: conserva si sube o baja, para predecir la direccion), o el
    retorno crudo (``"crudo"``). Se guarda tambien el retorno crudo para evaluar.
+   Con ``zona_neutral`` > 0, los targets chicos (``|target| < zona_neutral``)
+   quedan fuera de la mascara de entrenamiento.
 
 El "mercado" es el promedio de los retornos de los tickers validos de cada
 dia (no el Merval): sale del mismo panel y no depende de otra serie.
@@ -71,10 +73,16 @@ class PreprocesoConfig:
     clip_features: float = 5.0
     clip_target: float = 3.0
     span_vol: int = 20  # span de la vol EWMA para normalizar retornos y target
+    # Celdas con |target| menor que esto (en unidades del target: vol a
+    # ``horizonte`` ruedas) quedan fuera de ``mascara_target``: no se entrena con
+    # movimientos chicos, que son sobre todo ruido. 0 = todas.
+    zona_neutral: float = 0.0
 
     def __post_init__(self) -> None:
         if self.target not in TARGETS:
             raise ValueError(f"target {self.target!r} desconocido ({TARGETS})")
+        if self.zona_neutral < 0:
+            raise ValueError("zona_neutral no puede ser negativa")
 
 
 @dataclass
@@ -242,6 +250,8 @@ def _target(
         if config.target != "absoluto":
             target = target.sub(target.mean(axis=1), axis=0)
     valido &= target.notna()
+    if config.zona_neutral > 0:
+        valido &= target.abs() >= config.zona_neutral
     return (
         retorno.where(valido).to_numpy(dtype=float),
         target.where(valido).to_numpy(dtype=float),

@@ -61,6 +61,23 @@ def test_racha() -> None:
 def test_config_invalida() -> None:
     with pytest.raises(ValueError, match="target"):
         PreprocesoConfig(target="otro")
+    with pytest.raises(ValueError, match="zona_neutral"):
+        PreprocesoConfig(zona_neutral=-0.1)
+
+
+@pytest.mark.parametrize("target", ["sin_media", "absoluto"])
+def test_zona_neutral_saca_los_targets_chicos(target) -> None:
+    panel = _panel()
+    todo = construir(panel, PreprocesoConfig(target=target))
+    zona = construir(panel, PreprocesoConfig(target=target, zona_neutral=0.5))
+    # Solo achica la mascara del target; las features y el target no cambian.
+    assert not (zona.mascara_target & ~todo.mascara_target).any()
+    assert zona.mascara_target.sum() < todo.mascara_target.sum()
+    assert (np.abs(zona.target[zona.mascara_target]) >= 0.5).all()
+    sacadas = todo.mascara_target & ~zona.mascara_target
+    assert (np.abs(todo.target[sacadas]) < 0.5).all()
+    np.testing.assert_array_equal(zona.valores, todo.valores)
+    np.testing.assert_array_equal(zona.mascara, todo.mascara)
 
 
 def test_construir_formas_y_mascaras() -> None:
