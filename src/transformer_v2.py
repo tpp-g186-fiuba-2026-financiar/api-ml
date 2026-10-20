@@ -23,8 +23,10 @@ reversion de corto plazo. Esta version corrige:
    pais, BADLAR, reservas, eventos; con sus retrasos de publicacion): la
    direccion de una accion depende sobre todo de la del mercado.
 3. **Target**: retorno en dolares a ``horizonte`` ruedas en unidades de vol del
-   ticker, recortado y **sin** restarle la media del dia (``"absoluto"``): asi
-   conserva si el mercado entero sube o baja.
+   ticker, recortado, **con** la media del dia restada (``"sin_media"``, default):
+   el modelo ordena las acciones contra el resto del panel. Con ``"absoluto"``
+   conserva si el mercado entero sube o baja, pero la red no lo predice y
+   colapsa a decir "alza" casi siempre (ver ``notas/informe-transformer-v2.md``).
 4. **Red**: la de ``src.panel_transformer`` (encoder temporal por accion con
    token CLS y atencion entre las acciones del mismo dia, que le muestra al
    modelo como se esta moviendo el resto del panel). Sin el
@@ -56,9 +58,15 @@ reversion de corto plazo. Esta version corrige:
    mueve (con ``"bce"``: el desvio esperado del ticker por ``2p - 1``, siendo
    ``p`` la probabilidad de suba).
 
-Los hiperparametros de la red por defecto (ventana 1, dropout 0,3, weight
-decay 0,3, lr 1e-4) son los mejores del Transformer de panel en la fase 4 (IC,
-2022-2025); todavia no se eligieron midiendo la direccion.
+Los defaults (target relativo, seleccion por la perdida de validacion, BCE y
+la red de abajo) son la configuracion elegida por la busqueda de Optuna
+(``src.simulacion.optuna_v2``, corrida ``optuna-v2``: 76 trials, objetivo IC
+sobre la regla de reversion en 8 folds 2019-2023, top 5 reevaluado con otras
+semillas), con ``HISTORIA_V2`` ruedas de historia. Ninguna configuracion le
+gano a la regla de reversion (PBO 91%): estos valores son mejores que los
+anteriores (``CONFIG_ANTERIOR``, el V2 absoluto colapsaba a "alza") pero no que
+el ensamble lineal. Lo que mas pesa es la regularizacion (weight decay, lr y
+dropout); la arquitectura casi no cambia el resultado.
 
 Entrenamiento: ``make train-transformer-v2`` (``src.train_transformer_v2``).
 """
@@ -92,17 +100,37 @@ from src.trend_common import senal
 _RET_5 = NOMBRES.index("ret_5_nivel")
 
 
+# Ruedas de historia para entrenar (todo el snapshot del collector, ~10 anios).
+HISTORIA_V2 = 2400
+# Defaults hasta la busqueda de Optuna (V2 absoluto): los usan los planes viejos
+# de ``src.simulacion.busqueda`` para que sigan midiendo lo mismo.
+CONFIG_ANTERIOR = {
+    "target": "absoluto",
+    "seleccion": "direccion",
+    "perdida": "huber",
+    "d_model": 32,
+    "dim_feedforward": 64,
+    "capas_temporales": 1,
+    "weight_decay": 0.3,
+    "learning_rate": 1e-4,
+}
+
+
 @dataclass(frozen=True)
 class TransformerV2Config(PanelTransformerConfig):
-    # Objetivo: direccion en dolares (ver docstring del modulo)
-    target: str = "absoluto"
-    seleccion: str = "direccion"
-    perdida: str = "huber"
-    # Red y regularizacion
+    # Objetivo y red: los elegidos por Optuna (ver docstring del modulo)
+    target: str = "sin_media"
+    seleccion: str = "perdida"
+    perdida: str = "bce"
     ventana: int = 1
+    d_model: int = 16
+    nhead: int = 4
+    dim_feedforward: int = 32
+    capas_temporales: int = 2
+    capas_cruzadas: int = 1
     dropout: float = 0.3
-    weight_decay: float = 0.3
-    learning_rate: float = 1e-4
+    weight_decay: float = 1.4e-3
+    learning_rate: float = 1.2e-4
     n_semillas: int = 5
     # Correcciones propias de esta version
     limpiar_saltos: bool = True

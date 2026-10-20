@@ -7,7 +7,7 @@ import torch
 from src.errors import ApiMlError, NotEnoughDataError
 from src.panel_gbm import features_y_contexto
 from src.panel_transformer import PanelTransformerModel
-from src.transformer_v2 import TransformerV2Config, TransformerV2Model
+from src.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 from src.trend_common import acierto_balanceado
 from tests.test_panel_transformer import (
     RUEDAS,
@@ -18,18 +18,27 @@ from tests.test_panel_transformer import (
     _proveedor,
 )
 
+# Los tests de la maquinaria de direccion usan la formulacion absoluta (la anterior
+# a Optuna), que tiene ``val_direccion`` y el ensamble con la reversion.
 CHICO = dict(
-    ventana=5, d_model=16, nhead=2, dim_feedforward=32, epocas=3, batch_dias=32, n_semillas=1
-)
+    ventana=5, d_model=16, nhead=2, dim_feedforward=32, epocas=3, batch_dias=32, n_semillas=1,
+    target="absoluto", seleccion="direccion", perdida="huber", capas_temporales=1,
+)  # fmt: skip
 
 
 def _modelo(**extra) -> TransformerV2Model:
     return TransformerV2Model(TransformerV2Config(**(CHICO | extra)), proveedor=_proveedor)
 
 
-def test_defaults_apuntan_a_la_direccion_en_dolares() -> None:
+def test_defaults_son_los_de_optuna() -> None:
     cfg = TransformerV2Config()
-    assert (cfg.moneda, cfg.target, cfg.seleccion) == ("usd", "absoluto", "direccion")
+    assert (cfg.moneda, cfg.target, cfg.seleccion, cfg.perdida) == (
+        "usd", "sin_media", "perdida", "bce"
+    )  # fmt: skip
+    assert (cfg.d_model, cfg.nhead, cfg.capas_temporales, cfg.ventana) == (16, 4, 2, 1)
+    # Los valores anteriores siguen disponibles para los planes viejos de la busqueda.
+    anterior = TransformerV2Config(**CONFIG_ANTERIOR)
+    assert (anterior.target, anterior.weight_decay) == ("absoluto", 0.3)
     assert cfg.limpiar_saltos and cfg.reentrenar_completo and cfg.cobertura_senal is None
     assert TransformerV2Config(perdida="bce").perdida == "bce"
     for extra, match in (({"cobertura_senal": 0.0}, "cobertura"), ({"perdida": "mse"}, "bce")):

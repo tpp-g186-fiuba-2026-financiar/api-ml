@@ -27,7 +27,7 @@ from src.data import fetch_history_collector
 from src.errors import DataUnavailableError
 from src.lstm import fetch_histories
 from src.macro_data import REQUIRED, SERIES, build_macro_frame, fetch_collector_series
-from src.transformer_v2 import TransformerV2Config, TransformerV2Model
+from src.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
 
 
 def proveedor_collector(macro: bool = False):
@@ -62,7 +62,7 @@ def main() -> None:
         default=settings.data_collector_url,
         help="URL del data-colector (desde el host: http://localhost:3000).",
     )
-    parser.add_argument("--days", type=int, default=settings.history_days, help="Ruedas a usar.")
+    parser.add_argument("--days", type=int, default=HISTORIA_V2, help="Ruedas de historia a usar.")
     parser.add_argument("--dispositivo", choices=["cpu", "cuda"], default="cpu")
     parser.add_argument("--n-semillas", type=int, default=defaults.n_semillas)
     parser.add_argument("--horizonte", type=int, default=defaults.horizonte)
