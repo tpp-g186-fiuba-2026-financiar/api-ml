@@ -1,0 +1,43 @@
+name: Reentrenar modelo contexto
+
+# Reentrena el modelo de contexto de mercado el primer dia de cada mes (usa Yahoo directo).
+on:
+  schedule:
+    - cron: "0 23 1 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reentrenar
+        env:
+          DATA_SOURCE: yahoo
+        run: python -m src.train_context
+
+      - name: Commitear el artefacto actualizado
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f models/contexto.pkl
+          if git diff --cached --quiet; then
+            echo "sin cambios en el modelo"
+          else
+            git commit -m "chore: reentrena el modelo contexto [skip ci]"
+            git push
+          fi

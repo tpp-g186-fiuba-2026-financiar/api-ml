@@ -72,6 +72,8 @@ lint: ## Revisa el codigo con ruff
 	ruff check src tests
 fmt: ## Formatea el codigo con ruff
 	ruff format src tests
+train-context: ## Entrena el modelo contexto (models/contexto.pkl, con piso de AUC)
+	python -m src.train_context
 help: ## Lista los comandos disponibles (varios aceptan ARGS="..." con opciones extra)
 	@grep -E '^[a-zA-Z0-9_-]+:.*## ' $(MAKEFILE_LIST) | \
 		awk 'BEGIN {FS = ":.*## "}; {printf "  %-26s %s\n", $$1, $$2}'

@@ -15,6 +15,7 @@ class Settings(BaseSettings):
     # Artefacto del Transformer V2 (src/transformer_v2.py; no lo sirve la API).
     transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
+    context_model_path: str = "models/contexto.pkl"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si

@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
+
 import numpy as np
 import pandas as pd
 
@@ -61,6 +63,9 @@ RUEDAS_POR_ANIO = 252
 # demas tickers. Se filtra aca, antes de que nada lo vea, en vez de dejar
 # que explote mas abajo.
 MIN_RUEDAS = 60
+
+# Hilos para descargar historicos y predecir en paralelo (I/O dominante).
+MAX_WORKERS_DESCARGA = 6
 
 # Universo de Black-Litterman: panel lider del Merval, nada mas. Reemplaza
 # al blocklist TICKERS_NO_INVERTIBLES (que solo tapaba GOLD/OIL) por un
@@ -211,8 +216,12 @@ def get_data(
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
-    for ticker in tickers:
-        df = fetch_hist(ticker, settings.history_days)
+    # Las descargas son I/O puro e independientes entre si: en paralelo la
+    # corrida pasa de ~20 pedidos en fila a unos pocos segundos. ``map``
+    # conserva el orden de ``tickers``.
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
+        descargas = list(pool.map(lambda t: fetch_hist(t, settings.history_days), tickers))
+    for ticker, df in zip(tickers, descargas, strict=True):
         # Log de cada historial tal como llega en ESTA corrida real (no un
         # diagnostico aparte): si algo explota mas abajo por pocas ruedas,
         # esto deja la foto exacta -- ticker, cantidad y rango de fechas --
@@ -247,7 +256,10 @@ def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, 
 
 
 def get_predicciones(tickers, predict_function) -> list[Prediccion]:
-    return [Prediccion(predict_function(ticker)) for ticker in tickers]
+    # Cada prediccion baja su propio historico: se hacen en paralelo (mismo
+    # orden de resultados que ``tickers``).
+    with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
+        return [Prediccion(t) for t in pool.map(predict_function, tickers)]
 
 
 def horizonte_comun(predicciones: list[Prediccion]) -> int:

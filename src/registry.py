@@ -523,6 +523,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.arima_trend import HORIZON as ARIMA_HORIZON
     from src.arima_trend import ArimaTrendModel, translate_modal_arima_response
     from src.config import settings
+    from src.context_trend import ContextTrendModel
     from src.lstm import TrendModel
     from src.macro_trend import MacroTrendModel
     from src.transformer import TransformerTrendModel
@@ -533,6 +534,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
     registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
+    registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)

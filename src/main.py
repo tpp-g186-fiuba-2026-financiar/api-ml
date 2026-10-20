@@ -1,4 +1,6 @@
+import time
 from contextlib import asynccontextmanager
+from datetime import date
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
@@ -6,7 +8,7 @@ from fastapi import FastAPI, HTTPException, Query
 from src.black_litterman.black_litterman import entry
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
-from src.consensus import compute_consensus
+from src.consensus import compute_consensus, load_track_record
 from src.data import fetch_history, fetch_interest_rate
 from src.errors import (
     ApiMlError,
@@ -32,6 +34,10 @@ from src.schemas import (
     VolatilityResponse,
 )
 from src.svm_direction import SvmDirectionModel
+
+RECOMENDACION_TTL_SEGUNDOS = 600
+_RECOMENDACION_CACHE_MAX = 64
+_recomendacion_cache: dict[tuple, tuple[float, dict]] = {}
 
 prediction_model = PredictionModel(settings.model_path)
 trend_registry = build_registry(settings.history_days)
@@ -193,6 +199,7 @@ async def predict_trend_consensus(
     return ConsensusResponse(
         symbol=compared["symbol"],
         investor_profile=profile,
+        track_record=load_track_record(profile, compared["symbol"]),
         **consensus,
     )
 
@@ -371,6 +378,17 @@ async def portfolio_recomendacion(
         ),
     ] = None,
 ) -> dict:
+    # La recomendacion tarda segundos (historicos + predicciones + GARCH) y solo
+    # cambia con la cartera, el modelo o el dia: se reutiliza unos minutos.
+    cache_key = (
+        usuario.model_dump_json(),
+        model,
+        cartera_ancla.value if cartera_ancla else None,
+        date.today().isoformat(),
+    )
+    cached = _recomendacion_cache.get(cache_key)
+    if cached and time.monotonic() - cached[0] < RECOMENDACION_TTL_SEGUNDOS:
+        return cached[1]
     try:
         tickers, pesos = entry(
             usuario,
@@ -392,4 +410,8 @@ async def portfolio_recomendacion(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    return {"pesos_recomendados": dict(zip(tickers, pesos.tolist(), strict=True))}
+    result = {"pesos_recomendados": dict(zip(tickers, pesos.tolist(), strict=True))}
+    if len(_recomendacion_cache) >= _RECOMENDACION_CACHE_MAX:
+        _recomendacion_cache.pop(next(iter(_recomendacion_cache)))
+    _recomendacion_cache[cache_key] = (time.monotonic(), result)
+    return result
