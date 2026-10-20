@@ -19,6 +19,8 @@ DESDE, HASTA = "2026-06-15", "2026-06-24"
 class FakeModeloMacro:
     """Reemplazo de ``ModeloMacro``: promueve siempre, sin entrenar nada."""
 
+    NOMBRE = "macro"
+
     def __init__(self, snapshot, model_path):
         self.model_path = model_path
         self.vigente = None
@@ -29,10 +31,16 @@ class FakeModeloMacro:
     def retrain(self, hasta, force=False):
         self.vigente = FakeMacro()
         self.vigente.save(self.model_path)
-        return {"model": "macro", "promoted": True, "bootstrap": force}
+        return {"model": self.NOMBRE, "promoted": True, "bootstrap": force}
 
     def resume(self):
         self.vigente = FakeMacro.load(self.model_path)
+
+
+class FakeModeloContexto(FakeModeloMacro):
+    """Reemplazo de ``ModeloContexto`` (mismo esquema mensual que el macro)."""
+
+    NOMBRE = "contexto"
 
 
 class FakeArima(FakeTrend):
@@ -59,6 +67,7 @@ def entorno(monkeypatch, tmp_path, snapshot_dir):
     monkeypatch.setattr(simulador, "RESULTADOS_DIR", str(tmp_path))
     monkeypatch.setattr(simulador, "build_modelos_diarios", _modelos)
     monkeypatch.setattr(simulador, "ModeloMacro", FakeModeloMacro)
+    monkeypatch.setattr(simulador, "ModeloContexto", FakeModeloContexto)
     monkeypatch.setattr(simulador, "ArimaTrendModel", FakeArima)
     return tmp_path
 
@@ -95,7 +104,10 @@ def test_corrida_completa_retomar_y_rearmar(entorno, snapshot) -> None:
     pesos = _jsonl(out / "pesos.jsonl")
     assert sorted(pesos["fecha"].astype(str).unique()) == ["2026-06-15", "2026-06-22"]
     backtests = _jsonl(out / "backtests.jsonl")
-    assert set(backtests["model"]) == {"lstm", "xgboost", "arima", "macro"}
+    assert set(backtests["model"]) == {"lstm", "xgboost", "arima", "macro", "contexto"}
+    bootstrap = promociones[promociones["bootstrap"].fillna(False).astype(bool)]
+    assert {"macro", "contexto"} <= set(bootstrap["model"])
+    assert (out / "artefactos" / "versiones" / "contexto").exists()
     elecciones = _jsonl(out / "elecciones.jsonl")
     assert set(elecciones["seleccion"]) == {"prod", "todos"}
     assert set(elecciones[elecciones["seleccion"] == "prod"]["model"]) <= {"lstm", "xgboost"}
@@ -126,6 +138,39 @@ def test_corrida_completa_retomar_y_rearmar(entorno, snapshot) -> None:
     assert elecciones["fecha"].nunique() == len(valores)
     with pytest.raises(SystemExit):
         rearmar(out, out / "rearmados" / "x", snapshot, rebalanceo=0)
+
+
+def test_al_terminar_registra_movimientos_con_y_sin_comision(entorno, snapshot) -> None:
+    Simulacion(_config(), snapshot).correr()
+    out = entorno / "t"
+    con = pd.read_csv(out / "movimientos.csv")
+    sin = pd.read_csv(out / "rearmados" / simulador.SIN_COMISION / "movimientos.csv")
+    operaciones = _jsonl(out / "operaciones.jsonl")
+    assert len(con) == len(operaciones) and (con["comision"] > 0).all()
+    assert (sin["comision"] == 0).all()
+    assert (
+        json.loads((out / "rearmados" / "sin-comision" / "config.json").read_text())["comision"]
+        == 0.0
+    )
+
+    # Cada operacion de una cartera de senal lleva la prediccion de su modelo ese dia.
+    senal = con[con["cartera"] == "senal_lstm"]
+    assert not senal.empty and (senal["modelo_usado"] == "lstm").all()
+    preds = _jsonl(out / "predicciones.jsonl")
+    preds = preds[preds["model"] == "lstm"].assign(fecha=lambda d: d["fecha"].astype(str))
+    fila = senal.iloc[0]
+    pred = preds[(preds["fecha"] == fila["fecha"]) & (preds["symbol"] == fila["ticker"])].iloc[0]
+    assert fila["senal_modelo"] == pred["signal"] == fila["senal_lstm"]
+    # En las de "mejor modelo", el modelo usado es el elegido para ese ticker.
+    mejor = con[con["cartera"] == "senal_mejor_prod"]
+    assert set(mejor["modelo_usado"].dropna()) <= {"lstm", "xgboost"}
+    assert {"senal_macro", "senal_contexto", "retorno_real_5", "retorno_real_20"} <= set(con)
+    compras = con[con["lado"] == "compra"]
+    assert (compras.groupby(["fecha", "cartera"])["peso_objetivo"].sum() <= 1 + 1e-9).all()
+
+    # Una corrida sin comision no se rearma (seria la misma).
+    Simulacion(_config(nombre="gratis", comision=0.0), snapshot).correr()
+    assert not (entorno / "gratis" / "rearmados").exists()
 
 
 def test_retomar_con_otra_config_falla(entorno, snapshot) -> None:
@@ -180,11 +225,19 @@ def test_reporte(entorno, snapshot, snapshot_dir, monkeypatch) -> None:
     assert set(resumen["elecciones"]) == {"prod", "todos"}
     assert resumen["calidad_modelos"]["todos_los_tickers"]["lstm"]["overall"]["n_predictions"] > 0
 
+    # Al terminar, la corrida deja las carteras sin comision: el reporte las compara.
+    sin = {c["cartera"]: c for c in resumen["sin_comision"]}
+    for c in resumen["carteras"]:
+        if c["cartera"] != BENCHMARK_MERVAL:
+            assert sin[c["cartera"]]["retorno_total"] >= c["retorno_total"] - 1e-12
+
     texto = (destino / "reporte.md").read_text()
     assert "## Carteras" in texto and "Reentreno semanal" in texto
+    assert "### Con y sin comision" in texto and "macro y contexto el 1" in texto
     # Las curvas de las carteras van junto a su tabla, antes de la calidad de los modelos.
     assert texto.index("carteras_senal.png") < texto.index("## Calidad de las predicciones")
     tex = (destino / "reporte.tex").read_text()
+    assert r"\subsection*{Con y sin comision}" in tex
     assert tex.startswith(r"\documentclass") and tex.rstrip().endswith(r"\end{document}")
     assert r"\texttt{senal\_mejor\_todos}" in tex and r"graficos/carteras_senal.png" in tex
     graficos = {p.name for p in (destino / "graficos").iterdir()}

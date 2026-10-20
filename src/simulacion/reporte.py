@@ -35,7 +35,7 @@ from src.simulacion.metricas import (
     resolver_predicciones,
     rotacion,
 )
-from src.simulacion.simulador import RESULTADOS_DIR
+from src.simulacion.simulador import RESULTADOS_DIR, SIN_COMISION
 from src.simulacion.snapshot import Snapshot
 
 BENCHMARKS = (BENCHMARK_REBALANCEO, BENCHMARK_BUY_HOLD, BENCHMARK_MERVAL)
@@ -55,6 +55,7 @@ COLOR_MODELO = {
     "transformer": "#1baf7a",
     "arima": "#eda100",
     "macro": "#e87ba4",
+    "contexto": "#5b6b7f",
     "ensamble": "#8250df",
     "panel_transformer": "#0e7c86",
     "reversion": "#8a5a2b",
@@ -408,11 +409,11 @@ def _grafico_gate(ax, filas: pd.DataFrame, modelo: str) -> None:
 
 
 def _accuracy_mensual(resumen_: dict) -> pd.DataFrame:
-    """Modelo -> mes -> accuracy (macro: hit rate de sus senales con vista)."""
+    """Modelo -> mes -> accuracy (macro y contexto: hit rate de sus senales con vista)."""
     por_modelo = (resumen_.get("calidad_modelos") or {}).get("todos_los_tickers") or {}
     columnas = {}
     for modelo, datos in por_modelo.items():
-        clave = "signal_hit_rate" if modelo == "macro" else "directional_accuracy"
+        clave = "signal_hit_rate" if modelo in ("macro", "contexto") else "directional_accuracy"
         columnas[modelo] = {
             pd.Period(mes).to_timestamp(): m.get(clave) for mes, m in datos["por_mes"].items()
         }
@@ -459,7 +460,7 @@ def bloques(resumen_: dict, imagenes: list[str]) -> list[Bloque]:
             [
                 f"Periodo: {periodo['desde']} a {periodo['hasta']} ({periodo['ruedas']} ruedas).",
                 f"Reentreno de LSTM / XGBoost / Transformer: {cfg.get('reentreno', 'diario')}; "
-                "macro el 1 de cada mes.",
+                "macro y contexto el 1 de cada mes.",
                 f"Capital inicial ${cfg_carteras['capital']:,.0f}, comision "
                 f"{cfg_carteras['comision']:.2%} por operacion, rebalanceo cada "
                 f"{cfg_carteras['rebalanceo']} ruedas.",
@@ -487,6 +488,7 @@ def bloques(resumen_: dict, imagenes: list[str]) -> list[Bloque]:
     encabezado = ["Cartera", "Retorno ARS", "Retorno USD", "Vol. anual", "Sharpe", "Max DD",
                   "Comisiones"]  # fmt: skip
     doc.append(("tabla", encabezado, filas))
+    doc += _bloques_sin_comision(resumen_)
     doc += graficos_de("carteras_")
 
     calidad_ = resumen_["calidad_modelos"]
@@ -548,11 +550,13 @@ def bloques(resumen_: dict, imagenes: list[str]) -> list[Bloque]:
         doc += graficos_de("elecciones")
 
     limitaciones = list(LIMITACIONES)
-    if cfg.get("reentreno") == "semanal":
+    periodo_reentreno = {"semanal": "una semana", "mensual": "un mes"}.get(cfg.get("reentreno"))
+    if periodo_reentreno:
         limitaciones.insert(
             0,
-            "Reentreno semanal: produccion reentrena todos los dias habiles, asi que los "
-            "modelos vigentes pueden tener hasta una semana mas de antiguedad que en produccion.",
+            f"Reentreno {cfg['reentreno']}: produccion reentrena LSTM / XGBoost / Transformer "
+            "todos los dias habiles, asi que los modelos vigentes pueden tener hasta "
+            f"{periodo_reentreno} mas de antiguedad que en produccion.",
         )
     if cfg_carteras.get("backtest_arrastrado"):
         limitaciones.insert(
@@ -563,6 +567,40 @@ def bloques(resumen_: dict, imagenes: list[str]) -> list[Bloque]:
         )
     doc += [("titulo", 2, "Limitaciones"), ("lista", limitaciones)]
     return doc
+
+
+def _bloques_sin_comision(resumen_: dict) -> list[Bloque]:
+    """Tabla con el retorno de cada cartera con la comision de la corrida y sin comision."""
+    sin = {c["cartera"]: c for c in resumen_.get("sin_comision") or []}
+    if not sin:
+        return []
+    filas = []
+    for c in resumen_["carteras"]:
+        s = sin.get(c["cartera"])
+        if s is None:
+            continue
+        diferencia = (s.get("retorno_total") or 0.0) - (c.get("retorno_total") or 0.0)
+        filas.append(
+            [
+                f"`{c['cartera']}`",
+                _pct(c.get("retorno_total")),
+                _pct(s.get("retorno_total")),
+                _pct(diferencia),
+                _pct(c.get("retorno_total_usd")),
+                _pct(s.get("retorno_total_usd")),
+            ]
+        )
+    comision = resumen_["config_carteras"]["comision"]
+    return [
+        ("titulo", 3, "Con y sin comision"),
+        (
+            "parrafo",
+            f"Las mismas operaciones con comision {comision:.2%} y sin comision "
+            f"(`rearmados/{SIN_COMISION}`). La diferencia es lo que se comen las comisiones: "
+            "las carteras que mas rotan son las que mas pierden.",
+        ),
+        ("tabla", ["Cartera", "ARS con", "ARS sin", "Diferencia", "USD con", "USD sin"], filas),
+    ]
 
 
 def _tabla_md(encabezado: list[str], filas: list[list[str]]) -> str:
@@ -654,6 +692,8 @@ def latex(resumen_: dict, imagenes: list[str]) -> str:
         if tipo == "titulo":
             if bloque[1] == 1:
                 partes.append(rf"{{\LARGE\bfseries {_tex(bloque[2])}\par}}")
+            elif bloque[1] >= 3:
+                partes.append(rf"\subsection*{{{_tex(bloque[2])}}}")
             else:
                 partes.append(rf"\section*{{{_tex(bloque[2])}}}")
         elif tipo == "parrafo":
@@ -682,6 +722,10 @@ def generar(corrida: Path, snapshot: Snapshot, rearmado: str | None = None) -> P
     destino = (corrida / "rearmados" / rearmado if rearmado else corrida) / "reporte"
     destino.mkdir(parents=True, exist_ok=True)
     resumen_ = resumen(datos, snapshot)
+    sin_comision = corrida / "rearmados" / SIN_COMISION / "valores.jsonl"
+    if rearmado is None and sin_comision.exists():
+        valores = _fechas(_leer_jsonl(sin_comision))
+        resumen_["sin_comision"] = tabla_carteras(valores).to_dict("records")
     (destino / "resumen.json").write_text(
         json.dumps(resumen_, indent=2, ensure_ascii=False, default=str)
     )

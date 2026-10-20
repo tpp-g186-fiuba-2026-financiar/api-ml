@@ -4,8 +4,9 @@ Para cada rueda ``d`` desde ``--desde`` hasta ``--hasta``, con datos hasta el
 cierre de ``d`` (nunca posteriores):
 
 1. Reentrena LSTM / XGBoost / Transformer con el gate de promocion de
-   produccion (todos los dias o solo en la ultima rueda de la semana, segun
-   ``--reentreno``) y el modelo macro el 1 de cada mes. Ver ``entrenamiento``.
+   produccion (todos los dias, solo en la ultima rueda de la semana o una vez
+   por mes, segun ``--reentreno``) y los modelos macro y contexto el 1 de cada
+   mes. Ver ``entrenamiento``.
    Cada version promovida queda guardada en ``artefactos/versiones/``.
 2. Predice con los modelos vigentes para todos los tickers del snapshot
    (como el paper trading diario) y lo guarda en ``predicciones.jsonl``. En
@@ -18,6 +19,11 @@ cierre de ``d`` (nunca posteriores):
    ajustada del backtest en vivo) y los benchmarks. Ver ``mesa``.
 4. Valoriza todas las carteras al cierre y lo agrega a ``valores.jsonl``.
 
+Al terminar escribe ``movimientos.csv`` (cada compra / venta con lo que decian
+los modelos, ver ``movimientos``) y rehace las carteras sin comision en
+``rearmados/sin-comision/`` (con su propio ``movimientos.csv``), para ver
+cuanto se comen las comisiones; el reporte compara las dos.
+
 La corrida se puede cortar y retomar (o extender con un ``--hasta`` posterior):
 el estado se guarda al final de cada dia en ``estado.json`` y los modelos
 vigentes en ``artefactos/``. Las carteras se pueden rehacer sin reentrenar con
@@ -26,6 +32,8 @@ vigentes en ``artefactos/``. Las carteras se pueden rehacer sin reentrenar con
 Uso:
     python -m src.simulacion.simulador --nombre junio --desde 2026-06-01 --reentreno semanal
     python -m src.simulacion.simulador --nombre prueba --desde 2026-09-01 --hasta 2026-09-15
+    python -m src.simulacion.simulador --nombre contexto --desde 2026-01-02 --reentreno mensual \
+        --snapshot simulacion/snapshot-collector
     python -m src.simulacion.simulador --nombre tr-relativo --desde 2026-06-01 --reentreno semanal \
         --transformer '{"target": "relativo", "universo": "panel", "n_semillas": 5}'
 """
@@ -50,9 +58,11 @@ from src.config import settings
 from src.data import MACRO_COLUMN, attach_macro_feature
 from src.data_quality import is_stale
 from src.errors import ApiMlError
+from src.simulacion import movimientos
 from src.simulacion.cartera import CAPITAL_INICIAL_DEFAULT, COMISION_DEFAULT
 from src.simulacion.entrenamiento import (
     FRECUENCIAS_REENTRENO,
+    ModeloContexto,
     ModeloMacro,
     build_modelos_diarios,
     histories_at,
@@ -67,9 +77,11 @@ from src.trend_common import backtest_predict_df, centrar_predicciones
 
 RESULTADOS_DIR = "simulacion/resultados"
 REBALANCEO_DEFAULT = 5
+# Rearmado que se hace al terminar cada corrida (mismas predicciones, sin comision).
+SIN_COMISION = "sin-comision"
 # Modelos cuyo backtest se mide solo sobre predicciones con vista (ver
 # ``backtest_sin_neutrales``).
-MODELOS_SIN_NEUTRALES = ("macro",)
+MODELOS_SIN_NEUTRALES = ("macro", "contexto")
 
 
 @dataclass
@@ -122,6 +134,7 @@ class Simulacion:
         self.artefactos = self.out / "artefactos"
         self.modelos = build_modelos_diarios(self.artefactos, config.transformer)
         self.macro = ModeloMacro(snapshot, self.artefactos / "macro.pkl")
+        self.contexto = ModeloContexto(snapshot, self.artefactos / "contexto.pkl")
         self.arima = ArimaTrendModel()
         self.mesa = Mesa(snapshot, config.capital, config.comision, config.rebalanceo)
         self.ultimo_dia: str | None = None
@@ -148,13 +161,15 @@ class Simulacion:
         for modelo in self.modelos:
             modelo.resume()
         self.macro.resume()
+        self.contexto.resume()
         return True
 
     # ------------------------------------------------------------------ #
     # Entrenamiento
     # ------------------------------------------------------------------ #
     def _model_paths(self) -> dict[str, Path]:
-        return {m.name: m.model_path for m in self.modelos} | {"macro": self.macro.model_path}
+        mensuales = {"macro": self.macro.model_path, "contexto": self.contexto.model_path}
+        return {m.name: m.model_path for m in self.modelos} | mensuales
 
     def archivar(self, filas: list[dict]) -> None:
         """Copia cada version promovida a ``artefactos/versiones/<modelo>/<fecha>``.
@@ -177,7 +192,8 @@ class Simulacion:
         filas = []
         for modelo in self.modelos:
             filas.append({"fecha": previo.date(), **_quiet(modelo.bootstrap, histories)})
-        filas.append({"fecha": previo.date(), **_quiet(self.macro.retrain, previo, force=True)})
+        for mensual in (self.macro, self.contexto):
+            filas.append({"fecha": previo.date(), **_quiet(mensual.retrain, previo, force=True)})
         self.archivar(filas)
         append_jsonl(self.out / "promociones.jsonl", filas)
         for fila in filas:
@@ -223,9 +239,11 @@ class Simulacion:
         (``centrar_predicciones``).
         """
         self.macro.set_today(dia)
+        self.contexto.set_today(dia)
         vigentes = {m.name: m.vigente for m in self.modelos}
         vigentes["arima"] = self.arima
         vigentes["macro"] = self.macro.vigente
+        vigentes["contexto"] = self.contexto.vigente
         predicciones: Predicciones = {name: {} for name in vigentes}
         backtests: Predicciones = {name: {} for name in vigentes}
         for symbol in self.snapshot.tickers:
@@ -285,7 +303,8 @@ class Simulacion:
         guardar_rueda(self.out, self.mesa.operar(dia, predicciones, backtests))
 
         if siguiente is not None and macro_retrain_due(dia, siguiente):
-            promociones.append({"fecha": dia.date(), **_quiet(self.macro.retrain, dia)})
+            for mensual in (self.macro, self.contexto):
+                promociones.append({"fecha": dia.date(), **_quiet(mensual.retrain, dia)})
         self.archivar(promociones)
         append_jsonl(self.out / "promociones.jsonl", promociones)
 
@@ -333,7 +352,18 @@ class Simulacion:
             siguientes = calendario[calendario > dia]
             siguiente = siguientes[0] if len(siguientes) else None
             self.procesar_dia(dia, siguiente)
+        self.cerrar()
         print(f"\nResultados en {self.out}")
+
+    def cerrar(self) -> None:
+        """Movimientos de la corrida y, si se cobro comision, las carteras sin comision."""
+        movimientos.escribir(self.out, self.snapshot)
+        if self.config.comision > 0:
+            # Import diferido: ``rearmar`` importa de este modulo.
+            from src.simulacion.rearmar import rearmar
+
+            rearmar(self.out, self.out / "rearmados" / SIN_COMISION, self.snapshot, comision=0.0)
+            movimientos.escribir(self.out, self.snapshot, SIN_COMISION)
 
 
 def ultima_rueda_completa(snapshot: Snapshot) -> str:

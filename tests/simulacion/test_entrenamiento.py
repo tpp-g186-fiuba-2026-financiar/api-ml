@@ -3,8 +3,9 @@ import pytest
 
 import src.simulacion.entrenamiento as entrenamiento
 from src.data import MACRO_COLUMN
-from src.errors import DataUnavailableError
+from src.errors import DataUnavailableError, NotEnoughDataError
 from src.simulacion.entrenamiento import (
+    ModeloContexto,
     ModeloDiario,
     ModeloMacro,
     build_modelos_diarios,
@@ -131,5 +132,77 @@ def test_reentreno_due() -> None:
     # Jueves con feriado el viernes: es la ultima rueda de la semana.
     assert reentreno_due("semanal", jueves, lunes)
     assert reentreno_due("semanal", jueves, None)
+    # Mensual: el mismo dia que los crons del 1 (el 1 de julio de 2026 es rueda).
+    fin_de_mes, primero, segundo = (
+        pd.Timestamp(d) for d in ("2026-06-30", "2026-07-01", "2026-07-02")
+    )
+    assert not reentreno_due("mensual", fin_de_mes, primero)
+    assert reentreno_due("mensual", primero, segundo)
+    assert not reentreno_due("mensual", viernes, lunes)
+    assert not reentreno_due("nunca", primero, segundo)
     with pytest.raises(ValueError):
         reentreno_due("anual", jueves, viernes)
+
+
+class _ContextoOk(FakeMacro):
+    def __init__(self, config=None):
+        super().__init__()
+        self.market_provider = None
+
+    def fit(self, histories):
+        self.entrenado_con = sorted(histories)
+        return {"oos_auc": 0.6}
+
+    @classmethod
+    def load(cls, path):
+        return FakeMacro.load(path)
+
+
+class _ContextoMalo(_ContextoOk):
+    def fit(self, histories):
+        return {"oos_auc": 0.4}
+
+
+class _ContextoFalla(_ContextoOk):
+    def fit(self, histories):
+        raise NotEnoughDataError("muy pocas filas")
+
+
+def test_modelo_contexto(monkeypatch, snapshot, tmp_path) -> None:
+    corte = snapshot.trading_days()[-10]
+    path = tmp_path / "contexto.pkl"
+
+    monkeypatch.setattr(entrenamiento, "ContextTrendModel", _ContextoMalo)
+    contexto = ModeloContexto(snapshot, path)
+    assert contexto.retrain(corte)["promoted"] is False
+    assert contexto.vigente is None
+    assert contexto.retrain(corte, force=True)["bootstrap"] is True
+
+    monkeypatch.setattr(entrenamiento, "ContextTrendModel", _ContextoOk)
+    contexto = ModeloContexto(snapshot, path)
+    fila = contexto.retrain(corte)
+    assert fila["model"] == "contexto" and fila["promoted"] and fila["oos_auc"] == 0.6
+    # Entrena con el universo del modelo (TICKER_CORTO no esta) hasta el corte.
+    assert contexto.vigente.entrenado_con == sorted(TICKERS)
+    # El mercado con el que predice es el de los lideres del snapshot, sin mirar el futuro.
+    mercado = contexto.vigente.market_provider()
+    assert mercado.index[-1] == corte
+    contexto.set_today(snapshot.trading_days()[-1])
+    assert contexto.vigente.market_provider().index[-1] == snapshot.trading_days()[-1]
+
+    monkeypatch.setattr(entrenamiento, "ContextTrendModel", _ContextoFalla)
+    assert "muy pocas filas" in ModeloContexto(snapshot, path).retrain(corte)["error"]
+
+    retomado = ModeloContexto(snapshot, path)
+    retomado.resume()
+    assert retomado.vigente is not None
+    vacio = ModeloContexto(snapshot, tmp_path / "no.pkl")
+    vacio.resume()
+    assert vacio.vigente is None
+
+    # Sin lideres en el snapshot no hay mercado (el modelo no puede predecir).
+    sin_lideres = type(snapshot)({"COME": snapshot.prices["COME"]}, ["COME"], None, {}, {})
+    contexto = ModeloContexto(sin_lideres, path)
+    contexto.resume()
+    contexto.set_today(corte)
+    assert contexto.vigente.market_provider() is None

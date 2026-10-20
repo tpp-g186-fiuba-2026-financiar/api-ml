@@ -24,13 +24,14 @@ def _correr(snapshot_dir, *extra: str) -> None:
 
 
 def test_reentreno_mensual_y_nunca() -> None:
-    fin_de_mes, siguiente = pd.Timestamp("2026-06-30"), pd.Timestamp("2026-07-01")
-    assert reentreno_due("mensual", fin_de_mes, siguiente)
-    assert not reentreno_due("mensual", pd.Timestamp("2026-06-26"), pd.Timestamp("2026-06-29"))
-    assert reentreno_due("mensual", fin_de_mes, None)
-    assert not reentreno_due("nunca", fin_de_mes, siguiente)
+    # Mensual: el dia de los crons del 1 (el 1 de julio de 2026 es rueda).
+    fin_de_mes, primero = pd.Timestamp("2026-06-30"), pd.Timestamp("2026-07-01")
+    assert not reentreno_due("mensual", fin_de_mes, primero)
+    assert reentreno_due("mensual", primero, pd.Timestamp("2026-07-02"))
+    assert not reentreno_due("mensual", primero, None)  # ultima rueda: no hay a quien servirle
+    assert not reentreno_due("nunca", primero, pd.Timestamp("2026-07-02"))
     with pytest.raises(ValueError, match="desconocida"):
-        reentreno_due("anual", fin_de_mes, siguiente)
+        reentreno_due("anual", fin_de_mes, primero)
 
 
 def test_config_toma_modelo_e_historia_del_json() -> None:

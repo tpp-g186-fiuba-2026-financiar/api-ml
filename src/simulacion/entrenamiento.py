@@ -7,6 +7,9 @@
   sidecar ``.score.json`` incluido).
 - Macro (``retrain-macro.yml``, el 1 de cada mes): se entrena con el universo
   ``UNIVERSE`` y se guarda solo si el AUC fuera de muestra llega al minimo.
+- Contexto (``retrain-contexto.yml``, el 1 de cada mes): igual que el macro,
+  pero en vez de series macro usa el "mercado" que arma con las acciones
+  lideres (``src.context_trend.LEADERS``), sacado del mismo snapshot.
 - ARIMA no se entrena: se ajusta por ticker en cada prediccion.
 
 Los artefactos van a un directorio propio de la corrida, nunca a ``models/``.
@@ -22,6 +25,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.context_trend import LEADERS, ContextConfig, ContextTrendModel, market_frame
 from src.data import MACRO_COLUMN, attach_macro_feature
 from src.data_quality import drop_stale
 from src.errors import ApiMlError
@@ -29,6 +33,7 @@ from src.lstm import TrendModel
 from src.macro_trend import UNIVERSE, MacroConfig, MacroTrendModel
 from src.retrain_guard import force_promote, promote_if_better
 from src.simulacion.snapshot import Snapshot
+from src.train_context import DEFAULT_MIN_AUC as CONTEXTO_MIN_AUC
 from src.train_macro import DEFAULT_MIN_AUC
 from src.transformer import TransformerTrainConfig, TransformerTrendModel
 from src.xgb_trend import XGBTrendModel
@@ -169,6 +174,76 @@ class ModeloMacro:
             self.vigente = MacroTrendModel.load(self.model_path)
 
 
+# Ruedas de historia con las que se entrena el contexto (default de
+# ``src.train_context``) y con las que arma el mercado para predecir (default de
+# ``src.context_trend.todays_market_frame``).
+CONTEXTO_RUEDAS_ENTRENAMIENTO = 4000
+CONTEXTO_RUEDAS_MERCADO = 1500
+
+
+@dataclass
+class ModeloContexto:
+    """Modelo ``contexto``: reentreno mensual con umbral minimo de AUC (como el macro).
+
+    En produccion predice con el mercado "de hoy" (``todays_market_frame``, los
+    lideres bajados ese dia); aca, con el de los lideres del snapshot hasta el
+    dia simulado.
+    """
+
+    snapshot: Snapshot
+    model_path: Path
+    min_auc: float = CONTEXTO_MIN_AUC
+    vigente: ContextTrendModel | None = None
+    _mercado: pd.DataFrame | None = field(default=None, repr=False)
+
+    def _mercado_hoy(self) -> pd.DataFrame:
+        return self._mercado
+
+    def set_today(self, hasta: pd.Timestamp) -> None:
+        lideres = {
+            s: self.snapshot.history(s, hasta, CONTEXTO_RUEDAS_MERCADO)
+            for s in LEADERS
+            if s in self.snapshot.prices
+        }
+        try:
+            self._mercado = market_frame({s: df for s, df in lideres.items() if not df.empty})
+        except ApiMlError:
+            self._mercado = None
+        if self.vigente is not None:
+            self.vigente.market_provider = self._mercado_hoy
+
+    def _histories(self, hasta: pd.Timestamp) -> dict[str, pd.DataFrame]:
+        histories = {
+            s: self.snapshot.history(s, hasta, CONTEXTO_RUEDAS_ENTRENAMIENTO)
+            for s in UNIVERSE
+            if s in self.snapshot.prices
+        }
+        return {s: df for s, df in histories.items() if not df.empty}
+
+    def retrain(self, hasta: pd.Timestamp, force: bool = False) -> dict:
+        model = ContextTrendModel(config=ContextConfig())
+        try:
+            metrics = model.fit(self._histories(hasta))
+        except ApiMlError as exc:
+            return {"model": "contexto", "promoted": False, "error": str(exc)}
+        promoted = force or metrics["oos_auc"] >= self.min_auc
+        if promoted:
+            model.save(self.model_path)
+            self.vigente = model
+            self.set_today(hasta)
+        return {
+            "model": "contexto",
+            "promoted": promoted,
+            "bootstrap": force,
+            "oos_auc": metrics["oos_auc"],
+            "min_auc": self.min_auc,
+        }
+
+    def resume(self) -> None:
+        if self.model_path.exists():
+            self.vigente = ContextTrendModel.load(self.model_path)
+
+
 def macro_retrain_due(dia: pd.Timestamp, siguiente: pd.Timestamp | None) -> bool:
     """El cron corre el 1 de cada mes: le toca a la ultima rueda antes de ese dia.
 
@@ -184,9 +259,10 @@ def macro_retrain_due(dia: pd.Timestamp, siguiente: pd.Timestamp | None) -> bool
 
 
 # Frecuencias de reentreno de los modelos diarios. "diario" replica el cron de
-# produccion (lunes a viernes); "semanal" y "mensual" reentrenan solo en la
-# ultima rueda de cada semana / mes, para corridas mas cortas; "nunca" se queda
-# con el modelo entrenado antes de la primera rueda.
+# produccion (lunes a viernes); "semanal" reentrena solo en la ultima rueda de
+# cada semana y "mensual" el mismo dia que los crons mensuales (macro y
+# contexto, ver ``macro_retrain_due``), para corridas mas cortas; "nunca" se
+# queda con el modelo entrenado antes de la primera rueda.
 FRECUENCIAS_REENTRENO = ("diario", "semanal", "mensual", "nunca")
 
 
@@ -194,9 +270,10 @@ def reentreno_due(frecuencia: str, dia: pd.Timestamp, siguiente: pd.Timestamp | 
     """Si al cierre de ``dia`` se reentrenan LSTM / XGBoost / Transformer."""
     if frecuencia == "diario":
         return True
-    if frecuencia in ("semanal", "mensual"):
-        periodo = "W" if frecuencia == "semanal" else "M"
-        return siguiente is None or siguiente.to_period(periodo) != dia.to_period(periodo)
+    if frecuencia == "semanal":
+        return siguiente is None or siguiente.to_period("W") != dia.to_period("W")
+    if frecuencia == "mensual":
+        return macro_retrain_due(dia, siguiente)
     if frecuencia == "nunca":
         return False
     raise ValueError(f"frecuencia de reentreno desconocida: {frecuencia}")

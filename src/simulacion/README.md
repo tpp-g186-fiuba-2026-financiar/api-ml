@@ -5,7 +5,7 @@ a la cartera". Se para en una fecha pasada, entrena los modelos locales con dato
 avanza rueda por rueda: reentrena como el cron de produccion, predice, rebalancea carteras y las
 valoriza al cierre. Nunca usa datos posteriores al dia simulado.
 
-Solo modelos locales de api_ml (LSTM, XGBoost, Transformer, ARIMA, macro). Los de Modal quedan
+Solo modelos locales de api_ml (LSTM, XGBoost, Transformer, ARIMA, macro, contexto). Los de Modal quedan
 afuera. No toca `models/` ni ningun servicio de produccion: todo corre contra un snapshot en disco.
 
 ## Pasos
@@ -58,10 +58,11 @@ asi que se puede pegar una variante de los planes de la busqueda.
 
 | Pieza | Como en produccion |
 |---|---|
-| Reentreno LSTM / XGBoost / Transformer | `promote_if_better` (`src/retrain_guard.py`), con el sidecar `.score.json` del vigente. `--reentreno diario` (como `retrain.yml`) o `semanal` (ultima rueda de cada semana) |
+| Reentreno LSTM / XGBoost / Transformer | `promote_if_better` (`src/retrain_guard.py`), con el sidecar `.score.json` del vigente. `--reentreno diario` (como `retrain.yml`), `semanal` (ultima rueda de cada semana) o `mensual` (el mismo dia que macro y contexto: ~la mitad de tiempo que semanal) |
 | Reentreno macro | El 1 de cada mes, se guarda si el AUC fuera de muestra llega a `DEFAULT_MIN_AUC` |
+| Reentreno contexto | Igual que el macro (`retrain-contexto.yml`, AUC minimo de `src/train_context.py`), con el historico de los lideres del snapshot en vez de bajarlo de Yahoo |
 | ARIMA | Se ajusta por ticker en cada prediccion |
-| Backtest en vivo | `backtest_predict_df` (ultimas 60 ruedas, paso 5). Macro, solo sobre predicciones con vista (`backtest_sin_neutrales`) |
+| Backtest en vivo | `backtest_predict_df` (ultimas 60 ruedas, paso 5). Macro y contexto, solo sobre predicciones con vista (`backtest_sin_neutrales`) |
 | Consenso | `compute_consensus` con el backtest solo de LSTM / XGBoost (`_LIVE_BACKTEST_MODELS`) |
 | Black-Litterman | `entry` con cartera ancla equal weight, GARCH en la diagonal y universo panel lider |
 
@@ -91,6 +92,8 @@ Lo que no se asigna queda en efectivo, sin interes.
 | `pesos.jsonl`, `operaciones.jsonl`, `valores.jsonl` | Pesos objetivo, operaciones y valor diario de cada cartera (con CCL) |
 | `errores.jsonl` | Rebalanceos de Black-Litterman que fallaron (la cartera queda como estaba) |
 | `artefactos/versiones/` | Cada version promovida de cada modelo, por fecha |
+| `movimientos.csv` | Cada compra / venta con la estrategia y el modelo de la cartera, el peso objetivo, la prediccion del modelo que la decidio, la senal de todos los modelos para ese ticker ese dia y el retorno real a 5 y 20 ruedas (`src/simulacion/movimientos.py`) |
+| `rearmados/sin-comision/` | Las mismas carteras sin comision (se rearman solas al terminar), con su `movimientos.csv`; el reporte compara las dos |
 
 Las metricas y el reporte salen de estos archivos, asi que cambiarlos no obliga a volver a
 correr. `rearmar` rehace las carteras a partir de `predicciones.jsonl` y `backtests.jsonl`; con

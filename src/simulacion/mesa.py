@@ -37,7 +37,7 @@ from src.simulacion.snapshot import Snapshot
 # Modelos con backtest en vivo en el comparador (``_LIVE_BACKTEST_MODELS`` en
 # src.registry): su accuracy pondera el consenso.
 MODELOS_CON_BACKTEST = ("lstm", "xgboost")
-MODELOS = ("lstm", "xgboost", "transformer", "arima", "macro")
+MODELOS = ("lstm", "xgboost", "transformer", "arima", "macro", "contexto")
 # Candidatos de la eleccion del mejor modelo por ticker: "prod" replica la
 # eleccion de produccion (solo los que tienen backtest en vivo); "todos" suma
 # el resto de los locales.

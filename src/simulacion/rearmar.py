@@ -32,6 +32,7 @@ from pathlib import Path
 
 import pandas as pd
 
+from src.simulacion import movimientos
 from src.simulacion.mesa import MODELOS_CON_BACKTEST, MODELOS_PANEL, Mesa, Predicciones
 from src.simulacion.simulador import RESULTADOS_DIR, guardar_rueda, silenciar_warnings
 from src.simulacion.snapshot import Snapshot
@@ -156,7 +157,8 @@ def main(argv: list[str] | None = None) -> None:
         comision=args.comision,
         rebalanceo=args.rebalanceo,
     )
-    print(f"Carteras rearmadas en {salida}")
+    movimientos.escribir(corrida, snapshot, args.salida)
+    print(f"Carteras rearmadas en {salida} (con movimientos.csv)")
 
 
 if __name__ == "__main__":
