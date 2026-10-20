@@ -1,6 +1,6 @@
 # Calidad de los modelos: backtest vs paper trading
 
-Generado el 2026-10-20. Periodo de paper trading analizado: 2026-07-22 a 2026-10-13 (8664 predicciones ya comprobadas, 1960 pendientes). Backtest del 2026-09-03T03:19:34Z.
+Generado el 2026-10-20. Periodo de paper trading analizado: 2026-07-22 a 2026-10-13 (8664 predicciones ya comprobadas, 2733 pendientes). Backtest del 2026-09-03T03:19:34Z.
 
 Lectura rapida: la **accuracy direccional** es el % de veces que el modelo acerto si el precio subia o bajaba (50% = azar). El backtest puede estar inflado porque los modelos ya vieron parte de esa historia al entrenar; el paper trading solo cuenta predicciones hechas antes de conocer el resultado, asi que es la medida real. Con menos de 30 predicciones no se saca ninguna conclusion.
 
