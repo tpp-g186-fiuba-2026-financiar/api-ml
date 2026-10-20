@@ -40,9 +40,9 @@ import pandas as pd
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
 from src.data import MACRO_COLUMN, attach_macro_feature
-from src.panel_ensamble import EnsambleConfig, EnsamblePanelModel
-from src.panel_gbm import PanelGBMConfig
-from src.panel_transformer import PanelTransformerConfig, PanelTransformerModel
+from src.panel.ensamble import EnsambleConfig, EnsamblePanelModel
+from src.panel.gbm import PanelGBMConfig
+from src.panel.transformer import PanelTransformerConfig, PanelTransformerModel
 from src.simulacion.busqueda import proveedor_snapshot
 from src.simulacion.entrenamiento import histories_at, reentreno_due
 from src.simulacion.experimento import ReversionPanelModel

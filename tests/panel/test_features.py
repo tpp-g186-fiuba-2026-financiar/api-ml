@@ -2,8 +2,8 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.panel_datos import armar_panel
-from src.panel_features import (
+from src.panel.datos import armar_panel
+from src.panel.features import (
     FEATURES_ACCION,
     FLAGS,
     NIVEL,

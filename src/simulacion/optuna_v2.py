@@ -43,8 +43,9 @@ import pandas as pd
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
 from src.errors import ApiMlError
-from src.panel_ensamble import EnsambleConfig, EnsamblePanelModel
-from src.panel_gbm import PanelGBMConfig
+from src.panel.ensamble import EnsambleConfig, EnsamblePanelModel
+from src.panel.gbm import PanelGBMConfig
+from src.panel.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
 from src.simulacion.busqueda import (
     DIR_EXPERIMENTOS,
     PERIODOS_ELECCION,
@@ -56,7 +57,6 @@ from src.simulacion.direccion import REFERENCIA_REVERSION, referencias, retornos
 from src.simulacion.experimento import predecir_periodo
 from src.simulacion.significancia import significancia
 from src.simulacion.snapshot import Snapshot
-from src.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
 
 SNAPSHOT = "simulacion/snapshot-collector"
 FOLDS = PERIODOS_PREVIOS + PERIODOS_ELECCION[:3]  # 2019-07 a 2023-10

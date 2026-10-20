@@ -3,11 +3,11 @@ import sys
 import pandas as pd
 import pytest
 
-import src.train_transformer_v2 as train
+import src.panel.train_transformer_v2 as train
 from src.config import settings
 from src.errors import DataUnavailableError
-from src.transformer_v2 import TransformerV2Model
-from tests.test_panel_transformer import TICKERS, _histories, _macro
+from src.panel.transformer_v2 import TransformerV2Model
+from tests.panel.test_transformer import TICKERS, _histories, _macro
 
 
 def test_proveedor_collector_corta_el_ccl_a_la_fecha(monkeypatch) -> None:

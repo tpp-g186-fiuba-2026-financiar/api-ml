@@ -15,7 +15,7 @@ reversion de corto plazo. Esta version corrige:
    fuente no ajusto (splits, canjes; ``limpiar_saltos``, ver
    ``src.simulacion.limpieza``). Cuanta historia usa lo decide quien lo
    entrena (``--days`` de ``train_transformer_v2``).
-2. **Features** de ``src.panel_features``: retornos de 1 a 60 ruedas,
+2. **Features** de ``src.panel.features``: retornos de 1 a 60 ruedas,
    reversion relativa al panel y al sector, volatilidades, volumen anormal,
    distancias a medias, drawdowns y beta; retornos divididos por la vol del
    propio ticker y rankeados entre las acciones del dia. Con ``macro=True``,
@@ -27,7 +27,7 @@ reversion de corto plazo. Esta version corrige:
    el modelo ordena las acciones contra el resto del panel. Con ``"absoluto"``
    conserva si el mercado entero sube o baja, pero la red no lo predice y
    colapsa a decir "alza" casi siempre (ver ``notas/informe-transformer-v2.md``).
-4. **Red**: la de ``src.panel_transformer`` (encoder temporal por accion con
+4. **Red**: la de ``src.panel.transformer`` (encoder temporal por accion con
    token CLS y atencion entre las acciones del mismo dia, que le muestra al
    modelo como se esta moviendo el resto del panel). Sin el
    ``* sqrt(d_model)`` del original, que tapaba el embedding posicional.
@@ -68,7 +68,7 @@ anteriores (``CONFIG_ANTERIOR``, el V2 absoluto colapsaba a "alza") pero no que
 el ensamble lineal. Lo que mas pesa es la regularizacion (weight decay, lr y
 dropout); la arquitectura casi no cambia el resultado.
 
-Entrenamiento: ``make train-transformer-v2`` (``src.train_transformer_v2``).
+Entrenamiento: ``make train-transformer-v2`` (``src.panel.train_transformer_v2``).
 """
 
 from __future__ import annotations
@@ -84,9 +84,9 @@ import torch.nn.functional as F
 from torch import nn
 
 from src.errors import NotEnoughDataError
-from src.panel_features import NOMBRES, Normalizador, particion, pesos_temporales
-from src.panel_gbm import features_y_contexto
-from src.panel_transformer import (
+from src.panel.features import NOMBRES, Normalizador, particion, pesos_temporales
+from src.panel.gbm import features_y_contexto
+from src.panel.transformer import (
     MIN_DIAS,
     PERDIDAS,
     PanelTransformerConfig,

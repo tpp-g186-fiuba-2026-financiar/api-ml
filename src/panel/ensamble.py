@@ -1,6 +1,6 @@
 """Ensamble de panel: promedio de rankings del Ridge de panel y la regla de reversion.
 
-En la fase 3 del plan del Transformer, el Ridge de panel (``src.panel_gbm``) y
+En la fase 3 del plan del Transformer, el Ridge de panel (``src.panel.gbm``) y
 la regla de reversion a 5 ruedas ordenaron parecido en promedio (IC ~0,05)
 pero con rankings poco correlacionados (0,26-0,47) y buenos en periodos
 distintos. Promediar sus rankings dio IC 0,063, positivo en los 7 periodos.
@@ -20,7 +20,7 @@ import numpy as np
 import pandas as pd
 
 from src.errors import ApiMlError
-from src.panel_gbm import PanelGBMConfig, PanelGBMModel, Proveedor
+from src.panel.gbm import PanelGBMConfig, PanelGBMModel, Proveedor
 from src.trend_common import derive_trend_output, senal_por_cuantil
 
 

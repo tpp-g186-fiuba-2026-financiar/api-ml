@@ -50,6 +50,7 @@ import numpy as np
 import pandas as pd
 
 from src.config import settings
+from src.panel.transformer_v2 import HISTORIA_V2
 from src.simulacion.busqueda import MODELOS
 from src.simulacion.cartera import CAPITAL_INICIAL_DEFAULT, COMISION_DEFAULT
 from src.simulacion.direccion import REFERENCIA_REVERSION, referencias, retornos_usd
@@ -69,7 +70,6 @@ from src.simulacion.simulador import (
 )
 from src.simulacion.snapshot import DEFAULT_DIR as SNAPSHOT_DIR
 from src.simulacion.snapshot import Snapshot
-from src.transformer_v2 import HISTORIA_V2
 
 MODELO_DEFAULT = "transformer_v2"
 REENTRENO_DEFAULT = "mensual"

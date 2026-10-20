@@ -7,7 +7,7 @@ balanceado de 0,80 y ningun modelo de tendencia lo predice (``bal_mercado`` de
 una fila por dia (no por accion):
 
 - **Mercado**: promedio de los retornos log diarios en dolares de las acciones
-  validas del dia (el mismo que usa ``src.panel_features``, no el Merval).
+  validas del dia (el mismo que usa ``src.panel.features``, no el Merval).
 - **Features del dia** (todas miran hacia atras): retornos del mercado a 1, 5,
   20 y 60 ruedas en unidades de su vol EWMA de 20 ruedas, vol de 20 ruedas
   (nivel y relativa a la de 60), drawdown de 60 ruedas, dispersion entre
@@ -24,7 +24,7 @@ una fila por dia (no por accion):
 
 ``predict_panel`` devuelve **el mismo retorno para todas las acciones** del
 dia: sirve sola (para medir ``bal_mercado``) o como cabeza de mercado de
-``src.panel_dos_cabezas``.
+``src.panel.dos_cabezas``.
 """
 
 from __future__ import annotations
@@ -36,9 +36,9 @@ import pandas as pd
 from sklearn.linear_model import LogisticRegression, Ridge
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_datos import armar_panel, universo
-from src.panel_features import Normalizador, contexto_macro, pesos_temporales, vol_ewma
-from src.panel_gbm import RUEDAS_PREDICCION, Proveedor
+from src.panel.datos import armar_panel, universo
+from src.panel.features import Normalizador, contexto_macro, pesos_temporales, vol_ewma
+from src.panel.gbm import RUEDAS_PREDICCION, Proveedor
 from src.trend_common import derive_trend_output
 
 TIPOS = ("regla", "ridge", "logit")

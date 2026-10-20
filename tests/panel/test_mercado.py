@@ -3,8 +3,8 @@ import pandas as pd
 import pytest
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_mercado import FEATURES_MERCADO, MercadoConfig, MercadoModel, dias_mercado
-from tests._panel_sintetico import (
+from src.panel.mercado import FEATURES_MERCADO, MercadoConfig, MercadoModel, dias_mercado
+from tests.panel._panel_sintetico import (
     RUEDAS,
     TICKERS,
     histories,

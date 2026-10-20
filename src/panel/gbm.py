@@ -1,6 +1,6 @@
 """Modelo de panel con arboles (o lineal): control de la fase 3 del plan del Transformer.
 
-Usa las features de ``src.panel_features`` (todas las acciones del dia,
+Usa las features de ``src.panel.features`` (todas las acciones del dia,
 normalizadas por vol y rankeadas) para predecir el target del panel. Sirve para
 responder si los datos y el preprocesamiento nuevos ya ordenan mejor que la
 regla de reversion, antes de cambiar la arquitectura del Transformer.
@@ -31,8 +31,8 @@ from sklearn.ensemble import HistGradientBoostingRegressor
 from sklearn.linear_model import Ridge
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_datos import armar_panel, universo
-from src.panel_features import (
+from src.panel.datos import armar_panel, universo
+from src.panel.features import (
     FeaturesPanel,
     Normalizador,
     PreprocesoConfig,

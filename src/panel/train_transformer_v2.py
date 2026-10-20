@@ -1,4 +1,4 @@
-"""Entrena el Transformer V2 (``src.transformer_v2``) con datos del data-colector.
+"""Entrena el Transformer V2 (``src.panel.transformer_v2``) con datos del data-colector.
 
 A diferencia de ``train_transformer`` (el original), siempre usa el
 data-colector, sin importar ``DATA_SOURCE``: los precios (OHLC ajustados) y
@@ -27,7 +27,7 @@ from src.data import fetch_history_collector
 from src.errors import DataUnavailableError
 from src.lstm import fetch_histories
 from src.macro_data import REQUIRED, SERIES, build_macro_frame, fetch_collector_series
-from src.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
+from src.panel.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
 
 
 def proveedor_collector(macro: bool = False):

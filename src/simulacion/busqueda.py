@@ -67,12 +67,13 @@ import pandas as pd
 import torch
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
-from src.panel_dos_cabezas import DosCabezasModel
-from src.panel_ensamble import EnsambleConfig, EnsamblePanelModel
-from src.panel_gbm import PanelGBMConfig, PanelGBMModel
-from src.panel_mercado import MercadoConfig, MercadoModel
-from src.panel_meta import MetaReversionConfig, MetaReversionModel
-from src.panel_transformer import PanelTransformerConfig, PanelTransformerModel
+from src.panel.dos_cabezas import DosCabezasModel
+from src.panel.ensamble import EnsambleConfig, EnsamblePanelModel
+from src.panel.gbm import PanelGBMConfig, PanelGBMModel
+from src.panel.mercado import MercadoConfig, MercadoModel
+from src.panel.meta import MetaReversionConfig, MetaReversionModel
+from src.panel.transformer import PanelTransformerConfig, PanelTransformerModel
+from src.panel.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 from src.simulacion.experimento import (
     DIR_EXPERIMENTOS,
     VARIANTES,
@@ -83,7 +84,6 @@ from src.simulacion.experimento import (
 from src.simulacion.limpieza import limpiar as limpiar_snapshot
 from src.simulacion.snapshot import DEFAULT_DIR, Snapshot
 from src.transformer import TransformerTrainConfig, TransformerTrendModel
-from src.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 
 PERIODOS_ELECCION = [
     ("2022-07-01", "2022-11-30"),
@@ -135,7 +135,7 @@ PLAN_ABLACION: dict[str, dict] = {
     "completo_sin_panel": _sin("universo"),
     "completo_ic": _COMPLETO | {"seleccion": "ic"},
 }
-# Transformer V2 (``src.transformer_v2``, objetivo: direccion en dolares)
+# Transformer V2 (``src.panel.transformer_v2``, objetivo: direccion en dolares)
 # contra el original: los defaults y una variante por cada eleccion a validar.
 # Una red por trabajo (``n_semillas=1``): el ensamble lo arman las semillas de
 # la busqueda. La direccion en dolares (y la de la senal selectiva) se mide con

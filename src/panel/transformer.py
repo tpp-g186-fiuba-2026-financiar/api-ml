@@ -1,7 +1,7 @@
 """Transformer de panel: mira todas las acciones del dia juntas (fase 4 del plan).
 
 Parte de las mismas features y target que el Ridge / GBM de panel
-(``src.panel_features``: normalizadas por vol y rankeadas por dia) y agrega lo
+(``src.panel.features``: normalizadas por vol y rankeadas por dia) y agrega lo
 que un modelo lineal no puede ver:
 
 1. **Encoder temporal compartido**: cada accion entra con la ventana de sus
@@ -51,8 +51,8 @@ import torch.nn.functional as F
 from torch import nn
 
 from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
-from src.panel_datos import SECTORES, universo
-from src.panel_features import (
+from src.panel.datos import SECTORES, universo
+from src.panel.features import (
     NOMBRES,
     FeaturesPanel,
     Normalizador,
@@ -60,7 +60,7 @@ from src.panel_features import (
     particion,
     pesos_temporales,
 )
-from src.panel_gbm import RUEDAS_PREDICCION, Proveedor, features_y_contexto
+from src.panel.gbm import RUEDAS_PREDICCION, Proveedor, features_y_contexto
 from src.trend_common import acierto_balanceado, derive_trend_output, ic_por_fecha
 
 PERDIDAS = ("huber", "ic", "combinada")

@@ -36,7 +36,7 @@ def test_plan_ablacion_y_muestreo_dan_configs_validas() -> None:
 
 
 def test_plan_v2_da_configs_validas() -> None:
-    from src.transformer_v2 import TransformerV2Config
+    from src.panel.transformer_v2 import TransformerV2Config
 
     for nombre, config in (PLAN_V2 | PLAN_V2_RAPIDO).items():
         config = dict(config)
@@ -53,10 +53,10 @@ def test_planes_r2_dan_configs_validas(snapshot) -> None:
 
 
 def test_fabrica_modelos_de_la_ronda_2(snapshot) -> None:
-    from src.panel_dos_cabezas import DosCabezasModel
-    from src.panel_ensamble import EnsamblePanelModel
-    from src.panel_mercado import MercadoModel
-    from src.panel_meta import MetaReversionModel
+    from src.panel.dos_cabezas import DosCabezasModel
+    from src.panel.ensamble import EnsamblePanelModel
+    from src.panel.mercado import MercadoModel
+    from src.panel.meta import MetaReversionModel
 
     def fabricar(config: dict, semilla: int = 0):
         trabajo = {"variante": "x", "config": config, "semilla": semilla}
@@ -133,7 +133,7 @@ def test_fabrica_elige_el_modelo_sin_tocar_la_config() -> None:
 
 
 def test_fabrica_panel_gbm_con_proveedor_del_snapshot(snapshot) -> None:
-    from src.panel_gbm import PanelGBMModel
+    from src.panel.gbm import PanelGBMModel
 
     trabajo = {"variante": "g", "config": {"modelo": "panel_gbm", "max_iter": 5}, "semilla": 1}
     modelo = busqueda._fabrica(trabajo, snapshot)()
@@ -148,7 +148,7 @@ def test_fabrica_panel_gbm_con_proveedor_del_snapshot(snapshot) -> None:
 
 
 def test_fabrica_ensamble_panel(snapshot) -> None:
-    from src.panel_ensamble import EnsamblePanelModel
+    from src.panel.ensamble import EnsamblePanelModel
 
     config = {"modelo": "ensamble_panel", "peso_reversion": 0.3, "alpha": 5.0, "cuantil_senal": 0.2}
     modelo = busqueda._fabrica({"variante": "e", "config": config, "semilla": 0}, snapshot)()
@@ -160,7 +160,7 @@ def test_fabrica_ensamble_panel(snapshot) -> None:
 
 
 def test_fabrica_panel_transformer(snapshot) -> None:
-    from src.panel_transformer import PanelTransformerModel
+    from src.panel.transformer import PanelTransformerModel
 
     config = {"modelo": "panel_transformer", "ventana": 20, "d_model": 16, "nhead": 2}
     modelo = busqueda._fabrica({"variante": "p", "config": config, "semilla": 3}, snapshot)()

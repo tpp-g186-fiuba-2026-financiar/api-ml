@@ -33,7 +33,7 @@ import numpy as np
 import pandas as pd
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
-from src.panel_datos import ccl_en
+from src.panel.datos import ccl_en
 from src.simulacion.busqueda import DIR_EXPERIMENTOS, PERIODOS, cargar_snapshot
 from src.simulacion.direccion import horizontes
 from src.simulacion.experimento import HORIZON

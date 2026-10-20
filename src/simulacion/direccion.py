@@ -46,7 +46,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.panel_datos import ccl_en
+from src.panel.datos import ccl_en
 from src.simulacion.busqueda import DIR_EXPERIMENTOS, PERIODOS, cargar_snapshot
 from src.simulacion.experimento import HORIZON
 from src.simulacion.snapshot import Snapshot

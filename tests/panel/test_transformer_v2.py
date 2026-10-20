@@ -5,11 +5,11 @@ import pytest
 import torch
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_gbm import features_y_contexto
-from src.panel_transformer import PanelTransformerModel
-from src.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
+from src.panel.gbm import features_y_contexto
+from src.panel.transformer import PanelTransformerModel
+from src.panel.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 from src.trend_common import acierto_balanceado
-from tests.test_panel_transformer import (
+from tests.panel.test_transformer import (
     RUEDAS,
     TICKERS,
     _historias_con_reversion,

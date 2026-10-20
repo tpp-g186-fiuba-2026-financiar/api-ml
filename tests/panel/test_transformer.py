@@ -4,8 +4,8 @@ import pytest
 import torch
 
 from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
-from src.panel_gbm import features_y_contexto
-from src.panel_transformer import (
+from src.panel.gbm import features_y_contexto
+from src.panel.transformer import (
     PanelTransformerConfig,
     PanelTransformerModel,
     _RedPanel,

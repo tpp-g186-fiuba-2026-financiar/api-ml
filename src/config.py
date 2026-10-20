@@ -12,7 +12,7 @@ class Settings(BaseSettings):
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
     transformer_model_path: str = "models/transformer.pt"
-    # Artefacto del Transformer V2 (src/transformer_v2.py; no lo sirve la API).
+    # Artefacto del Transformer V2 (src/panel/transformer_v2.py; no lo sirve la API).
     transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"

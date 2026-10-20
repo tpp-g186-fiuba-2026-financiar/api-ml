@@ -2,8 +2,8 @@ import numpy as np
 import pytest
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_meta import ESCALA, MetaReversionConfig, MetaReversionModel
-from tests._panel_sintetico import RUEDAS, TICKERS, histories, ohlcv, proveedor
+from src.panel.meta import ESCALA, MetaReversionConfig, MetaReversionModel
+from tests.panel._panel_sintetico import RUEDAS, TICKERS, histories, ohlcv, proveedor
 
 
 def test_config_invalida() -> None:

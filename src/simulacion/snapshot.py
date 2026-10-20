@@ -227,7 +227,7 @@ class Snapshot:
     def ccl_hasta(self, hasta: pd.Timestamp) -> pd.Series | None:
         """Serie diaria del CCL hasta ``hasta`` inclusive, **sin** el retraso de
         ``macro_frame``: cada dato con su propia fecha. Es para pasar precios a
-        dolares (``src.panel_datos``): el CCL de un dia se conoce al cierre de ese
+        dolares (``src.panel.datos``): el CCL de un dia se conoce al cierre de ese
         dia; el retraso de produccion cubre la cache del data-colector, no la
         fecha del dato."""
         serie = self.macro_raw.get("ccl")

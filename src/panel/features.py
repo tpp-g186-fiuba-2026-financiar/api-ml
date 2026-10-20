@@ -1,6 +1,6 @@
 """Features y target de panel: todas las acciones del dia, comparables entre si.
 
-Parte de un ``Panel`` (``src.panel_datos``) y devuelve tensores
+Parte de un ``Panel`` (``src.panel.datos``) y devuelve tensores
 ``[fecha, ticker, feature]`` listos para un modelo de panel:
 
 1. **Features por accion** sobre los retornos log diarios (en la moneda del
@@ -42,7 +42,7 @@ import pandas as pd
 from scipy.stats import norm
 
 from src.macro_trend import event_features, macro_features
-from src.panel_datos import Panel
+from src.panel.datos import Panel
 
 FEATURES_ACCION = [
     "ret_1", "ret_5", "ret_10", "ret_20", "ret_60",

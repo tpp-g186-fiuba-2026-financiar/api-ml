@@ -2,7 +2,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src.panel_datos import (
+from src.panel.datos import (
     SECTORES,
     UNIVERSOS,
     armar_panel,

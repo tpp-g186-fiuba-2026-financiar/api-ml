@@ -3,7 +3,7 @@ import pandas as pd
 import pytest
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_gbm import PanelGBMConfig, PanelGBMModel
+from src.panel.gbm import PanelGBMConfig, PanelGBMModel
 
 RUEDAS = pd.bdate_range("2023-01-02", periods=600)
 TICKERS = ["GGAL", "BMA", "YPFD", "PAMP", "ALUA", "TXAR", "CEPU", "EDN"]

@@ -7,8 +7,8 @@ import pytest
 
 import src.simulacion.optuna_v2 as ov
 import src.simulacion.reporte_optuna as ro
+from src.panel.transformer_v2 import TransformerV2Config
 from src.simulacion.experimento import ReversionPanelModel
-from src.transformer_v2 import TransformerV2Config
 
 FOLDS = [("2026-03-02", "2026-03-20"), ("2026-04-01", "2026-04-17")]
 

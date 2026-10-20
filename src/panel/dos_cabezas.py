@@ -8,7 +8,7 @@ parte relativa tiene senal chica pero real (el ensamble Ridge + reversion).
 Por eso se modelan por separado:
 
 - **Cabeza de mercado**: cualquier modelo de panel que devuelva el mismo
-  retorno para todas las acciones del dia (``src.panel_mercado``).
+  retorno para todas las acciones del dia (``src.panel.mercado``).
 - **Cabeza relativa**: cualquier modelo de panel entrenado con un target sin la
   media del dia (``ensamble_panel``, ``panel_gbm``, ``transformer_v2`` con
   ``target="sin_media"``); se le resta igual su promedio del dia, para que no

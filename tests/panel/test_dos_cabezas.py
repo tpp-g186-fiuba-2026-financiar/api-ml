@@ -3,9 +3,9 @@ import pandas as pd
 import pytest
 
 from src.errors import ApiMlError
-from src.panel_dos_cabezas import DosCabezasModel
+from src.panel.dos_cabezas import DosCabezasModel
 from src.trend_common import derive_trend_output
-from tests._panel_sintetico import histories
+from tests.panel._panel_sintetico import histories
 
 
 class Fija:

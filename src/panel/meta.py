@@ -12,7 +12,7 @@ la reversion va a acertar** en cada caso (meta-labeling, Lopez de Prado):
 - **Label**: 1 si el retorno real a ``horizonte`` ruedas en dolares tuvo el
   signo del lado. Con ``zona_neutral`` > 0 no se entrena con los movimientos
   chicos.
-- **Features**: las del panel (``src.panel_features``) mas la macro opcional.
+- **Features**: las del panel (``src.panel.features``) mas la macro opcional.
 - **Clasificador**: ``"logit"`` (regresion logistica sobre las features
   estandarizadas) o ``"gbm"`` (``HistGradientBoostingClassifier`` chico).
 
@@ -33,9 +33,9 @@ from sklearn.ensemble import HistGradientBoostingClassifier
 from sklearn.linear_model import LogisticRegression
 
 from src.errors import ApiMlError, NotEnoughDataError
-from src.panel_datos import universo
-from src.panel_features import NOMBRES, Normalizador, PreprocesoConfig, pesos_temporales
-from src.panel_gbm import MIN_FILAS, RUEDAS_PREDICCION, Proveedor, features_y_contexto
+from src.panel.datos import universo
+from src.panel.features import NOMBRES, Normalizador, PreprocesoConfig, pesos_temporales
+from src.panel.gbm import MIN_FILAS, RUEDAS_PREDICCION, Proveedor, features_y_contexto
 from src.trend_common import derive_trend_output
 
 TIPOS = ("logit", "gbm")

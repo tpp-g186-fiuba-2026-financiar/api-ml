@@ -3,9 +3,9 @@ import pandas as pd
 import pytest
 
 from src.errors import ApiMlError
-from src.panel_ensamble import EnsambleConfig, EnsamblePanelModel, reversion
-from src.panel_gbm import PanelGBMConfig
-from tests.test_panel_gbm import RUEDAS, TICKERS, _histories, _ohlcv, _proveedor
+from src.panel.ensamble import EnsambleConfig, EnsamblePanelModel, reversion
+from src.panel.gbm import PanelGBMConfig
+from tests.panel.test_gbm import RUEDAS, TICKERS, _histories, _ohlcv, _proveedor
 
 
 def _modelo(peso: float) -> EnsamblePanelModel:
@@ -77,9 +77,9 @@ def test_combina_y_casos_vacios() -> None:
 def test_sin_reversion_valida_o_sin_dispersion(monkeypatch) -> None:
     modelo = _modelo(0.5)
     dfs = _histories()
-    monkeypatch.setattr("src.panel_ensamble.reversion", lambda df, h: None)
+    monkeypatch.setattr("src.panel.ensamble.reversion", lambda df, h: None)
     assert modelo.predict_panel(dfs) == {}
-    monkeypatch.setattr("src.panel_ensamble.reversion", lambda df, h: 0.0)
+    monkeypatch.setattr("src.panel.ensamble.reversion", lambda df, h: 0.0)
     monkeypatch.setattr(modelo.ridge, "predict_panel", lambda d: {t: _fijo(d[t]) for t in TICKERS})
     resultados = modelo.predict_panel(dfs)
     assert all(r["predicted_close"] == pytest.approx(r["last_close"]) for r in resultados.values())
