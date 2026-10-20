@@ -28,6 +28,7 @@ from src.simulacion.estrategias import (
     pesos_cuantil,
     pesos_histeresis,
     pesos_inclinacion,
+    pesos_mantener,
     pesos_senal,
     predicciones_del_mejor,
 )
@@ -53,6 +54,10 @@ REGLAS_PANEL = {
     "cuantil30": "partes iguales en el 30% superior",
     "inclinado": "todo el panel, 1,5 partes a las 'alza' y 0,5 a las 'baja'",
 }
+# Solo en la mesa simple (``completa=False``, simulacion de un solo modelo).
+REGLAS_SIMPLES = {
+    "mantiene": "compra las 'alza', mantiene las 'neutral' que ya tenia y vende solo las 'baja'",
+}
 CUANTIL_ENTRAR, CUANTIL_MANTENER = 0.15, 0.30
 INCLINACION = 0.5
 BENCHMARK_BUY_HOLD = "benchmark_equal_weight_buy_hold"
@@ -62,18 +67,27 @@ BENCHMARK_MERVAL = "benchmark_merval"
 Predicciones = dict[str, dict[str, dict]]  # modelo -> ticker -> prediccion o backtest
 
 
-def nombres_estrategias(modelos_panel: tuple[str, ...] = ()) -> list[str]:
-    """Carteras de la mesa; las de ``modelos_panel`` van al final, despues de los benchmarks."""
-    nombres = [f"senal_{m}" for m in MODELOS]
-    nombres += [f"bl_{m}_{p.value}" for m in MODELOS for p in PERFILES]
-    nombres += [f"consenso_{p.value}" for p in PERFILES]
-    for seleccion in SELECCIONES:
-        nombres.append(f"senal_mejor_{seleccion}")
-        nombres += [f"bl_mejor_{seleccion}_{p.value}" for p in PERFILES]
+def nombres_estrategias(modelos_panel: tuple[str, ...] = (), completa: bool = True) -> list[str]:
+    """Carteras de la mesa; las de ``modelos_panel`` van al final, despues de los benchmarks.
+
+    Sin ``completa`` quedan solo los benchmarks y, de cada modelo de panel, la
+    senal y las ``REGLAS_PANEL`` (sin Black-Litterman, consenso ni mejor modelo).
+    """
+    nombres = []
+    if completa:
+        nombres += [f"senal_{m}" for m in MODELOS]
+        nombres += [f"bl_{m}_{p.value}" for m in MODELOS for p in PERFILES]
+        nombres += [f"consenso_{p.value}" for p in PERFILES]
+        for seleccion in SELECCIONES:
+            nombres.append(f"senal_mejor_{seleccion}")
+            nombres += [f"bl_mejor_{seleccion}_{p.value}" for p in PERFILES]
     nombres += [BENCHMARK_BUY_HOLD, BENCHMARK_REBALANCEO]
     for m in modelos_panel:
         nombres.append(f"senal_{m}")
-        nombres += [f"bl_{m}_{p.value}" for p in PERFILES]
+        if completa:
+            nombres += [f"bl_{m}_{p.value}" for p in PERFILES]
+        else:
+            nombres += [f"{regla}_{m}" for regla in REGLAS_SIMPLES]
         nombres += [f"{regla}_{m}" for regla in REGLAS_PANEL]
     return nombres
 
@@ -96,17 +110,22 @@ class Mesa:
         comision: float,
         rebalanceo: int,
         modelos_panel: tuple[str, ...] = (),
+        completa: bool = True,
     ):
+        """Sin ``completa`` (simulacion de un solo modelo, ``un_modelo``) los
+        ``modelos_panel`` pueden tener cualquier nombre y solo se arman sus
+        carteras simples y los benchmarks (ver ``nombres_estrategias``)."""
         desconocidos = set(modelos_panel) - set(MODELOS_PANEL)
-        if desconocidos:
+        if completa and desconocidos:
             raise ValueError(f"modelos de panel desconocidos: {sorted(desconocidos)}")
         self.snapshot = snapshot
         self.capital = capital
         self.rebalanceo = rebalanceo
         self.modelos_panel = tuple(modelos_panel)
+        self.completa = completa
         self.carteras = {
             n: Cartera(n, efectivo=capital, comision=comision)
-            for n in nombres_estrategias(self.modelos_panel)
+            for n in nombres_estrategias(self.modelos_panel, completa)
         }
         self.merval_base: float | None = None
         self.ruedas = 0
@@ -149,11 +168,17 @@ class Mesa:
                 except (ApiMlError, ValueError, ArithmeticError) as exc:
                     errores.append({"fecha": dia.date(), "cartera": nombre, "error": str(exc)})
 
-        for modelo in MODELOS:
-            senal_y_bl(modelo, predicciones.get(modelo, {}))
+        if self.completa:
+            for modelo in MODELOS:
+                senal_y_bl(modelo, predicciones.get(modelo, {}))
         for modelo in self.modelos_panel:
             preds = predicciones.get(modelo, {})
-            senal_y_bl(modelo, preds)
+            if self.completa:
+                senal_y_bl(modelo, preds)
+            else:
+                objetivos[f"senal_{modelo}"] = pesos_senal(preds, universo)
+                tenencias = set(self.carteras[f"mantiene_{modelo}"].tenencias)
+                objetivos[f"mantiene_{modelo}"] = pesos_mantener(preds, universo, tenencias)
             tenencias = set(self.carteras[f"histeresis_{modelo}"].tenencias)
             objetivos[f"histeresis_{modelo}"] = pesos_histeresis(
                 preds, universo, tenencias, CUANTIL_ENTRAR, CUANTIL_MANTENER
@@ -162,18 +187,19 @@ class Mesa:
             objetivos[f"inclinado_{modelo}"] = pesos_inclinacion(preds, universo, INCLINACION)
 
         elecciones: list[dict] = []
-        for seleccion, candidatos in SELECCIONES.items():
-            elegidos = mejor_modelo_por_ticker(backtests, candidatos, universo)
-            senal_y_bl(f"mejor_{seleccion}", predicciones_del_mejor(predicciones, elegidos))
-            elecciones += [
-                {"fecha": dia.date(), "seleccion": seleccion, "symbol": t, **e}
-                for t, e in elegidos.items()
-            ]
+        if self.completa:
+            for seleccion, candidatos in SELECCIONES.items():
+                elegidos = mejor_modelo_por_ticker(backtests, candidatos, universo)
+                senal_y_bl(f"mejor_{seleccion}", predicciones_del_mejor(predicciones, elegidos))
+                elecciones += [
+                    {"fecha": dia.date(), "seleccion": seleccion, "symbol": t, **e}
+                    for t, e in elegidos.items()
+                ]
 
-        locales = {m: predicciones.get(m, {}) for m in MODELOS}
-        for perfil in PERFILES:
-            consenso = consenso_por_ticker(locales, universo, perfil)
-            objetivos[f"consenso_{perfil.value}"] = pesos_consenso(consenso)
+            locales = {m: predicciones.get(m, {}) for m in MODELOS}
+            for perfil in PERFILES:
+                consenso = consenso_por_ticker(locales, universo, perfil)
+                objetivos[f"consenso_{perfil.value}"] = pesos_consenso(consenso)
 
         objetivos[BENCHMARK_REBALANCEO] = equal_weight(universo)
         if self.ruedas == 0:

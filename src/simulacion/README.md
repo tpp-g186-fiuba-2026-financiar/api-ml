@@ -32,6 +32,28 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e MPLCONFIGDIR=/tmp -v "$PW
   api_ml-service_api_ml:latest python -m src.simulacion.simulador --nombre ... --desde ...
 ```
 
+## Simulacion rapida de un solo modelo
+
+Para probar una variante de un modelo de panel (p. ej. el Transformer V2) sin esperar al
+simulador completo: entrena solo ese modelo con datos anteriores a `--desde` (reentreno
+`mensual` por default, o `semanal` / `diario` / `nunca`), predice cada rueda, mide la direccion
+en dolares con intervalos contra la reversion y las referencias (`significancia`) y arma carteras
+simples (senal, histeresis, cuantil 30%, inclinada y benchmarks). Sin Black-Litterman, consenso,
+ARIMA, macro ni backtests en vivo.
+
+```bash
+make simular-v2 SIM_NOMBRE=v2-2025 SIM_DESDE=2025-01-02 ARGS='--hasta 2025-12-30'
+make simular-v2 SIM_NOMBRE=v2-bce SIM_CONFIG='{"perdida": "bce", "n_semillas": 1}' ARGS='--reentreno nunca'
+# Otra comision / rebalanceo sin volver a entrenar
+python -m src.simulacion.un_modelo --nombre v2-2025 --solo-analisis --comision 0.01
+```
+
+Deja en `simulacion/resultados/<nombre>/` `resumen.md` (entrenamientos, direccion y carteras),
+`entrenamientos.jsonl` (lo que devolvio cada `fit`: las metricas de validacion del V2),
+`predicciones.jsonl`, `direccion.csv`, `carteras.csv` y los `.jsonl` de carteras. Cualquier modelo
+de `busqueda.MODELOS` sirve (`--modelo`); `--config` acepta tambien `"modelo"` e `"historia"`,
+asi que se puede pegar una variante de los planes de la busqueda.
+
 ## Que replica de produccion
 
 | Pieza | Como en produccion |

@@ -85,11 +85,14 @@ def fabricas(snapshot: Snapshot, dispositivo: str = "cpu") -> dict[str, Fabrica]
     }
 
 
-def _entrenar(fabrica: Fabrica, snapshot: Snapshot, hasta: pd.Timestamp, days: int) -> object:
+def _entrenar(
+    fabrica: Fabrica, snapshot: Snapshot, hasta: pd.Timestamp, days: int
+) -> tuple[object, dict]:
+    """Modelo entrenado con datos hasta ``hasta`` y lo que devolvio su ``fit``."""
     modelo = fabrica()
     with contextlib.redirect_stdout(io.StringIO()):
-        modelo.fit(histories_at(snapshot, hasta, days))
-    return modelo
+        metricas = modelo.fit(histories_at(snapshot, hasta, days))
+    return modelo, metricas if isinstance(metricas, dict) else {}
 
 
 def predecir_dia(
@@ -146,21 +149,36 @@ def generar(
     days: int = 750,
     cuantil: float | None = CUANTIL_SENAL,
     destino: Path | None = None,
+    entrenamientos: Path | None = None,
 ) -> list[dict]:
     """Predicciones de ``nombre`` para cada rueda de ``[desde, hasta]``, una
     fila por (dia, ticker) con el formato de ``predicciones.jsonl``. Si se pasa
-    ``destino``, las va agregando ahi (se pisa al empezar)."""
+    ``destino``, las va agregando ahi (se pisa al empezar); si se pasa
+    ``entrenamientos``, una fila por entrenamiento con la fecha de corte de los
+    datos, los segundos y lo que devolvio el ``fit`` (tambien se pisa)."""
     ruedas = crudo.trading_days()
     periodo = ruedas[(ruedas >= pd.Timestamp(desde)) & (ruedas <= pd.Timestamp(hasta))]
     anteriores = ruedas[ruedas < pd.Timestamp(desde)]
     if periodo.empty or anteriores.empty:
         raise ValueError(f"sin ruedas para predecir en {desde} - {hasta}")
-    if destino is not None:
-        destino.parent.mkdir(parents=True, exist_ok=True)
-        destino.write_text("")
+    for archivo in (destino, entrenamientos):
+        if archivo is not None:
+            archivo.parent.mkdir(parents=True, exist_ok=True)
+            archivo.write_text("")
+
+    def entrenar(hasta: pd.Timestamp) -> object:
+        inicio = time.monotonic()
+        modelo, metricas = _entrenar(fabrica, limpio, hasta, days)
+        segundos = time.monotonic() - inicio
+        print(f"[{nombre}] entrenado con datos hasta {hasta.date()} ({segundos:.0f} s)",
+              flush=True)  # fmt: skip
+        if entrenamientos is not None:
+            fila = {"fecha": str(hasta.date()), "segundos": round(segundos, 1), **metricas}
+            append_jsonl(entrenamientos, [fila])
+        return modelo
 
     entrenado = anteriores[-1]
-    modelo = _entrenar(fabrica, limpio, entrenado, days)
+    modelo = entrenar(entrenado)
     filas: list[dict] = []
     for i, dia in enumerate(periodo):
         version = f"{getattr(modelo, 'version', nombre)}-{entrenado.date()}"
@@ -173,10 +191,7 @@ def generar(
             append_jsonl(destino, del_dia)
         siguiente = periodo[i + 1] if i + 1 < len(periodo) else None
         if siguiente is not None and reentreno_due(reentreno, dia, siguiente):
-            inicio = time.monotonic()
-            modelo, entrenado = _entrenar(fabrica, limpio, dia, days), dia
-            print(f"[{nombre}] reentreno {dia.date()} ({time.monotonic() - inicio:.0f} s)",
-                  flush=True)  # fmt: skip
+            modelo, entrenado = entrenar(dia), dia
     return filas
 
 

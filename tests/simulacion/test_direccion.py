@@ -5,7 +5,14 @@ import pandas as pd
 import pytest
 
 import src.simulacion.direccion as direccion
-from src.simulacion.direccion import horizontes, metricas, por_periodo, resumen, retornos_usd
+from src.simulacion.direccion import (
+    horizontes,
+    metricas,
+    por_periodo,
+    referencias,
+    resumen,
+    retornos_usd,
+)
 
 PERIODOS = [("2026-05-04", "2026-05-29"), ("2026-06-01", "2026-06-19")]
 
@@ -73,14 +80,13 @@ def test_por_periodo_y_resumen(snapshot, tmp_path, monkeypatch) -> None:
     _escribir_predicciones(tmp_path, snapshot, retornos)
     assert horizontes(tmp_path) == {"lejos": 20, "buena": 5, "x": 5}
     tabla = por_periodo(tmp_path, {5: retornos, 20: retornos_usd(snapshot, 20)}, "eleccion")
-    variantes = {
-        "buena", "ruido", "lejos", direccion.REFERENCIA_ALZA, direccion.REFERENCIA_REVERSION
-    }  # fmt: skip
+    variantes = {"buena", "ruido", "lejos", *referencias(retornos.head(1))}
     assert set(tabla["variante"]) == variantes
     assert len(tabla) == len(variantes) * len(PERIODOS)
     tabla_resumen = resumen(tabla)
     assert tabla_resumen.index[0] == "buena" and tabla_resumen.loc["buena", "bal_usd"] == 1.0
     assert tabla_resumen.loc[direccion.REFERENCIA_ALZA, "bal_usd"] == 0.5
+    assert tabla_resumen.loc[direccion.REFERENCIA_ORACULO, "bal_usd"] > 0.5
     assert tabla_resumen.loc["buena", "periodos_>0,5"] == len(PERIODOS)
     # Medida contra su horizonte (20), la prediccion perfecta a 20 ruedas acierta todo.
     assert tabla_resumen.loc["lejos", "bal_usd"] == 1.0
@@ -96,3 +102,27 @@ def test_main(snapshot_dir, snapshot, tmp_path, monkeypatch, capsys) -> None:
     direccion.main()
     assert "buena" in capsys.readouterr().out
     assert (tmp_path / "corrida" / "direccion_eleccion.csv").exists()
+
+
+def test_referencias_de_mercado() -> None:
+    base = pd.DataFrame(
+        {
+            "fecha": ["d1", "d1", "d2", "d2"],
+            "futuro": [0.03, 0.01, -0.02, 0.04],
+            "pasado": [0.02, -0.04, np.nan, 0.06],
+        }
+    )
+    refs = referencias(base)
+    assert refs[direccion.REFERENCIA_ALZA]["pred"].eq(1.0).all()
+    # Sin pasado no hay reversion ni timing de mercado.
+    assert len(refs[direccion.REFERENCIA_REVERSION]) == 3
+    np.testing.assert_allclose(
+        refs[direccion.REFERENCIA_MERCADO_SIGUE]["pred"], [-0.01, -0.01, 0.06]
+    )
+    np.testing.assert_allclose(
+        refs[direccion.REFERENCIA_MERCADO_REVIERTE]["pred"], [0.01, 0.01, -0.06]
+    )
+    np.testing.assert_allclose(refs[direccion.REFERENCIA_ORACULO]["pred"], [0.02, 0.02, 0.01, 0.01])
+    np.testing.assert_allclose(
+        refs[direccion.REFERENCIA_ORACULO_RELATIVO]["pred"], [0.01, -0.01, -0.03, 0.03]
+    )

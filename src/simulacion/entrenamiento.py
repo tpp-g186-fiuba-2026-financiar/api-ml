@@ -184,15 +184,19 @@ def macro_retrain_due(dia: pd.Timestamp, siguiente: pd.Timestamp | None) -> bool
 
 
 # Frecuencias de reentreno de los modelos diarios. "diario" replica el cron de
-# produccion (lunes a viernes); "semanal" reentrena solo en la ultima rueda de
-# cada semana, para corridas mas cortas.
-FRECUENCIAS_REENTRENO = ("diario", "semanal")
+# produccion (lunes a viernes); "semanal" y "mensual" reentrenan solo en la
+# ultima rueda de cada semana / mes, para corridas mas cortas; "nunca" se queda
+# con el modelo entrenado antes de la primera rueda.
+FRECUENCIAS_REENTRENO = ("diario", "semanal", "mensual", "nunca")
 
 
 def reentreno_due(frecuencia: str, dia: pd.Timestamp, siguiente: pd.Timestamp | None) -> bool:
     """Si al cierre de ``dia`` se reentrenan LSTM / XGBoost / Transformer."""
     if frecuencia == "diario":
         return True
-    if frecuencia == "semanal":
-        return siguiente is None or siguiente.to_period("W") != dia.to_period("W")
+    if frecuencia in ("semanal", "mensual"):
+        periodo = "W" if frecuencia == "semanal" else "M"
+        return siguiente is None or siguiente.to_period(periodo) != dia.to_period(periodo)
+    if frecuencia == "nunca":
+        return False
     raise ValueError(f"frecuencia de reentreno desconocida: {frecuencia}")

@@ -157,26 +157,40 @@ def predecir_periodo(
     tickers: list[str],
     days: int = settings.history_days,
     days_fit: int | None = None,
+    reentrenar_cada: int | None = None,
 ) -> pd.DataFrame:
     """Entrena con datos hasta la rueda anterior a ``desde`` y predice cada
-    rueda de ``[desde, hasta]`` para ``tickers``, sin reentrenar.
+    rueda de ``[desde, hasta]`` para ``tickers``.
 
     ``days`` son las ruedas de historia de cada prediccion y, salvo que se pase
-    ``days_fit``, tambien las del entrenamiento.
+    ``days_fit``, tambien las del entrenamiento. Sin ``reentrenar_cada`` se
+    entrena una sola vez; con ``reentrenar_cada = k``, un modelo nuevo cada
+    ``k`` ruedas del periodo, con datos hasta la rueda anterior (como haria
+    produccion con un reentreno periodico). Los targets de las ultimas ruedas
+    de cada entrenamiento no se conocen todavia y quedan afuera solos.
 
     Devuelve una fila por (fecha, ticker) con el retorno log predicho y el real
     a ``HORIZON`` ruedas (solo los casos con retorno real conocido).
     """
+    if reentrenar_cada is not None and reentrenar_cada < 1:
+        raise ValueError("reentrenar_cada tiene que ser >= 1")
     ruedas = snapshot.trading_days()
-    corte = ruedas[ruedas < pd.Timestamp(desde)][-1]
-    modelo = fabrica()
-    with contextlib.redirect_stdout(io.StringIO()):
-        modelo.fit(histories_at(snapshot, corte, days_fit or days))
+    del_periodo = ruedas[(ruedas >= pd.Timestamp(desde)) & (ruedas <= pd.Timestamp(hasta))]
 
+    def entrenar(dia: pd.Timestamp):
+        corte = ruedas[ruedas < dia][-1]
+        nuevo = fabrica()
+        with contextlib.redirect_stdout(io.StringIO()):
+            nuevo.fit(histories_at(snapshot, corte, days_fit or days))
+        return nuevo
+
+    modelo = entrenar(pd.Timestamp(desde))
     config = getattr(modelo, "config", None)
     relativo = getattr(config, "target", None) == "relativo"
     filas = []
-    for dia in ruedas[(ruedas >= pd.Timestamp(desde)) & (ruedas <= pd.Timestamp(hasta))]:
+    for i, dia in enumerate(del_periodo):
+        if reentrenar_cada and i > 0 and i % reentrenar_cada == 0:
+            modelo = entrenar(dia)
         dfs, reales = {}, {}
         for symbol in tickers:
             if symbol not in snapshot.prices:

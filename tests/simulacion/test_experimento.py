@@ -67,6 +67,29 @@ def test_predecir_periodo_saltea_errores_y_el_final_sin_futuro(snapshot) -> None
     assert predecir_periodo(snapshot, FakeTrend, ultimo, ultimo, TICKERS).empty
 
 
+def test_predecir_periodo_reentrena_cada_k_ruedas_sin_mirar_el_futuro(snapshot) -> None:
+    cortes = []
+
+    class Contador(FakeTrend):
+        def fit(self, histories: dict) -> None:
+            cortes.append(max(df.index[-1] for df in histories.values()))
+
+    una_vez = predecir_periodo(snapshot, Contador, *PERIODO, TICKERS)
+    assert len(cortes) == 1
+    cortes.clear()
+    cada_10 = predecir_periodo(snapshot, Contador, *PERIODO, TICKERS, reentrenar_cada=10)
+    ruedas = snapshot.trading_days()
+    del_periodo = ruedas[(ruedas >= PERIODO[0]) & (ruedas <= PERIODO[1])]
+    assert len(cortes) == -(-len(del_periodo) // 10)
+    # Cada entrenamiento ve hasta la rueda anterior al primer dia que predice.
+    for corte, dia in zip(cortes, del_periodo[::10], strict=True):
+        assert corte == ruedas[ruedas < dia][-1]
+    # FakeTrend no depende del entrenamiento: las predicciones no cambian.
+    pd.testing.assert_frame_equal(una_vez, cada_10)
+    with pytest.raises(ValueError, match="reentrenar_cada"):
+        predecir_periodo(snapshot, FakeTrend, *PERIODO, TICKERS, reentrenar_cada=0)
+
+
 def test_metricas_con_prediccion_perfecta() -> None:
     rng = np.random.default_rng(0)
     filas = []

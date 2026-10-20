@@ -37,6 +37,22 @@ def pesos_senal(predicciones: dict[str, dict], universo: list[str]) -> dict[str,
     return equal_weight(elegidos)
 
 
+def pesos_mantener(
+    predicciones: dict[str, dict], universo: list[str], tenencias: set[str]
+) -> dict[str, float]:
+    """Partes iguales entre las "alza" y lo que ya se tenia y no da "baja": a
+    diferencia de ``pesos_senal``, una accion "neutral" (o sin prediccion ese
+    dia) no se vende. Solo se vende lo que da "baja"."""
+
+    def senal(t: str) -> str | None:
+        return (predicciones.get(t) or {}).get("signal")
+
+    elegidos = [
+        t for t in universo if senal(t) == "alza" or (t in tenencias and senal(t) != "baja")
+    ]
+    return equal_weight(elegidos)
+
+
 def ranking_del_dia(predicciones: dict[str, dict], universo: list[str]) -> pd.Series:
     """Rango percentil (0-1] del retorno predicho de cada ticker de ``universo`` con prediccion."""
     retornos = pd.Series(

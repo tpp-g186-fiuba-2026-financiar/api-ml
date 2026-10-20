@@ -156,3 +156,16 @@ def test_reglas_de_cuantil_histeresis_e_inclinacion() -> None:
     assert pesos_inclinacion(preds, [], 0.5) == {}
     with pytest.raises(ValueError):
         pesos_inclinacion(preds, TICKERS, 1.5)
+
+
+def test_pesos_mantener_conserva_las_neutrales() -> None:
+    from src.simulacion.estrategias import pesos_mantener
+
+    preds = {"A": {"signal": "alza"}, "B": {"signal": "neutral"}, "C": {"signal": "baja"},
+             "D": {"signal": "neutral"}}  # fmt: skip
+    universo = ["A", "B", "C", "D", "E"]
+    # B y C ya estaban: B (neutral) se queda, C (baja) se vende; D (neutral, no estaba) no
+    # se compra; E (sin prediccion ese dia) se mantiene.
+    assert pesos_mantener(preds, universo, {"B", "C", "E"}) == {"A": 1 / 3, "B": 1 / 3, "E": 1 / 3}
+    assert pesos_mantener(preds, universo, set()) == {"A": 1.0}
+    assert pesos_mantener({}, universo, set()) == {}

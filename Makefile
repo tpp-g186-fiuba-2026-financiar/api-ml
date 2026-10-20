@@ -39,6 +39,29 @@ probar-transformer-v2: ## Prueba rapida de ajustes e hiperparametros del V2 (1 s
 	python -m src.simulacion.busqueda --nombre $(V2_RAPIDA) --plan rapido --semillas 1 \
 		--snapshot $(V2_SNAPSHOT) --limpiar --dispositivo cuda --procesos 3 $(ARGS)
 	python -m src.simulacion.direccion --nombre $(V2_RAPIDA) --snapshot $(V2_SNAPSHOT) --limpiar
+# Ronda 2 del plan de mejora: filtro con modelos baratos (CPU) e intervalos de cada grupo.
+R2_FILTRO ?= r2-filtro
+filtro-r2: ## Ronda 2: cabezas relativa / mercado, meta-labeling y dos cabezas con modelos baratos (CPU, ~10 min)
+	python -m src.simulacion.busqueda --nombre $(R2_FILTRO) --plan r2 --semillas 1 \
+		--snapshot $(V2_SNAPSHOT) --limpiar $(ARGS)
+	python -m src.simulacion.significancia --nombre $(R2_FILTRO) --snapshot $(V2_SNAPSHOT) \
+		--limpiar --contra ens
+R2_TRANSFORMER ?= r2-transformer
+transformer-r2: ## Ronda 2: V2 como cabeza relativa vs ensamble, 3 semillas (GPU, ~30-40 min, retomable)
+	python -m src.simulacion.busqueda --nombre $(R2_TRANSFORMER) --plan r2-transformer --semillas 3 \
+		--snapshot $(V2_SNAPSHOT) --limpiar --dispositivo cuda --procesos 3 $(ARGS)
+	python -m src.simulacion.significancia --nombre $(R2_TRANSFORMER) --snapshot $(V2_SNAPSHOT) \
+		--limpiar --contra ens_h1500
+# Simulacion rapida de un solo modelo (por default el V2): entrena con datos
+# anteriores a SIM_DESDE, predice cada rueda, mide la direccion en dolares con
+# intervalos y arma carteras simples, sin Black-Litterman ni consenso.
+SIM_NOMBRE ?= v2-rapida
+SIM_DESDE ?= 2025-01-02
+# JSON con campos de la config del modelo (p. ej. SIM_CONFIG='{"n_semillas": 1}').
+SIM_CONFIG ?= {}
+simular-v2: ## Simulacion rapida de un solo modelo: metricas de direccion y carteras sin Black-Litterman (GPU)
+	python -m src.simulacion.un_modelo --nombre $(SIM_NOMBRE) --desde $(SIM_DESDE) \
+		--config '$(SIM_CONFIG)' --snapshot $(V2_SNAPSHOT) --dispositivo cuda $(ARGS)
 backtest: ## Backtest walk-forward de los modelos ya entrenados (deja una foto en JSON)
 	python -m src.backtest
 paper-trade: ## Paper trading: registra predicciones y resuelve las vencidas

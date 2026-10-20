@@ -13,7 +13,8 @@ de senal y Black-Litterman no dependen del backtest.
 
 Si ``predicciones.jsonl`` trae predicciones de modelos de panel
 (``mesa.MODELOS_PANEL``, generadas con ``predicciones_panel``), se suman sus
-carteras; las del resto quedan iguales.
+carteras; las del resto quedan iguales. Las corridas de un solo modelo
+(``un_modelo``) se rearman con sus carteras simples, sin Black-Litterman.
 
 Uso:
     python -m src.simulacion.rearmar --nombre junio --salida comision-1pct --comision 0.01
@@ -99,10 +100,15 @@ def rearmar(
     fechas = sorted(predicciones)
     if not fechas:
         raise SystemExit(f"{corrida} no tiene predicciones guardadas")
-    presentes = {m for por_modelo in predicciones.values() for m in por_modelo}
-    modelos_panel = tuple(m for m in MODELOS_PANEL if m in presentes)
-    if modelos_panel:
-        config["modelos_panel"] = list(modelos_panel)
+    solo = original.get("solo_modelo")
+    if solo:
+        modelos_panel: tuple[str, ...] = (solo,)
+        config["solo_modelo"] = solo
+    else:
+        presentes = {m for por_modelo in predicciones.values() for m in por_modelo}
+        modelos_panel = tuple(m for m in MODELOS_PANEL if m in presentes)
+        if modelos_panel:
+            config["modelos_panel"] = list(modelos_panel)
 
     if salida.exists():
         shutil.rmtree(salida)
@@ -110,7 +116,12 @@ def rearmar(
     (salida / "config.json").write_text(json.dumps(config, indent=2))
 
     mesa = Mesa(
-        snapshot, config["capital"], config["comision"], config["rebalanceo"], modelos_panel
+        snapshot,
+        config["capital"],
+        config["comision"],
+        config["rebalanceo"],
+        modelos_panel,
+        completa=not solo,
     )
     for fecha in fechas:
         guardar_rueda(

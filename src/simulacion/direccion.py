@@ -23,10 +23,14 @@ real se recalcula en dolares CCL y se mide:
 
 Cada variante se mide contra el retorno a su ``horizonte`` (de ``configs.json``
 de la corrida; default 5 ruedas). Con varias semillas se promedian las
-predicciones (ensamble) antes de tomar el signo. Se suman dos referencias
-calculadas sobre las mismas filas que las variantes a 5 ruedas: "siempre alza"
-y la reversion a 5 ruedas en dolares (predice lo contrario del retorno en
-dolares de las ultimas 5 ruedas).
+predicciones (ensamble) antes de tomar el signo. Se suman referencias sin
+entrenamiento calculadas sobre las mismas filas que las variantes a 5 ruedas
+(``referencias``): "siempre alza", la reversion a 5 ruedas en dolares, el
+timing del mercado (sigue / revierte) y dos oraculos (cotas: acertar siempre
+el mercado, u ordenar perfecto las acciones sin saber el mercado).
+
+Los intervalos de confianza y la descomposicion mercado / relativo estan en
+``src.simulacion.significancia``.
 
 Uso:
     python -m src.simulacion.direccion --nombre v2-direccion-2 \
@@ -51,6 +55,10 @@ from src.trend_common import acierto_balanceado
 COBERTURA = 0.2
 REFERENCIA_ALZA = "siempre_alza"
 REFERENCIA_REVERSION = "reversion_usd"
+REFERENCIA_MERCADO_SIGUE = "mercado_sigue"
+REFERENCIA_MERCADO_REVIERTE = "mercado_revierte"
+REFERENCIA_ORACULO = "oraculo_mercado"
+REFERENCIA_ORACULO_RELATIVO = "oraculo_relativo"
 
 
 def retornos_usd(snapshot: Snapshot, horizonte: int = HORIZON) -> pd.DataFrame:
@@ -102,18 +110,22 @@ def horizontes(salida: Path) -> dict[str, int]:
     return {v: (c or {}).get("horizonte", HORIZON) for v, c in configs.items()}
 
 
-def por_periodo(salida: Path, retornos: dict[int, pd.DataFrame], periodos: str) -> pd.DataFrame:
-    """Una fila por (variante, periodo) con las metricas del ensamble de semillas,
-    mas las referencias sobre las filas de las variantes a 5 ruedas.
+def predicciones(
+    salida: Path, retornos: dict[int, pd.DataFrame], periodos: str
+) -> tuple[dict[str, pd.DataFrame], pd.DataFrame]:
+    """Predicciones de cada variante de la corrida (ensamble de semillas), con
+    ``futuro`` / ``pasado`` en dolares a su horizonte y la columna ``desde``
+    (periodo). Devuelve tambien las filas base para las referencias: por
+    periodo, las de la variante a 5 ruedas con mas filas.
     ``retornos``: ``retornos_usd`` por horizonte."""
     h_variante = horizontes(salida)
     archivos = sorted((salida / "predicciones").glob("*.csv"))
-    filas = []
+    partes: dict[str, list[pd.DataFrame]] = {}
+    bases = []
     for desde, _ in PERIODOS[periodos]:
         del_periodo = [a for a in archivos if a.stem.endswith(f"__{desde}")]
-        variantes = sorted({a.stem.split("__")[0] for a in del_periodo})
         base = None
-        for variante in variantes:
+        for variante in sorted({a.stem.split("__")[0] for a in del_periodo}):
             df = pd.concat(
                 pd.read_csv(a) for a in del_periodo if a.stem.startswith(f"{variante}__")
             )
@@ -122,17 +134,56 @@ def por_periodo(salida: Path, retornos: dict[int, pd.DataFrame], periodos: str) 
             )
             h = h_variante.get(variante, HORIZON)
             df = df.merge(retornos[h], on=["fecha", "symbol"]).dropna(subset=["futuro"])
-            filas.append({"variante": variante, "desde": desde, **_fila(df, df["pred"])})
+            df.insert(0, "desde", desde)
+            partes.setdefault(variante, []).append(df)
             if h == HORIZON and (base is None or len(df) > len(base)):
                 base = df
         if base is not None:
-            filas.append(
-                {"variante": REFERENCIA_ALZA, "desde": desde, **_fila(base, base["pred"] * 0 + 1)}
-            )
-            rev = base.dropna(subset=["pasado"])
-            filas.append(
-                {"variante": REFERENCIA_REVERSION, "desde": desde, **_fila(rev, -rev["pasado"])}
-            )
+            bases.append(base)
+    variantes = {v: pd.concat(dfs, ignore_index=True) for v, dfs in partes.items()}
+    base = pd.concat(bases, ignore_index=True) if bases else pd.DataFrame()
+    return variantes, base
+
+
+def referencias(base: pd.DataFrame) -> dict[str, pd.DataFrame]:
+    """Reglas sin entrenamiento sobre las filas ``base`` (columna ``pred``):
+
+    - ``siempre_alza``: dice "sube" para todo (``bal_usd`` = 0,5).
+    - ``reversion_usd``: lo contrario del retorno en dolares de las ultimas 5 ruedas.
+    - ``mercado_sigue`` / ``mercado_revierte``: el mismo pronostico para todas las
+      acciones del dia, el retorno medio del panel en las ultimas 5 ruedas (o su
+      contrario). Miden cuanto se acierta solo con el timing del mercado.
+    - ``oraculo_mercado``: el retorno medio **real** del panel en las proximas 5
+      ruedas, igual para todas las acciones. No es una regla posible: es la cota
+      de cuanto da acertar siempre el mercado sin saber nada de cada accion.
+    - ``oraculo_relativo``: el retorno real de cada accion **menos** el medio del
+      panel (ordena perfecto, sin saber hacia donde va el mercado). Cota de
+      cuanto da en direccion acertar solo la parte relativa.
+    """
+    rev = base.dropna(subset=["pasado"])
+    mercado_pasado = rev.groupby("fecha")["pasado"].transform("mean")
+    mercado_futuro = base.groupby("fecha")["futuro"].transform("mean")
+    return {
+        REFERENCIA_ALZA: base.assign(pred=1.0),
+        REFERENCIA_REVERSION: rev.assign(pred=-rev["pasado"]),
+        REFERENCIA_MERCADO_SIGUE: rev.assign(pred=mercado_pasado),
+        REFERENCIA_MERCADO_REVIERTE: rev.assign(pred=-mercado_pasado),
+        REFERENCIA_ORACULO: base.assign(pred=mercado_futuro),
+        REFERENCIA_ORACULO_RELATIVO: base.assign(pred=base["futuro"] - mercado_futuro),
+    }
+
+
+def por_periodo(salida: Path, retornos: dict[int, pd.DataFrame], periodos: str) -> pd.DataFrame:
+    """Una fila por (variante, periodo) con las metricas del ensamble de semillas,
+    mas las referencias (``referencias``) sobre las filas base."""
+    variantes, base = predicciones(salida, retornos, periodos)
+    todas = variantes | (referencias(base) if len(base) else {})
+    filas = []
+    for desde, _ in PERIODOS[periodos]:
+        for variante, df in todas.items():
+            df = df[df["desde"] == desde]
+            if len(df):
+                filas.append({"variante": variante, "desde": desde, **_fila(df, df["pred"])})
     return pd.DataFrame(filas)
 
 

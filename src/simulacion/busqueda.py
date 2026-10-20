@@ -19,7 +19,8 @@ falta para elegir sin engañarse:
 - **Cualquier modelo**: la clave ``"modelo"`` de una config elige el modelo de
   ``MODELOS`` (default ``"transformer"``); el resto de la config, con la
   semilla, va a su constructor (salvo ``"historia"``: ruedas de entrenamiento,
-  default las de produccion). Los modelos de panel (con ``predict_panel``)
+  default las de produccion, y ``"reentrenar_cada"``: ruedas entre reentrenos
+  dentro del periodo, default uno solo al inicio). Los modelos de panel (con ``predict_panel``)
   reciben todos los tickers del dia juntos.
 - **Referencias**: ``--referencias`` suma al resumen variantes de corridas ya
   hechas (``REFERENCIAS`` por default: Transformer actual y baselines de
@@ -33,6 +34,11 @@ Planes:
 - ``v2``: Transformer V2 contra el original (``PLAN_V2``; ``make buscar-transformer-v2``).
 - ``rapido``: ajustes e hiperparametros del V2, una semilla (``PLAN_V2_RAPIDO``;
   ``make probar-transformer-v2``).
+- ``r2``: ronda 2 del plan de mejora, filtro con modelos baratos: cabeza
+  relativa, cabeza de mercado, meta-labeling y dos cabezas (``PLAN_R2``;
+  ``make filtro-r2``).
+- ``r2-transformer``: el V2 como cabeza relativa contra el ensamble
+  (``PLAN_R2_TRANSFORMER``; ``make transformer-r2``, GPU).
 - ``config``: configuraciones puntuales (``--configs``), p. ej. para confirmar.
 
 Uso:
@@ -61,8 +67,11 @@ import pandas as pd
 import torch
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
+from src.panel_dos_cabezas import DosCabezasModel
 from src.panel_ensamble import EnsambleConfig, EnsamblePanelModel
 from src.panel_gbm import PanelGBMConfig, PanelGBMModel
+from src.panel_mercado import MercadoConfig, MercadoModel
+from src.panel_meta import MetaReversionConfig, MetaReversionModel
 from src.panel_transformer import PanelTransformerConfig, PanelTransformerModel
 from src.simulacion.experimento import (
     DIR_EXPERIMENTOS,
@@ -74,7 +83,7 @@ from src.simulacion.experimento import (
 from src.simulacion.limpieza import limpiar as limpiar_snapshot
 from src.simulacion.snapshot import DEFAULT_DIR, Snapshot
 from src.transformer import TransformerTrainConfig, TransformerTrendModel
-from src.transformer_v2 import TransformerV2Config, TransformerV2Model
+from src.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 
 PERIODOS_ELECCION = [
     ("2022-07-01", "2022-11-30"),
@@ -89,8 +98,18 @@ PERIODOS_CONFIRMACION = [
     ("2026-01-02", "2026-05-29"),
     ("2026-06-01", "2026-10-02"),
 ]
+# Anteriores a los de eleccion, nunca usados para elegir nada: segunda muestra
+# independiente para las reglas y modelos baratos de la ronda 3.
+PERIODOS_PREVIOS = [
+    ("2019-07-01", "2019-11-29"),
+    ("2020-01-02", "2020-05-29"),
+    ("2020-07-01", "2020-11-30"),
+    ("2021-01-04", "2021-05-31"),
+    ("2021-06-01", "2021-10-29"),
+]
 PERIODOS = {
     "eleccion": PERIODOS_ELECCION,
+    "previos": PERIODOS_PREVIOS,
     "confirmacion": PERIODOS_CONFIRMACION,
     "todos": PERIODOS_ELECCION + PERIODOS_CONFIRMACION,
 }
@@ -121,7 +140,8 @@ PLAN_ABLACION: dict[str, dict] = {
 # Una red por trabajo (``n_semillas=1``): el ensamble lo arman las semillas de
 # la busqueda. La direccion en dolares (y la de la senal selectiva) se mide con
 # ``src.simulacion.direccion``.
-_V2 = {"modelo": "transformer_v2", "n_semillas": 1}
+# Con los defaults de entonces (``CONFIG_ANTERIOR``): los de ahora son los de Optuna.
+_V2 = {"modelo": "transformer_v2", "n_semillas": 1, **CONFIG_ANTERIOR}
 PLAN_V2: dict[str, dict] = {
     "original": {"modelo": "transformer"},
     "v2": dict(_V2),
@@ -155,6 +175,70 @@ PLAN_V2_RAPIDO: dict[str, dict] = {
     "v2_w5": _V2C | {"ventana": 5},
     "v2_cruz2": _V2C | {"capas_cruzadas": 2},
     "v2_combinada": _V2C | {"perdida": "combinada"},
+}
+# Ronda 2 del plan de mejora (``notas/analisis-transformer-v2.md``): filtro con
+# modelos baratos (CPU, minutos) antes de entrenar el Transformer. Cada grupo se
+# mide con su metrica en ``src.simulacion.significancia``: la cabeza relativa
+# con IC y ``bal_relativo``, la de mercado con ``bal_mercado``, el meta-labeling
+# con ``bal_top`` y las dos cabezas juntas con ``bal_usd``.
+_ENS = {"modelo": "ensamble_panel"}
+_MERC = {"modelo": "mercado", "historia": 2400}
+_META = {"modelo": "meta_reversion"}
+PLAN_R2: dict[str, dict] = {
+    # Cabeza relativa: reentreno, historia y zona neutral
+    "ens": dict(_ENS),
+    "ens_re20": _ENS | {"reentrenar_cada": 20},
+    "ens_h1500": _ENS | {"historia": 1500},
+    "ens_h2400": _ENS | {"historia": 2400},
+    "ens_zn025": _ENS | {"zona_neutral": 0.25},
+    "ens_zn05": _ENS | {"zona_neutral": 0.5},
+    "gbm_h1500": {"modelo": "panel_gbm", "historia": 1500},
+    # Cabeza de mercado (2400 ruedas: toda la historia del snapshot del collector)
+    "merc_regla": {"modelo": "mercado", "tipo": "regla"},
+    "merc_ridge_750": {"modelo": "mercado"},
+    "merc_ridge": dict(_MERC),
+    "merc_ridge_macro": _MERC | {"macro": True},
+    "merc_ridge_zn05": _MERC | {"zona_neutral": 0.5},
+    "merc_logit": _MERC | {"tipo": "logit"},
+    "merc_logit_macro": _MERC | {"tipo": "logit", "macro": True},
+    "merc_ridge_re20": _MERC | {"reentrenar_cada": 20},
+    # Meta-labeling sobre la reversion
+    "meta_logit": dict(_META),
+    "meta_gbm": _META | {"tipo": "gbm"},
+    "meta_logit_macro": _META | {"macro": True},
+    "meta_logit_h1500": _META | {"historia": 1500},
+    "meta_logit_zn05": _META | {"zona_neutral": 0.5},
+    # Dos cabezas (mercado + ensamble relativo)
+    "dos_regla": {"modelo": "dos_cabezas", "mercado": {"tipo": "regla"}},
+    "dos_ridge_macro": {
+        "modelo": "dos_cabezas",
+        "mercado": {"macro": True},
+        "historia": 2400,
+    },
+}
+# Ronda 2, Transformer como cabeza relativa (GPU; lo corre el usuario): el V2 con
+# target sin la media del dia, early stopping por la perdida de validacion y la
+# historia larga, contra el ensamble con la misma historia (CPU, en la misma
+# corrida para que la diferencia sea pareada). ``make transformer-r2``.
+_V2_REL = _V2 | {
+    "target": "sin_media",
+    "seleccion": "perdida",
+    "historia": 1500,
+}
+PLAN_R2_TRANSFORMER: dict[str, dict] = {
+    "ens_h1500": _ENS | {"historia": 1500},
+    "t_rel": dict(_V2_REL),
+    "t_rel_zn05": _V2_REL | {"zona_neutral": 0.5},
+    "t_rel_ic": _V2_REL | {"seleccion": "ic"},
+}
+# Ronda 3: modelos lineales a 20 ruedas (CPU) contra el ensamble a 5. Las reglas
+# sin entrenamiento y la senal selectiva estan en ``src.simulacion.reglas``.
+PLAN_R3: dict[str, dict] = {
+    "ens": dict(_ENS),
+    "ens_h20": _ENS | {"horizonte": 20},
+    "ens_h20_h1500": _ENS | {"horizonte": 20, "historia": 1500},
+    "ridge_h20": {"modelo": "panel_gbm", "tipo": "ridge", "horizonte": 20},
+    "ridge_h20_h1500": {"modelo": "panel_gbm", "tipo": "ridge", "horizonte": 20, "historia": 1500},
 }
 # Baselines sin semillas (deterministicos o con semilla propia).
 BASELINES = ["reversion", "xgboost", "lstm"]
@@ -207,6 +291,30 @@ def _transformer_v2(config: dict, dispositivo: str, snapshot: Snapshot | None) -
     )
 
 
+def _mercado(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
+    proveedor = proveedor_snapshot(snapshot) if snapshot is not None else None
+    return MercadoModel(MercadoConfig(**config), proveedor=proveedor)
+
+
+def _meta_reversion(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
+    proveedor = proveedor_snapshot(snapshot) if snapshot is not None else None
+    return MetaReversionModel(MetaReversionConfig(**config), proveedor=proveedor)
+
+
+def _dos_cabezas(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
+    """``mercado``: config de ``MercadoConfig``; ``relativo``: config de otro
+    modelo de ``MODELOS`` (con su clave ``"modelo"``, default ``ensamble_panel``);
+    ``peso_mercado``. La semilla va a las dos cabezas."""
+    seed = config.get("seed", 0)
+    relativo = dict(config.get("relativo", {}))
+    constructor = MODELOS[relativo.pop("modelo", "ensamble_panel")]
+    return DosCabezasModel(
+        mercado=_mercado({**config.get("mercado", {}), "seed": seed}, dispositivo, snapshot),
+        relativo=constructor({**relativo, "seed": seed}, dispositivo, snapshot),
+        peso_mercado=config.get("peso_mercado", 1.0),
+    )
+
+
 # Modelos entrenables: nombre -> constructor(config, dispositivo, snapshot). La
 # config incluye ``seed``; un modelo deterministico puede ignorarla. El
 # snapshot es para los modelos que necesitan datos ademas de los historicos
@@ -218,6 +326,9 @@ MODELOS: dict[str, Callable[[dict, str, Snapshot | None], object]] = {
     "panel_transformer": _panel_transformer,
     "transformer_v2": _transformer_v2,
     "reversion_panel": lambda config, dispositivo, snapshot: ReversionPanelModel(),
+    "mercado": _mercado,
+    "meta_reversion": _meta_reversion,
+    "dos_cabezas": _dos_cabezas,
 }
 
 ESPACIO_HIPER: dict[str, list] = {
@@ -327,7 +438,9 @@ def _fabrica(trabajo: dict, snapshot: Snapshot | None = None):
         return VARIANTES[trabajo["variante"]]
     config = dict(trabajo["config"])
     constructor = MODELOS[config.pop("modelo", "transformer")]
-    config.pop("historia", None)  # la usa ``ejecutar``, no el modelo
+    # Las usa ``ejecutar``, no el modelo.
+    config.pop("historia", None)
+    config.pop("reentrenar_cada", None)
     config["seed"] = SEMILLA_BASE + trabajo["semilla"]
     return lambda: constructor(config, _DISPOSITIVO, snapshot or _SNAPSHOT)
 
@@ -344,6 +457,8 @@ def ejecutar(trabajo: dict, snapshot: Snapshot | None = None, salida: Path | Non
             PANEL_LIDER_TICKERS,
             # ``historia``: ruedas de entrenamiento (default: las de produccion).
             days_fit=(trabajo["config"] or {}).get("historia"),
+            # ``reentrenar_cada``: ruedas entre reentrenos (default: uno por periodo).
+            reentrenar_cada=(trabajo["config"] or {}).get("reentrenar_cada"),
         )
     if salida is not None:
         nombre = f"{trabajo['variante']}__{trabajo['semilla']}__{trabajo['desde']}.csv"
@@ -501,7 +616,10 @@ def resumen(
 def main() -> None:
     parser = argparse.ArgumentParser(description="Busqueda de configuraciones de modelos.")
     parser.add_argument("--nombre", required=True)
-    parser.add_argument("--plan", choices=["ablacion", "hiper", "v2", "rapido", "config"])
+    parser.add_argument(
+        "--plan",
+        choices=["ablacion", "hiper", "v2", "rapido", "r2", "r2-transformer", "r3", "config"],
+    )
     parser.add_argument("--base", type=json.loads, default={}, help="Formulacion base (hiper).")
     parser.add_argument("--configs", type=json.loads, default={}, help="{nombre: config} (config).")
     parser.add_argument("--n", type=int, default=30, help="Configuraciones del plan hiper.")
@@ -527,6 +645,12 @@ def main() -> None:
             configs = PLAN_V2
         elif args.plan == "rapido":
             configs = PLAN_V2_RAPIDO
+        elif args.plan == "r2":
+            configs = PLAN_R2
+        elif args.plan == "r2-transformer":
+            configs = PLAN_R2_TRANSFORMER
+        elif args.plan == "r3":
+            configs = PLAN_R3
         elif args.plan == "hiper":
             configs = muestrear_hiper(args.n, args.base)
         else:

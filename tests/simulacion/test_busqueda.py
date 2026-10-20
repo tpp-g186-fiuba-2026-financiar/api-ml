@@ -7,6 +7,8 @@ import pytest
 import src.simulacion.busqueda as busqueda
 from src.simulacion.busqueda import (
     PLAN_ABLACION,
+    PLAN_R2,
+    PLAN_R2_TRANSFORMER,
     PLAN_V2,
     PLAN_V2_RAPIDO,
     REFERENCIAS,
@@ -44,12 +46,50 @@ def test_plan_v2_da_configs_validas() -> None:
     assert PLAN_V2["original"] == {"modelo": "transformer"}
 
 
-def test_historia_cambia_solo_las_ruedas_de_entrenamiento(snapshot, monkeypatch) -> None:
+def test_planes_r2_dan_configs_validas(snapshot) -> None:
+    for nombre, config in (PLAN_R2 | PLAN_R2_TRANSFORMER).items():
+        modelo = busqueda._fabrica({"variante": nombre, "config": config, "semilla": 0}, snapshot)()
+        assert hasattr(modelo, "predict_panel"), nombre
+
+
+def test_fabrica_modelos_de_la_ronda_2(snapshot) -> None:
+    from src.panel_dos_cabezas import DosCabezasModel
+    from src.panel_ensamble import EnsamblePanelModel
+    from src.panel_mercado import MercadoModel
+    from src.panel_meta import MetaReversionModel
+
+    def fabricar(config: dict, semilla: int = 0):
+        trabajo = {"variante": "x", "config": config, "semilla": semilla}
+        return busqueda._fabrica(trabajo, snapshot)()
+
+    mercado = fabricar({"modelo": "mercado", "tipo": "logit", "macro": True, "historia": 900})
+    assert isinstance(mercado, MercadoModel) and mercado.config.macro
+    assert mercado.proveedor is not None
+    meta = fabricar({"modelo": "meta_reversion", "tipo": "gbm"}, semilla=2)
+    assert isinstance(meta, MetaReversionModel)
+    assert meta.config.seed == busqueda.SEMILLA_BASE + 2
+    dos = fabricar(
+        {
+            "modelo": "dos_cabezas",
+            "mercado": {"tipo": "regla"},
+            "relativo": {"modelo": "panel_gbm", "tipo": "ridge"},
+            "peso_mercado": 0.5,
+        },
+        semilla=1,
+    )
+    assert isinstance(dos, DosCabezasModel) and dos.peso_mercado == 0.5
+    assert dos.mercado.config.tipo == "regla" and dos.relativo.config.tipo == "ridge"
+    assert dos.relativo.config.seed == dos.mercado.config.seed == busqueda.SEMILLA_BASE + 1
+    # Sin "relativo", la cabeza relativa es el ensamble.
+    assert isinstance(fabricar({"modelo": "dos_cabezas"}).relativo, EnsamblePanelModel)
+
+
+def test_historia_y_reentreno_van_a_predecir_periodo_y_no_al_modelo(snapshot, monkeypatch) -> None:
     llamadas = []
 
-    def predecir(snapshot, fabrica, desde, hasta, tickers, days_fit=None):
-        llamadas.append(days_fit)
-        fabrica()  # la config del modelo no recibe "historia"
+    def predecir(snapshot, fabrica, desde, hasta, tickers, days_fit=None, reentrenar_cada=None):
+        llamadas.append((days_fit, reentrenar_cada))
+        fabrica()  # la config del modelo no recibe "historia" ni "reentrenar_cada"
         return pd.DataFrame(
             {"fecha": ["2026-05-04"] * 5, "symbol": list("ABCDE"),
              "pred": np.arange(5.0), "signal": "alza", "real": np.arange(5.0)}
@@ -57,9 +97,13 @@ def test_historia_cambia_solo_las_ruedas_de_entrenamiento(snapshot, monkeypatch)
 
     monkeypatch.setattr(busqueda, "predecir_periodo", predecir)
     trabajo = {"variante": "r", "semilla": 0, "desde": "2026-05-04", "hasta": "2026-05-29"}
-    for config in ({"modelo": "reversion_panel", "historia": 1500}, {"modelo": "reversion_panel"}):
+    for config in (
+        {"modelo": "reversion_panel", "historia": 1500},
+        {"modelo": "reversion_panel", "reentrenar_cada": 20},
+        {"modelo": "reversion_panel"},
+    ):
         ejecutar({**trabajo, "config": config}, snapshot)
-    assert llamadas == [1500, None]
+    assert llamadas == [(1500, None), (None, 20), (None, None)]
 
 
 def test_trabajos() -> None:
@@ -227,6 +271,8 @@ def test_resumen_sin_ensamble(snapshot_dir, tmp_path, monkeypatch) -> None:
         ("ablacion", []),
         ("hiper", ["--n", "1", "--base", '{"target": "relativo"}']),
         ("config", ["--configs", '{"x": {}}', "--baselines"]),
+        ("r2", []),
+        ("r2-transformer", []),
     ],
 )
 def test_main(snapshot_dir, tmp_path, monkeypatch, capsys, plan, extra) -> None:

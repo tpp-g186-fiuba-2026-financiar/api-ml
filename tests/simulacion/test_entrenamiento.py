@@ -132,4 +132,4 @@ def test_reentreno_due() -> None:
     assert reentreno_due("semanal", jueves, lunes)
     assert reentreno_due("semanal", jueves, None)
     with pytest.raises(ValueError):
-        reentreno_due("mensual", jueves, viernes)
+        reentreno_due("anual", jueves, viernes)
