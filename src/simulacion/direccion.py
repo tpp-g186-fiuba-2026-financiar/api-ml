@@ -97,10 +97,15 @@ def metricas(pred: pd.Series, real_usd: pd.Series, real_ars: pd.Series) -> dict:
 
 
 def _acierto_top(pred: pd.Series, real_usd: pd.Series, cobertura: float = COBERTURA) -> float:
-    """``bal_usd`` sobre los casos con ``|pred|`` en el cuantil superior ``cobertura``."""
-    fuerza = pred.abs()
-    top = fuerza >= fuerza.quantile(1 - cobertura)
-    return acierto_balanceado(pred[top].to_numpy(), real_usd[top].to_numpy())
+    """``bal_usd`` sobre la fraccion ``cobertura`` de casos con mayor ``|pred|``.
+
+    Se toman exactamente los ``cobertura * n`` mas fuertes (al menos uno): con un
+    umbral por cuantil, los empates en el borde (p. ej. muchas predicciones
+    iguales) metian casos de mas.
+    """
+    n = max(1, int(cobertura * len(pred)))
+    top = np.argsort(-pred.abs().to_numpy(), kind="stable")[:n]
+    return acierto_balanceado(pred.to_numpy()[top], real_usd.to_numpy()[top])
 
 
 def horizontes(salida: Path) -> dict[str, int]:
