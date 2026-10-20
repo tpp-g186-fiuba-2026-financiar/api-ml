@@ -256,3 +256,13 @@ def test_build_registry_registers_transformer_modal_only_when_configured(monkeyp
     registry = registry_module.build_registry(750)
     assert "transformer-modal" in registry.names()
     assert isinstance(registry._services["transformer-modal"], RemoteTrendService)
+
+
+def test_build_registry_sirve_el_v2_como_transformer() -> None:
+    from src.panel.servicio import PanelTrendService
+
+    registry = registry_module.build_registry(750)
+    servicio = registry.resolve("transformer")
+    assert isinstance(servicio, PanelTrendService)
+    assert servicio.respaldo is registry.resolve("transformer-v1")
+    assert isinstance(registry.resolve("transformer-v1"), TrendService)

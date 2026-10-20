@@ -4,11 +4,16 @@ A diferencia de ``train_transformer`` (el original), siempre usa el
 data-colector, sin importar ``DATA_SOURCE``: los precios (OHLC ajustados) y
 el CCL para pasarlos a dolares salen de ahi. Entrena con las acciones del
 panel lider y guarda el artefacto en ``--out`` (por default
-``settings.transformer_v2_model_path``), sin gate de promocion: no reemplaza
-al Transformer original ni se sirve en la API.
+``settings.transformer_v2_model_path``), que la API sirve como "transformer".
+
+Por default pasa por el gate por IC fuera de muestra (``src.panel.gate``):
+entrena dos veces (evaluacion y final) y solo guarda si el candidato ordena
+mejor que el azar. ``--force`` salta el gate (entrena una vez y guarda). Lo
+corre el cron mensual ``retrain-transformer-v2.yml``.
 
 Uso:
     make train-transformer-v2
+    make train-transformer-v2 ARGS="--force"
     make train-transformer-v2 ARGS="--collector-url http://localhost:3000 --dispositivo cuda"
     make train-transformer-v2 ARGS="--collector-url http://localhost:3000 --dispositivo cuda \
         --macro --perdida bce --days 1500 --cobertura-senal 0.2"
@@ -27,6 +32,7 @@ from src.data import fetch_history_collector
 from src.errors import DataUnavailableError
 from src.lstm import fetch_histories
 from src.macro_data import REQUIRED, SERIES, build_macro_frame, fetch_collector_series
+from src.panel.gate import entrenar_con_gate
 from src.panel.transformer_v2 import HISTORIA_V2, TransformerV2Config, TransformerV2Model
 
 
@@ -96,6 +102,11 @@ def main() -> None:
     parser.add_argument(
         "--out", default=settings.transformer_v2_model_path, help="Ruta del artefacto .pt"
     )
+    parser.add_argument(
+        "--force",
+        action="store_true",
+        help="Guardar sin pasar por el gate por IC (entrena una sola vez).",
+    )
     args = parser.parse_args()
     settings.data_collector_url = args.collector_url
 
@@ -127,9 +138,25 @@ def main() -> None:
         capas_cruzadas=args.capas_cruzadas,
         seed=args.seed,
     )
-    modelo = TransformerV2Model(config, proveedor=proveedor, dispositivo=args.dispositivo)
+
+    def fabrica() -> TransformerV2Model:
+        return TransformerV2Model(config, proveedor=proveedor, dispositivo=args.dispositivo)
+
     print(f"\nEntrenando Transformer V2 con {len(histories)} tickers en {args.dispositivo}...")
     print(f"Config: {asdict(config)}")
+    if not args.force:
+        print("Gate por IC: entrena sin las ultimas ruedas, mide el IC ahi y, si pasa, reentrena.")
+        promovido, score = entrenar_con_gate(
+            fabrica, TransformerV2Model.load, histories, args.out, config.horizonte
+        )
+        print(f"  candidato: {score}")
+        if not promovido:
+            print("\nEl candidato no ordena mejor que el azar -- no se toca el artefacto.")
+            return
+        print(f"\nModelo guardado en: {args.out}")
+        return
+
+    modelo = fabrica()
     metrics = modelo.fit(histories)
     print("\nMetricas de validacion (antes del reentreno con todos los datos):")
     for key, value in metrics.items():

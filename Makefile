@@ -16,7 +16,7 @@ train-xgb: ## Entrena el XGBoost de tendencia (models/xgb.pkl, con gate de promo
 	python -m src.train_xgb
 train-transformer: ## Entrena el Transformer original (models/transformer.pt, con gate de promocion)
 	python -m src.train_transformer
-train-transformer-v2: ## Entrena el Transformer V2 con datos del collector (models/transformer_v2.pt, sin gate)
+train-transformer-v2: ## Entrena el Transformer V2, el "transformer" de la API (collector, gate por IC; ARGS="--force" lo salta)
 	python -m src.panel.train_transformer_v2 $(ARGS)
 # Transformer V2: snapshot con datos del collector local, busqueda de variantes
 # (retomable: lo ya corrido no se repite) y acierto de la direccion en dolares.

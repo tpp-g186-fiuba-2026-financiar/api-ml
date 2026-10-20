@@ -292,6 +292,9 @@ def test_save_y_load_errores(tmp_path) -> None:
         torch.save({**blob, campo: valor}, tmp_path / "viejo.pt")
         with pytest.raises(StaleArtifactError, match=campo):
             PanelTransformerModel.load(tmp_path / "viejo.pt")
+    torch.save({**blob, "config": {**blob["config"], "banda_senal": 0.01}}, tmp_path / "viejo.pt")
+    with pytest.raises(StaleArtifactError, match="otra config"):
+        PanelTransformerModel.load(tmp_path / "viejo.pt")
     torch.save({**blob, "architecture": "transformer"}, tmp_path / "otro.pt")
     with pytest.raises(ApiMlError, match="no es un artefacto"):
         PanelTransformerModel.load(tmp_path / "otro.pt")

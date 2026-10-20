@@ -510,7 +510,13 @@ class PanelTransformerModel:
         blob = torch.load(Path(path), map_location="cpu", weights_only=False)
         if blob.get("architecture") != cls.ARQUITECTURA:
             raise ApiMlError(f"{path} no es un artefacto de {cls.ARQUITECTURA}")
-        modelo = cls(cls.CONFIG(**blob["config"]), proveedor, dispositivo)
+        try:
+            config = cls.CONFIG(**blob["config"])
+        except TypeError as exc:  # campos de config que ya no existen (o nuevos obligatorios)
+            raise StaleArtifactError(
+                f"artefacto entrenado con otra config ({exc}); hay que reentrenar"
+            ) from exc
+        modelo = cls(config, proveedor, dispositivo)
         for campo, actual in (("feature_names", list(NOMBRES)), ("universo", modelo.universo)):
             if list(blob[campo]) != actual:
                 raise StaleArtifactError(

@@ -63,7 +63,7 @@ def test_main_entrena_y_guarda(tmp_path, monkeypatch, capsys) -> None:
     monkeypatch.setattr(settings, "data_collector_url", settings.data_collector_url)
     ruta = tmp_path / "v2.pt"
     argv = ["train", "--collector-url", "http://collector:3000", "--epocas", "2",
-            "--n-semillas", "1", "--out", str(ruta)]  # fmt: skip
+            "--n-semillas", "1", "--out", str(ruta), "--force"]  # fmt: skip
     monkeypatch.setattr(sys, "argv", argv)
     train.main()
     assert settings.data_collector_url == "http://collector:3000"
@@ -84,3 +84,26 @@ def test_main_sin_datos_aborta(monkeypatch) -> None:
         assert "No se pudo descargar" in str(exc)
     else:
         raise AssertionError("tendria que abortar sin datos")
+
+
+@pytest.mark.parametrize("promovido", [True, False])
+def test_main_pasa_por_el_gate(tmp_path, monkeypatch, capsys, promovido) -> None:
+    historias = _histories()
+    monkeypatch.setattr(train, "PANEL_LIDER_TICKERS", TICKERS)
+    monkeypatch.setattr(train, "fetch_history_collector", lambda symbol, days: historias[symbol])
+    monkeypatch.setattr(train, "fetch_collector_series", lambda ruta, serie: _macro()["ccl"])
+    monkeypatch.setattr(settings, "data_collector_url", settings.data_collector_url)
+    llamadas = []
+
+    def gate(fabrica, loader, histories, out, horizonte):
+        llamadas.append((fabrica().config.n_semillas, sorted(histories), out, horizonte))
+        return promovido, {"ic": 0.05 if promovido else -0.01}
+
+    monkeypatch.setattr(train, "entrenar_con_gate", gate)
+    ruta = str(tmp_path / "v2.pt")
+    monkeypatch.setattr(sys, "argv", ["train", "--n-semillas", "2", "--out", ruta])
+    train.main()
+    assert llamadas == [(2, sorted(TICKERS), ruta, 5)]
+    salida = capsys.readouterr().out
+    assert ("Modelo guardado" in salida) is promovido
+    assert ("no se toca el artefacto" in salida) is not promovido

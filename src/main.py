@@ -220,8 +220,8 @@ async def predict_trend_get(
     model: str | None = Query(
         default=None,
         description=(
-            "lstm | xgboost | transformer | arima | lstm-modal | xgboost-modal | "
-            "arima-modal | ... (ver /models para el default vigente)"
+            "lstm | xgboost | transformer (V2) | transformer-v1 | arima | lstm-modal | "
+            "xgboost-modal | arima-modal | ... (ver /models para el default vigente)"
         ),
     ),
 ) -> TrendResponse:
