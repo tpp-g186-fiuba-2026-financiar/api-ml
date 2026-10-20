@@ -246,6 +246,7 @@ def test_reporte(entorno, snapshot, snapshot_dir, monkeypatch) -> None:
 
     rearmar(out, out / "rearmados" / "otra", snapshot, comision=0.01)
     monkeypatch.setattr(reporte, "RESULTADOS_DIR", str(entorno))
+    monkeypatch.setattr(reporte, "compilar", lambda destino: None)
     reporte.main(["--nombre", "t", "--rearmado", "otra"])
     rearmado = json.loads((out / "rearmados" / "otra" / "reporte" / "resumen.json").read_text())
     assert rearmado["config_carteras"]["comision"] == 0.01

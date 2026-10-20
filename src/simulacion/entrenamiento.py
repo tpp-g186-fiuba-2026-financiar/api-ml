@@ -122,6 +122,12 @@ def build_modelos_diarios(
     ]
 
 
+def historias_macro(snapshot: Snapshot, hasta: pd.Timestamp) -> dict[str, pd.DataFrame]:
+    """Con lo que se entrena el macro al cierre de ``hasta``: toda la historia del universo."""
+    historias = {s: snapshot.history(s, hasta) for s in UNIVERSE if s in snapshot.prices}
+    return {s: df for s, df in historias.items() if not df.empty}
+
+
 @dataclass
 class ModeloMacro:
     """Modelo ``macro``: reentreno mensual con umbral minimo de AUC."""
@@ -141,19 +147,13 @@ class ModeloMacro:
         if self.vigente is not None:
             self.vigente.macro_provider = self._macro_provider
 
-    def _histories(self, hasta: pd.Timestamp) -> dict[str, pd.DataFrame]:
-        return {
-            s: self.snapshot.history(s, hasta)
-            for s in UNIVERSE
-            if s in self.snapshot.prices and not self.snapshot.history(s, hasta).empty
-        }
-
     def retrain(self, hasta: pd.Timestamp, force: bool = False) -> dict:
         if not self.snapshot.macro_raw:
             return {"model": "macro", "promoted": False, "error": "snapshot sin series macro"}
         model = MacroTrendModel(config=MacroConfig())
         try:
-            metrics = model.fit(self._histories(hasta), self.snapshot.macro_frame(hasta))
+            historias = historias_macro(self.snapshot, hasta)
+            metrics = model.fit(historias, self.snapshot.macro_frame(hasta))
         except ApiMlError as exc:
             return {"model": "macro", "promoted": False, "error": str(exc)}
         promoted = force or metrics["oos_auc"] >= self.min_auc
@@ -181,6 +181,30 @@ CONTEXTO_RUEDAS_ENTRENAMIENTO = 4000
 CONTEXTO_RUEDAS_MERCADO = 1500
 
 
+def historias_contexto(snapshot: Snapshot, hasta: pd.Timestamp) -> dict[str, pd.DataFrame]:
+    """Con lo que se entrena el contexto al cierre de ``hasta``."""
+    historias = {
+        s: snapshot.history(s, hasta, CONTEXTO_RUEDAS_ENTRENAMIENTO)
+        for s in UNIVERSE
+        if s in snapshot.prices
+    }
+    return {s: df for s, df in historias.items() if not df.empty}
+
+
+def mercado_al(snapshot: Snapshot, hasta: pd.Timestamp) -> pd.DataFrame | None:
+    """El mercado con el que predice el contexto al cierre de ``hasta`` (el de los
+    lideres del snapshot); None si no se puede armar."""
+    lideres = {
+        s: snapshot.history(s, hasta, CONTEXTO_RUEDAS_MERCADO)
+        for s in LEADERS
+        if s in snapshot.prices
+    }
+    try:
+        return market_frame({s: df for s, df in lideres.items() if not df.empty})
+    except ApiMlError:
+        return None
+
+
 @dataclass
 class ModeloContexto:
     """Modelo ``contexto``: reentreno mensual con umbral minimo de AUC (como el macro).
@@ -200,30 +224,14 @@ class ModeloContexto:
         return self._mercado
 
     def set_today(self, hasta: pd.Timestamp) -> None:
-        lideres = {
-            s: self.snapshot.history(s, hasta, CONTEXTO_RUEDAS_MERCADO)
-            for s in LEADERS
-            if s in self.snapshot.prices
-        }
-        try:
-            self._mercado = market_frame({s: df for s, df in lideres.items() if not df.empty})
-        except ApiMlError:
-            self._mercado = None
+        self._mercado = mercado_al(self.snapshot, hasta)
         if self.vigente is not None:
             self.vigente.market_provider = self._mercado_hoy
-
-    def _histories(self, hasta: pd.Timestamp) -> dict[str, pd.DataFrame]:
-        histories = {
-            s: self.snapshot.history(s, hasta, CONTEXTO_RUEDAS_ENTRENAMIENTO)
-            for s in UNIVERSE
-            if s in self.snapshot.prices
-        }
-        return {s: df for s, df in histories.items() if not df.empty}
 
     def retrain(self, hasta: pd.Timestamp, force: bool = False) -> dict:
         model = ContextTrendModel(config=ContextConfig())
         try:
-            metrics = model.fit(self._histories(hasta))
+            metrics = model.fit(historias_contexto(self.snapshot, hasta))
         except ApiMlError as exc:
             return {"model": "contexto", "promoted": False, "error": str(exc)}
         promoted = force or metrics["oos_auc"] >= self.min_auc

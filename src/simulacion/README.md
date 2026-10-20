@@ -8,6 +8,138 @@ valoriza al cierre. Nunca usa datos posteriores al dia simulado.
 Solo modelos locales de api_ml (LSTM, XGBoost, Transformer, ARIMA, macro, contexto). Los de Modal quedan
 afuera. No toca `models/` ni ningun servicio de produccion: todo corre contra un snapshot en disco.
 
+## Como correrla (copiar y pegar)
+
+Todos los comandos van desde la carpeta de api_ml (la que tiene el `Makefile`).
+
+### 1. Preparar el entorno (una sola vez)
+
+```bash
+python3.12 -m venv .venv
+source .venv/bin/activate
+make install
+```
+
+En cada terminal nueva, antes de correr nada: `source .venv/bin/activate`. Si no existe
+`python3.12`: `sudo apt install python3.12 python3.12-venv` (Ubuntu) o `sudo dnf install python3.12`
+(Fedora). Con conda alcanza con un entorno de Python 3.12 activado y `make install`.
+
+Para que el reporte salga en PDF hace falta LaTeX (sin LaTeX corre igual y deja solo el `.tex`):
+
+```bash
+# Ubuntu
+sudo apt install texlive-latex-base texlive-latex-recommended texlive-lang-spanish
+```
+
+```bash
+# Fedora
+sudo dnf install texlive-latex texlive-babel texlive-babel-spanish texlive-geometry texlive-booktabs texlive-tools texlive-graphics texlive-float texlive-ec
+```
+
+### 2. Bajar los datos (una sola vez)
+
+Si ya existe `simulacion/snapshot-collector/meta.json`, saltear este paso. Si no, levantar el
+data-colector local (en su repo: `make network` la primera vez y `docker compose up -d --build`) y
+bajar el snapshot (~10 anios de historia de cada ticker):
+
+```bash
+make snapshot-collector
+```
+
+### 3. Chequear que este todo
+
+```bash
+make simulacion-check
+```
+
+Tiene que terminar con `OK: estan todos los requisitos de la simulacion.` Si falta algo dice que y
+como instalarlo (`apt` y `dnf`). `make simular` y `make simulacion` corren este mismo chequeo antes
+de arrancar.
+
+### 4. Correr la simulacion de un solo modelo
+
+Entrena solo ese modelo, predice cada rueda del periodo y arma carteras simples (senal, histeresis,
+cuantil 30%, inclinada) contra los benchmarks. Sin Black-Litterman ni consenso. Copiar la linea del
+modelo que se quiera:
+
+```bash
+make simular MODELO=lstm NOMBRE=lstm-2026 DESDE=2026-01-02
+```
+
+```bash
+make simular MODELO=xgboost NOMBRE=xgboost-2026 DESDE=2026-01-02
+```
+
+```bash
+make simular MODELO=arima NOMBRE=arima-2026 DESDE=2026-01-02
+```
+
+```bash
+make simular MODELO=macro NOMBRE=macro-2026 DESDE=2026-01-02
+```
+
+```bash
+make simular MODELO=contexto NOMBRE=contexto-2026 DESDE=2026-01-02
+```
+
+```bash
+make simular MODELO=transformer_v2 NOMBRE=transformer-v2-2026 DESDE=2026-01-02
+```
+
+`transformer_v2` es el "transformer" que sirve hoy la API; `transformer` es el original. Tambien
+estan los modelos de panel de la busqueda: `panel_gbm`, `ensamble_panel`, `panel_transformer`,
+`reversion_panel`, `mercado`, `meta_reversion`, `dos_cabezas`.
+
+### 5. (Opcional) Correr la simulacion completa
+
+Todos los modelos juntos, con Black-Litterman, consenso y "mejor modelo por ticker". Tarda horas:
+
+```bash
+make simulacion NOMBRE=completa-2026 DESDE=2026-06-01 REENTRENO=semanal
+```
+
+### 6. Ver el resultado
+
+Al terminar imprime donde quedo el reporte, por ejemplo:
+
+```
+Reporte LaTeX: /.../api_ml/simulacion/resultados/lstm-2026/reporte/reporte.tex
+Reporte PDF:   /.../api_ml/simulacion/resultados/lstm-2026/reporte/reporte.pdf
+```
+
+Todo lo de la corrida queda en `simulacion/resultados/<NOMBRE>/` (ver "Archivos de una corrida" mas
+abajo). Para rehacer el reporte de una corrida completa sin volver a simular:
+`make simulacion-reporte NOMBRE=completa-2026`.
+
+### Opciones
+
+Se agregan al final del comando, p. ej.
+`make simular MODELO=lstm NOMBRE=lstm-h1 DESDE=2026-01-02 HASTA=2026-06-30 REENTRENO=semanal`.
+
+| Variable | Que hace | Default |
+|---|---|---|
+| `MODELO` | Modelo a simular (solo `simular`) | `transformer_v2` |
+| `NOMBRE` | Carpeta de la corrida en `simulacion/resultados/`. En `simular` tiene que ser nueva; en `simulacion`, si ya existe, retoma esa corrida | obligatorio |
+| `DESDE` | Primera rueda simulada (`YYYY-MM-DD`); entrena con los datos anteriores | obligatorio |
+| `HASTA` | Ultima rueda simulada | la ultima del snapshot |
+| `REENTRENO` | `diario`, `semanal`, `mensual` o `nunca` | `mensual` en `simular`, `diario` en `simulacion` |
+| `CONFIG` | JSON con campos de la config del modelo (solo `simular`), p. ej. `CONFIG='{"epochs": 20}'` | `{}` |
+| `ARGS` | Cualquier otra opcion del script, p. ej. `ARGS='--comision 0.01 --rebalanceo 10'` | |
+| `DISPOSITIVO` | `cuda` o `cpu` (solo `simular`) | `cuda` si hay GPU |
+| `SNAPSHOT` | Carpeta del snapshot de datos | `simulacion/snapshot-collector` |
+| `PYTHON` | Python a usar | `python` |
+
+### Si algo falla
+
+- `... ya existe: usar otro --nombre` (en `simular`): ya hay una corrida con ese `NOMBRE`; usar otro
+  (o borrar `simulacion/resultados/<NOMBRE>/`).
+- `ERROR: No existe el snapshot de datos ...`: falta el paso 2.
+- `ERROR: Falta instalar el paquete de Python ...`: falta activar el venv (`source .venv/bin/activate`)
+  o el paso 1.
+- `invalid choice` en `--modelo`: el nombre del modelo esta mal escrito; la lista sale en el error.
+- `(sin PDF: falta pdflatex o fallo la compilacion ...)`: el `.tex` esta igual; instalar LaTeX
+  (paso 1) y correr de nuevo, o subir la carpeta `reporte/` a Overleaf.
+
 ## Pasos
 
 ```bash
@@ -34,25 +166,31 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e MPLCONFIGDIR=/tmp -v "$PW
 
 ## Simulacion rapida de un solo modelo
 
-Para probar una variante de un modelo de panel (p. ej. el Transformer V2) sin esperar al
-simulador completo: entrena solo ese modelo con datos anteriores a `--desde` (reentreno
+Para probar un modelo (o una variante, p. ej. del Transformer V2) sin esperar al simulador
+completo: entrena solo ese modelo con datos anteriores a `--desde` (reentreno
 `mensual` por default, o `semanal` / `diario` / `nunca`), predice cada rueda, mide la direccion
 en dolares con intervalos contra la reversion y las referencias (`significancia`) y arma carteras
-simples (senal, histeresis, cuantil 30%, inclinada y benchmarks). Sin Black-Litterman, consenso,
-ARIMA, macro ni backtests en vivo.
+simples (senal, histeresis, cuantil 30%, inclinada y benchmarks). Sin Black-Litterman, consenso
+ni backtests en vivo.
+
+Sirve cualquier modelo de `busqueda.MODELOS` (`--modelo`): los de panel y tambien los de produccion
+que predicen ticker por ticker (`lstm`, `xgboost`, `arima`, `macro`, `contexto`), adaptados en
+`por_ticker`. Macro y contexto se entrenan como en el simulador completo y predicen con la macro /
+el mercado del dia simulado, pero sin el piso de AUC: cada reentreno reemplaza al anterior.
 
 ```bash
 make simular-v2 SIM_NOMBRE=v2-2025 SIM_DESDE=2025-01-02 ARGS='--hasta 2025-12-30'
 make simular-v2 SIM_NOMBRE=v2-bce SIM_CONFIG='{"perdida": "bce", "n_semillas": 1}' ARGS='--reentreno nunca'
+make simular MODELO=xgboost NOMBRE=xgb-2026 DESDE=2026-01-02
 # Otra comision / rebalanceo sin volver a entrenar
 python -m src.simulacion.un_modelo --nombre v2-2025 --solo-analisis --comision 0.01
 ```
 
 Deja en `simulacion/resultados/<nombre>/` `resumen.md` (entrenamientos, direccion y carteras),
 `entrenamientos.jsonl` (lo que devolvio cada `fit`: las metricas de validacion del V2),
-`predicciones.jsonl`, `direccion.csv`, `carteras.csv` y los `.jsonl` de carteras. Cualquier modelo
-de `busqueda.MODELOS` sirve (`--modelo`); `--config` acepta tambien `"modelo"` e `"historia"`,
-asi que se puede pegar una variante de los planes de la busqueda.
+`predicciones.jsonl`, `direccion.csv`, `carteras.csv`, los `.jsonl` de carteras y
+`reporte/reporte.tex` (y `reporte.pdf` si hay `pdflatex`). `--config` acepta tambien `"modelo"` e
+`"historia"`, asi que se puede pegar una variante de los planes de la busqueda.
 
 ## Que replica de produccion
 

@@ -16,8 +16,6 @@ from __future__ import annotations
 
 import argparse
 import json
-import shutil
-import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -44,6 +42,7 @@ from src.simulacion.reporte import (
     _pct,
     _tabla_tex,
     _tex,
+    compilar,
 )
 from src.simulacion.simulador import RESULTADOS_DIR
 
@@ -394,20 +393,6 @@ def latex(datos: dict, imagenes: list[str]) -> str:
         partes.append(_tabla_tex(["Datos hasta", "Segundos", *val], filas))
     partes.append(r"\end{document}")
     return "\n\n".join(p for p in partes if p) + "\n"
-
-
-def compilar(destino: Path) -> Path | None:
-    """``reporte.pdf`` con dos pasadas de ``pdflatex``; None si no esta instalado o falla."""
-    if shutil.which("pdflatex") is None:
-        return None
-    for _ in range(2):
-        proceso = subprocess.run(
-            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "reporte.tex"],
-            cwd=destino, capture_output=True, check=False,
-        )  # fmt: skip
-        if proceso.returncode != 0:
-            return None
-    return destino / "reporte.pdf"
 
 
 def generar(out: Path) -> Path:

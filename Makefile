@@ -62,6 +62,48 @@ SIM_CONFIG ?= {}
 simular-v2: ## Simulacion rapida de un solo modelo: metricas de direccion y carteras sin Black-Litterman (GPU)
 	python -m src.simulacion.un_modelo --nombre $(SIM_NOMBRE) --desde $(SIM_DESDE) \
 		--config '$(SIM_CONFIG)' --snapshot $(V2_SNAPSHOT) --dispositivo cuda $(ARGS)
+# Simulacion con chequeo previo de requisitos (scripts/check_simulacion.sh) y el
+# reporte en LaTeX / PDF al final (imprime las rutas). Con el snapshot V2_SNAPSHOT:
+#   make simular MODELO=lstm NOMBRE=lstm-2026 DESDE=2026-01-02
+#   make simulacion NOMBRE=completa-2026 DESDE=2026-06-01 REENTRENO=semanal
+PYTHON ?= python
+MODELO ?= transformer_v2
+NOMBRE ?=
+DESDE ?=
+HASTA ?=
+# Vacio: el default de cada simulador (un_modelo: mensual; simulador: diario).
+REENTRENO ?=
+# JSON con campos de la config del modelo (p. ej. CONFIG='{"epochs": 20}').
+CONFIG ?= {}
+SNAPSHOT ?= $(V2_SNAPSHOT)
+DISPOSITIVO ?= $(shell $(PYTHON) -c "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')" 2>/dev/null || echo cpu)
+CHECK = PYTHON=$(PYTHON) scripts/check_simulacion.sh
+USO = MODELO=<modelo> NOMBRE=<corrida> DESDE=YYYY-MM-DD [HASTA=YYYY-MM-DD] [REENTRENO=...]
+define chequear
+	@test -n "$(NOMBRE)" -a -n "$(DESDE)" || { echo "Uso: make $@ $(USO)"; exit 1; }
+	@$(CHECK) python && $(CHECK) snapshot $(SNAPSHOT)
+	@$(CHECK) latex || { echo "AVISO: se va a generar reporte.tex pero no el PDF."; sleep 5; }
+endef
+# PHONY: hay una carpeta simulacion/ y make daria el target por hecho.
+.PHONY: simular simulacion simulacion-reporte simulacion-check
+simular: ## Simulacion de un solo modelo, cualquiera (MODELO=lstm|xgboost|arima|macro|contexto|transformer_v2|...): direccion y carteras sin Black-Litterman, con reporte en PDF
+	$(chequear)
+	$(PYTHON) -m src.simulacion.un_modelo --nombre $(NOMBRE) --modelo $(MODELO) --desde $(DESDE) \
+		$(if $(HASTA),--hasta $(HASTA)) $(if $(REENTRENO),--reentreno $(REENTRENO)) \
+		--config '$(CONFIG)' --snapshot $(SNAPSHOT) --dispositivo $(DISPOSITIVO) $(ARGS)
+simulacion: ## Simulacion completa (todos los modelos, Black-Litterman y consenso), con reporte en PDF; tarda horas
+	$(chequear)
+	$(PYTHON) -m src.simulacion.simulador --nombre $(NOMBRE) --desde $(DESDE) \
+		$(if $(HASTA),--hasta $(HASTA)) $(if $(REENTRENO),--reentreno $(REENTRENO)) \
+		--snapshot $(SNAPSHOT) $(ARGS)
+	$(PYTHON) -m src.simulacion.reporte --nombre $(NOMBRE)
+simulacion-reporte: ## Rehace el reporte (y el PDF) de una corrida de simulacion completa ya hecha (NOMBRE=...)
+	@test -n "$(NOMBRE)" || { echo "Uso: make $@ NOMBRE=<corrida>"; exit 1; }
+	$(PYTHON) -m src.simulacion.reporte --nombre $(NOMBRE)
+simulacion-check: ## Chequea los requisitos de simular / simulacion (Python, snapshot, LaTeX) sin correr nada
+	@ok=0; $(CHECK) python || ok=1; $(CHECK) snapshot $(SNAPSHOT) || ok=1; \
+	$(CHECK) latex || ok=1; \
+	if [ $$ok = 0 ]; then echo "OK: estan todos los requisitos de la simulacion."; else exit 1; fi
 backtest: ## Backtest walk-forward de los modelos ya entrenados (deja una foto en JSON)
 	python -m src.backtest
 paper-trade: ## Paper trading: registra predicciones y resuelve las vencidas

@@ -154,6 +154,7 @@ def test_copia_unir_y_rearmar(corrida, snapshot, monkeypatch) -> None:
     assert nuevo["senal_reversion"].iloc[-1] != nuevo["senal_reversion"].iloc[0]
 
     monkeypatch.setattr(reporte, "RESULTADOS_DIR", str(corrida.parent))
+    monkeypatch.setattr(reporte, "compilar", lambda destino: None)
     reporte.main(["--nombre", "copia", "--rearmado", "igual"])
     destino = copia / "rearmados" / "igual" / "reporte"
     resumen = json.loads((destino / "resumen.json").read_text())
