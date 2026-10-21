@@ -74,6 +74,7 @@ from src.panel.mercado import MercadoConfig, MercadoModel
 from src.panel.meta import MetaReversionConfig, MetaReversionModel
 from src.panel.transformer import PanelTransformerConfig, PanelTransformerModel
 from src.panel.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
+from src.simulacion import por_ticker
 from src.simulacion.experimento import (
     DIR_EXPERIMENTOS,
     VARIANTES,
@@ -329,6 +330,12 @@ MODELOS: dict[str, Callable[[dict, str, Snapshot | None], object]] = {
     "mercado": _mercado,
     "meta_reversion": _meta_reversion,
     "dos_cabezas": _dos_cabezas,
+    # Los de produccion que predicen ticker por ticker (ver ``por_ticker``).
+    "lstm": por_ticker.lstm,
+    "xgboost": por_ticker.xgboost,
+    "arima": por_ticker.arima,
+    "macro": por_ticker.macro,
+    "contexto": por_ticker.contexto,
 }
 
 ESPACIO_HIPER: dict[str, list] = {

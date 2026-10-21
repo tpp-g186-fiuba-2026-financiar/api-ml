@@ -1,4 +1,4 @@
-"""Simulacion rapida de un solo modelo de panel: entrenar, medir la direccion y operar carteras.
+"""Simulacion rapida de un solo modelo: entrenar, medir la direccion y operar carteras.
 
 El simulador completo (``simulador``) entrena LSTM, XGBoost, Transformer y
 macro, ajusta ARIMA, calcula backtests en vivo y arma Black-Litterman, consenso
@@ -26,8 +26,10 @@ Todo queda en ``simulacion/resultados/<nombre>/`` con un ``resumen.md``.
 ``--solo-analisis`` rehace los pasos 3 y 4 con las predicciones guardadas (sin
 entrenar) y ``rearmar`` rehace las carteras con otras reglas.
 
-El modelo es cualquiera de ``busqueda.MODELOS`` y ``--config`` cambia campos de
-su config (como las variantes de la busqueda: ``"modelo"`` e ``"historia"``
+El modelo es cualquiera de ``busqueda.MODELOS``: los de panel y los de
+produccion que predicen ticker por ticker (``lstm``, ``xgboost``, ``arima``,
+``macro``, ``contexto``, ver ``por_ticker``). ``--config`` cambia campos de su
+config (como las variantes de la busqueda: ``"modelo"`` e ``"historia"``
 tambien se aceptan dentro del JSON).
 
 Uso:
@@ -35,6 +37,7 @@ Uso:
         --snapshot simulacion/snapshot-collector --dispositivo cuda
     python -m src.simulacion.un_modelo --nombre v2-bce --desde 2025-01-02 \\
         --config '{"perdida": "bce", "n_semillas": 3}' --reentreno nunca --dispositivo cuda
+    python -m src.simulacion.un_modelo --nombre lstm-2026 --modelo lstm --desde 2026-01-02
     python -m src.simulacion.un_modelo --nombre v2-2025 --solo-analisis --comision 0.01
 """
 
@@ -58,7 +61,7 @@ from src.simulacion.entrenamiento import FRECUENCIAS_REENTRENO
 from src.simulacion.limpieza import limpiar
 from src.simulacion.mesa import Mesa
 from src.simulacion.predicciones_panel import generar
-from src.simulacion.reporte import tabla_carteras
+from src.simulacion.reporte import SIN_PDF, tabla_carteras
 from src.simulacion.reporte_un_modelo import generar as generar_reporte
 from src.simulacion.significancia import NIVEL, legible, significancia
 from src.simulacion.simulador import (
@@ -301,8 +304,11 @@ def analizar(cfg: ConfigUnModelo, crudo: Snapshot, limpio: Snapshot, out: Path) 
     carteras.to_csv(out / "carteras.csv", index=False)
     texto = resumen_md(cfg, entrenamientos, direccion, carteras)
     (out / "resumen.md").write_text(texto)
-    pdf = generar_reporte(out)
-    return texto + f"\nReporte: {pdf}\n"
+    reporte = generar_reporte(out).resolve()
+    rutas = f"\nReporte LaTeX: {reporte.with_suffix('.tex')}\n"
+    if reporte.suffix == ".pdf":
+        return texto + rutas + f"Reporte PDF:   {reporte}\n"
+    return texto + rutas + SIN_PDF + "\n"
 
 
 # --------------------------------------------------------------------------- #
@@ -341,7 +347,7 @@ def reanalizar(nombre: str, cambios: dict) -> str:
 
 def main(argv: list[str] | None = None) -> None:
     parser = argparse.ArgumentParser(
-        description="Simulacion rapida de un solo modelo de panel.",
+        description="Simulacion rapida de un solo modelo.",
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog=__doc__,
     )

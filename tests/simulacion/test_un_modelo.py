@@ -40,7 +40,7 @@ def test_config_toma_modelo_e_historia_del_json() -> None:
     )
     assert (cfg.modelo, cfg.historia, cfg.config) == ("ensamble_panel", 1500, {"a": 1})
     with pytest.raises(ValueError, match="modelo"):
-        um.ConfigUnModelo("x", DESDE, "2026-06-24", modelo="lstm")
+        um.ConfigUnModelo("x", DESDE, "2026-06-24", modelo="inexistente")
     with pytest.raises(ValueError, match="reentreno"):
         um.ConfigUnModelo("x", DESDE, "2026-06-24", reentreno="anual")
 
@@ -99,7 +99,7 @@ def test_corrida_completa(resultados, snapshot, snapshot_dir, capsys) -> None:
 
     salida = capsys.readouterr().out
     assert "## Direccion en dolares" in salida and "senal_reversion_panel" in salida
-    assert "Reporte:" in salida
+    assert "Reporte LaTeX:" in salida
     assert (out / "resumen.md").read_text() in salida
 
     with pytest.raises(SystemExit, match="ya existe"):
@@ -154,15 +154,15 @@ def test_metricas_compra_vacias(snapshot) -> None:
 
 
 def test_reporte_sin_pdflatex_o_si_falla(monkeypatch, tmp_path) -> None:
-    import src.simulacion.reporte_un_modelo as rum
+    import src.simulacion.reporte as rep
 
-    monkeypatch.setattr(rum.shutil, "which", lambda _: None)
-    assert rum.compilar(tmp_path) is None
-    monkeypatch.setattr(rum.shutil, "which", lambda _: "/usr/bin/pdflatex")
-    monkeypatch.setattr(rum.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 1}))
-    assert rum.compilar(tmp_path) is None
-    monkeypatch.setattr(rum.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0}))
-    assert rum.compilar(tmp_path) == tmp_path / "reporte.pdf"
+    monkeypatch.setattr(rep.shutil, "which", lambda _: None)
+    assert rep.compilar(tmp_path) is None
+    monkeypatch.setattr(rep.shutil, "which", lambda _: "/usr/bin/pdflatex")
+    monkeypatch.setattr(rep.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 1}))
+    assert rep.compilar(tmp_path) is None
+    monkeypatch.setattr(rep.subprocess, "run", lambda *a, **k: type("P", (), {"returncode": 0}))
+    assert rep.compilar(tmp_path) == tmp_path / "reporte.pdf"
 
 
 def test_reporte_main_de_corrida_vacia(monkeypatch, tmp_path, capsys) -> None:

@@ -1,4 +1,5 @@
-"""Reporte de una corrida: ``resumen.json``, ``reporte.md``, ``reporte.tex`` y graficos PNG.
+"""Reporte de una corrida: ``resumen.json``, ``reporte.md``, ``reporte.tex`` (y ``reporte.pdf``
+si hay ``pdflatex``) y graficos PNG.
 
 Todo sale de los ``.jsonl`` que guarda el simulador (o ``rearmar``): se puede
 regenerar las veces que haga falta sin volver a correr nada.
@@ -12,6 +13,8 @@ from __future__ import annotations
 
 import argparse
 import json
+import shutil
+import subprocess
 from pathlib import Path
 
 import numpy as np
@@ -714,6 +717,23 @@ def latex(resumen_: dict, imagenes: list[str]) -> str:
     return "\n\n".join(partes) + "\n"
 
 
+SIN_PDF = "(sin PDF: falta pdflatex o fallo la compilacion, ver reporte.log)"
+
+
+def compilar(destino: Path) -> Path | None:
+    """``reporte.pdf`` con dos pasadas de ``pdflatex``; None si no esta instalado o falla."""
+    if shutil.which("pdflatex") is None:
+        return None
+    for _ in range(2):
+        proceso = subprocess.run(
+            ["pdflatex", "-interaction=nonstopmode", "-halt-on-error", "reporte.tex"],
+            cwd=destino, capture_output=True, check=False,
+        )  # fmt: skip
+        if proceso.returncode != 0:
+            return None
+    return destino / "reporte.pdf"
+
+
 def generar(corrida: Path, snapshot: Snapshot, rearmado: str | None = None) -> Path:
     """Escribe ``resumen.json``, ``reporte.md``, ``reporte.tex`` y ``graficos/`` en la carpeta
     del reporte y la devuelve.
@@ -742,8 +762,11 @@ def main(argv: list[str] | None = None) -> None:
     args = parser.parse_args(argv)
     corrida = Path(RESULTADOS_DIR) / args.nombre
     config = json.loads((corrida / "config.json").read_text())
-    destino = generar(corrida, Snapshot.load(config["snapshot_dir"]), args.rearmado)
+    destino = generar(corrida, Snapshot.load(config["snapshot_dir"]), args.rearmado).resolve()
     print(f"Reporte en {destino}")
+    print(f"Reporte LaTeX: {destino / 'reporte.tex'}")
+    pdf = compilar(destino)
+    print(f"Reporte PDF:   {pdf}" if pdf else SIN_PDF)
 
 
 if __name__ == "__main__":
