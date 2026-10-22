@@ -20,6 +20,8 @@ from src.black_litterman.black_litterman import (
     horizonte_comun,
     obtener_aversion_al_riesgo,
     obtener_precios_actuales,
+    pesos_actuales_por_valor,
+    recomendacion_detallada,
     tasa_al_horizonte,
 )
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
@@ -665,3 +667,77 @@ def test_get_predicciones_keeps_ticker_order_when_run_in_parallel() -> None:
     ratios = {"AAA": 1.01, "BBB": 0.98, "CCC": 1.05}
     q = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
     assert [p.prediccion for p in q] == pytest.approx([0.01, -0.02, 0.05])
+
+
+# ---------------------------------------------------------------------------
+# recomendacion_detallada(): lo que devuelve /portfolio/recomendacion
+# ---------------------------------------------------------------------------
+
+
+class TestRecomendacionDetallada:
+    @staticmethod
+    def _fetch_hist(historiales):
+        def fetch_hist(ticker, days=None):
+            return historiales[ticker]
+
+        return fetch_hist
+
+    def test_detalle_trae_intermedios_por_ticker(self, usuario_con_cartera, historiales_3_tickers):
+        predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01})
+        resultado = recomendacion_detallada(
+            usuario_con_cartera,
+            predict,
+            tickers=list(historiales_3_tickers),
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
+        )
+        detalle = resultado.detalle()
+
+        assert [d["ticker"] for d in detalle] == resultado.tickers
+        assert set(detalle[0]) == {
+            "ticker", "peso_actual", "peso_recomendado", "pi", "q", "omega", "mu_bl",
+            "horizon_days",
+        }  # fmt: skip
+        por_ticker = {d["ticker"]: d for d in detalle}
+        # q sale por rueda: la vista al horizonte (sin tasa) dividida por 5.
+        assert por_ticker["GGAL"]["q"] == pytest.approx(0.02 / 5)
+        assert por_ticker["PAMP"]["q"] == 0.0
+        assert all(d["omega"] > 0 for d in detalle)
+        assert all(d["horizon_days"] == 5 for d in detalle)
+        assert sum(d["peso_recomendado"] for d in detalle) == pytest.approx(1.0, abs=1e-6)
+        assert resultado.cartera_ancla == "propia"
+        # PAMP tiene cantidad 0: no participa de la cartera real.
+        assert por_ticker["PAMP"]["peso_actual"] == 0.0
+        assert sum(d["peso_actual"] for d in detalle) == pytest.approx(1.0)
+
+    def test_mismos_pesos_que_entry(self, usuario_con_cartera, historiales_3_tickers):
+        predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01})
+        kwargs = {
+            "tickers": list(historiales_3_tickers),
+            "fetch_hist": self._fetch_hist(historiales_3_tickers),
+        }
+        tickers, pesos = entry(usuario_con_cartera, predict, **kwargs)
+        resultado = recomendacion_detallada(usuario_con_cartera, predict, **kwargs)
+
+        assert resultado.tickers == tickers
+        assert resultado.pesos == pytest.approx(pesos)
+
+    def test_informa_los_tickers_excluidos(self, usuario_con_cartera, historiales_3_tickers):
+        historiales = {**historiales_3_tickers, "ECOG": _fake_historial(rows=17)}
+        resultado = recomendacion_detallada(
+            usuario_con_cartera,
+            make_predict_function({}),
+            tickers=[*historiales_3_tickers, "ECOG"],
+            fetch_hist=self._fetch_hist(historiales),
+        )
+
+        assert "ECOG" not in resultado.tickers
+        assert resultado.tickers_excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
+
+
+def test_pesos_actuales_por_valor_ignora_tickers_fuera_del_universo() -> None:
+    usuario = Usuario(
+        perfil_riesgo=PerfilRiesgo.MODERADO,
+        tenencias=[{"ticker": "GGAL", "cantidad": 1}, {"ticker": "AAPL", "cantidad": 100}],
+    )
+    w = pesos_actuales_por_valor(usuario, ["GGAL", "YPFD"], {"GGAL": 10.0, "YPFD": 5.0})
+    assert w == pytest.approx([1.0, 0.0])

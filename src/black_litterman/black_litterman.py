@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -102,7 +103,51 @@ PANEL_LIDER_TICKERS: list[str] = [
 ]
 
 
-def entry(
+@dataclass
+class ResultadoBL:
+    """Resultado de una corrida de Black-Litterman, con los intermedios que se
+    muestran en el endpoint. pi/q/omega/mu_bl estan al horizonte de las vistas;
+    omega es la diagonal (las vistas son independientes)."""
+
+    tickers: list[str]
+    pesos: np.ndarray
+    peso_actual: np.ndarray  # participacion real del usuario por valor (0 si no tiene)
+    pi: np.ndarray
+    q: np.ndarray
+    omega: np.ndarray
+    mu_bl: np.ndarray
+    horizonte: int
+    tickers_excluidos: dict[str, str] = field(default_factory=dict)
+    cartera_ancla: str = TipoCarteraAncla.EQUAL_WEIGHT.value
+
+    def detalle(self) -> list[dict]:
+        """Una fila por ticker. pi/q/omega/mu_bl se informan por rueda
+        (divididos por el horizonte), que es el contrato del endpoint: el
+        front los multiplica por ``horizon_days`` para mostrarlos al plazo."""
+        h = float(self.horizonte)
+        return [
+            {
+                "ticker": ticker,
+                "peso_actual": float(self.peso_actual[i]),
+                "peso_recomendado": float(self.pesos[i]),
+                "pi": float(self.pi[i]) / h,
+                "q": float(self.q[i]) / h,
+                "omega": float(self.omega[i]) / h,
+                "mu_bl": float(self.mu_bl[i]) / h,
+                "horizon_days": int(self.horizonte),
+            }
+            for i, ticker in enumerate(self.tickers)
+        ]
+
+
+def entry(usuario: Usuario, predict_function, garch_model=None, *args, **kwargs):
+    """Pesos recomendados para ``usuario``: ``(tickers, pesos)``. Ver
+    ``recomendacion_detallada`` para los parametros y los intermedios."""
+    resultado = recomendacion_detallada(usuario, predict_function, garch_model, *args, **kwargs)
+    return resultado.tickers, resultado.pesos
+
+
+def recomendacion_detallada(
     usuario: Usuario,
     predict_function,
     garch_model=None,
@@ -111,14 +156,16 @@ def entry(
     fetch_hist=fetch_history,
     tasa_libre_riesgo_anual: float = 0.0,
     confianza_vistas: float = CONFIANZA_VISTAS,
-):
+) -> ResultadoBL:
     """Arma la recomendacion de cartera para ``usuario``.
 
     ``tasa_libre_riesgo_anual`` es una TNA en decimal (0.35 = 35%): se
     descuenta de las predicciones para que Q sea retorno en exceso, igual
     que Pi.
     """
-    tickers, precios_historicos, precios_actuales = get_data(tickers, fetch_hist)
+    tickers, precios_historicos, precios_actuales, tickers_excluidos = get_data_con_excluidos(
+        tickers, fetch_hist
+    )
     predicciones = get_predicciones(tickers, predict_function)
     horizonte = horizonte_comun(predicciones)
     tasa_horizonte = tasa_al_horizonte(tasa_libre_riesgo_anual, horizonte)
@@ -136,7 +183,35 @@ def entry(
         )
     omega = construir_omega(matriz_de_covarianza.matriz, TAU, confianza_vistas)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
-    return tickers, bl.predecir()
+    return ResultadoBL(
+        tickers=tickers,
+        pesos=bl.predecir(),
+        peso_actual=pesos_actuales_por_valor(usuario, tickers, precios_actuales),
+        pi=np.asarray(bl.pi, dtype=np.float64),
+        q=np.asarray(q, dtype=np.float64),
+        omega=np.diag(omega).astype(np.float64),
+        mu_bl=bl.bl_mu(),
+        horizonte=horizonte,
+        tickers_excluidos=tickers_excluidos,
+        cartera_ancla=cartera_ancla.tipo.value,
+    )
+
+
+def pesos_actuales_por_valor(
+    usuario: Usuario, tickers: list[str], precios: dict[str, float]
+) -> np.ndarray:
+    """Participacion real de cada ticker en la cartera del usuario, por valor
+    (cantidad * ultimo cierre), sobre el universo de la corrida. Es lo que el
+    usuario tiene hoy, independientemente de la cartera ancla elegida (con
+    equal_weight el ancla es 1/n pero esto sigue siendo su cartera real).
+    Todo cero si no tiene tenencias con valor en el universo.
+    """
+    cantidades = usuario.cantidades_por_ticker()
+    valores = np.array(
+        [max(cantidades.get(t, 0.0), 0.0) * precios[t] for t in tickers], dtype=np.float64
+    )
+    total = valores.sum()
+    return valores / total if total > 0 else np.zeros(len(tickers))
 
 
 class BlackLittermanPrediction:
@@ -200,6 +275,19 @@ def get_data(
     fetch_hist=fetch_history,
     min_ruedas: int = MIN_RUEDAS,
 ):
+    """Como ``get_data_con_excluidos`` pero sin los excluidos:
+    ``(tickers_validos, historiales, precios_actuales)``."""
+    tickers_validos, historiales, precios, _ = get_data_con_excluidos(
+        tickers, fetch_hist, min_ruedas
+    )
+    return tickers_validos, historiales, precios
+
+
+def get_data_con_excluidos(
+    tickers: list[str] = PANEL_LIDER_TICKERS,
+    fetch_hist=fetch_history,
+    min_ruedas: int = MIN_RUEDAS,
+):
     """Descarga los historicos del panel lider Merval (lista curada, ver
     PANEL_LIDER_TICKERS mas arriba) y arma los precios actuales.
 
@@ -212,7 +300,8 @@ def get_data(
     funcion real de src.data) para poder testear sin mockear el modulo --
     se les pasa un fake directo.
 
-    Devuelve (tickers_validos, historiales, precios_actuales).
+    Devuelve (tickers_validos, historiales, precios_actuales, tickers_excluidos),
+    con el motivo de cada excluido.
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
@@ -240,7 +329,7 @@ def get_data(
 
     tickers_validos = [t for t in tickers if t not in tickers_excluidos]
     precios_actuales = obtener_precios_actuales(historiales)
-    return tickers_validos, historiales, precios_actuales
+    return tickers_validos, historiales, precios_actuales, tickers_excluidos
 
 
 def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, float]:

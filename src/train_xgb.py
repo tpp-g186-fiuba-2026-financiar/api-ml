@@ -1,15 +1,14 @@
-"""Entrenamiento del modelo XGBoost de tendencia.
+"""Entrena el modelo XGBoost de tendencia (v2): ``python -m src.train_xgb``.
 
 Uso:
 
-    python -m src.train_xgb                       # todos los tickers disponibles en data-colector
-    python -m src.train_xgb --tickers GGAL YPFD   # subconjunto
-    python -m src.train_xgb --n-estimators 500 --max-depth 5
+    python -m src.train_xgb                       # universo medido (Yahoo / data-colector)
+    python -m src.train_xgb --tickers GGAL YPFD   # subconjunto (hacen falta los lideres)
 
-Descarga el historico de cada ticker (fuente segun ``settings.data_source``),
-entrena un unico modelo XGBoost y guarda el artefacto en
-``settings.xgb_model_path``. Usa exactamente los mismos features, target y
-tickers que el LSTM, para que las metricas sean comparables.
+Descarga el historico de cada ticker, mide fuera de muestra (reentrenos
+sucesivos sobre el ultimo 25% de las fechas), calibra los umbrales de senal y
+guarda el artefacto en ``settings.xgb_model_path`` solo si el AUC fuera de
+muestra supera ``--min-auc`` (si no, queda el artefacto vigente).
 """
 
 from __future__ import annotations
@@ -17,66 +16,52 @@ from __future__ import annotations
 import argparse
 
 from src.config import settings
-from src.data import fetch_available_tickers, fetch_history
-from src.lstm import fetch_histories
-from src.retrain_guard import force_promote, promote_if_better
+from src.context_trend import HORIZON
+from src.data import fetch_history
+from src.errors import ApiMlError
+from src.macro_trend import UNIVERSE
 from src.xgb_trend import XGBConfig, XGBTrendModel
+
+DEFAULT_MIN_AUC = 0.52
 
 
 def main() -> None:
-    parser = argparse.ArgumentParser(description="Entrena el modelo XGBoost de tendencia.")
-    parser.add_argument(
-        "--tickers", nargs="*", help="Tickers a usar (default: todos los de data-colector)."
-    )
-    parser.add_argument("--days", type=int, default=settings.history_days, help="Ruedas a usar.")
-    parser.add_argument("--window", type=int, default=XGBConfig.window)
-    parser.add_argument("--horizon", type=int, default=XGBConfig.horizon)
-    parser.add_argument("--n-estimators", type=int, default=XGBConfig.n_estimators)
-    parser.add_argument("--max-depth", type=int, default=XGBConfig.max_depth)
-    parser.add_argument("--learning-rate", type=float, default=XGBConfig.learning_rate)
+    parser = argparse.ArgumentParser(description="Entrena el modelo de tendencia XGBoost.")
+    parser.add_argument("--tickers", nargs="*", help="Tickers a usar (default: universo medido).")
+    parser.add_argument("--days", type=int, default=4000, help="Ruedas a usar.")
+    parser.add_argument("--horizon", type=int, default=HORIZON)
     parser.add_argument("--out", default=settings.xgb_model_path, help="Ruta del artefacto .pkl")
-    parser.add_argument(
-        "--force",
-        action="store_true",
-        help="Guardar aunque el candidato no supere al vigente (salta el gate de promocion).",
-    )
+    parser.add_argument("--min-auc", type=float, default=DEFAULT_MIN_AUC)
     args = parser.parse_args()
 
-    tickers = args.tickers or fetch_available_tickers()
-    print(f"Fuente de datos: {settings.data_source}")
+    tickers = args.tickers or list(UNIVERSE)
     print(f"Descargando historico de {len(tickers)} tickers ({args.days} ruedas)...")
-    histories = fetch_histories(tickers, args.days, fetch_history)
+    histories = {}
+    for symbol in tickers:
+        try:
+            histories[symbol] = fetch_history(symbol, args.days)
+            print(f"  [ok]   {symbol}: {len(histories[symbol])} ruedas")
+        except ApiMlError as exc:
+            print(f"  [skip] {symbol}: {exc}")
     if not histories:
         raise SystemExit("No se pudo descargar data de ningun ticker. Abortando.")
 
-    config = XGBConfig(
-        window=args.window,
-        horizon=args.horizon,
-        n_estimators=args.n_estimators,
-        max_depth=args.max_depth,
-        learning_rate=args.learning_rate,
-    )
-    model = XGBTrendModel(config=config)
-
-    print(f"\nEntrenando XGBoost con {len(histories)} tickers...")
+    model = XGBTrendModel(config=XGBConfig(horizon=args.horizon))
+    print(f"\nEntrenando con {len(histories)} tickers (horizonte {args.horizon} ruedas)...")
     metrics = model.fit(histories)
-    print("\nMetricas de validacion:")
+    print("\nMedicion fuera de muestra (ultimo 25% de las fechas, reentrenos sucesivos):")
     for key, value in metrics.items():
         print(f"  {key}: {value}")
+    print(f"  umbral de 'alza' (P sube >=): {model.alza_threshold:.3f}")
+    print(f"  umbral de 'baja' (P sube <=): {model.baja_threshold:.3f}")
 
-    print("\nBacktesteando el candidato (walk-forward, pooled sobre todos los tickers)...")
-    if args.force:
-        score = force_promote(model, args.out, histories, config.horizon)
-        print(f"  candidato: {score}  (--force: se guardo sin comparar)")
-    else:
-        promoted, score = promote_if_better(
-            model, args.out, XGBTrendModel.load, histories, config.horizon
+    if metrics["oos_auc"] < args.min_auc:
+        print(
+            f"\nAUC fuera de muestra {metrics['oos_auc']} < {args.min_auc}: "
+            "no se guarda, queda el artefacto vigente."
         )
-        print(f"  candidato: {score}")
-        if not promoted:
-            print("\nEl candidato no supera al vigente -- no se promueve, no se toca el artefacto.")
-            return
-
+        return
+    model.save(args.out)
     print(f"\nModelo guardado en: {args.out}")
     print(f"Version: {model.version}")
 

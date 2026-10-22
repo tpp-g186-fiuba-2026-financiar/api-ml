@@ -76,32 +76,48 @@ def build_macro_frame(raw: dict[str, pd.Series], end: pd.Timestamp | None = None
 
 
 def fetch_argentina_macro() -> pd.DataFrame:
-    """Descarga las series; falla si falta alguna de ``REQUIRED``."""
+    """Descarga las series; falla si falta alguna de ``REQUIRED``.
+
+    Corta en la primera imprescindible que falla: si el data-colector se
+    cuelga, cada serie espera ``_REQUEST_TIMEOUT`` y no tiene sentido pagar
+    las demas para terminar fallando igual.
+    """
     raw: dict[str, pd.Series] = {}
     errors: list[str] = []
     for name, (route, series, _lag) in SERIES.items():
         try:
             raw[name] = fetch_collector_series(route, series)
         except DataUnavailableError as exc:
+            if name in REQUIRED:
+                raise DataUnavailableError(
+                    f"falta la serie macro imprescindible '{name}': {exc}"
+                ) from exc
             errors.append(str(exc))
-    missing = [n for n in REQUIRED if n not in raw]
-    if missing:
-        raise DataUnavailableError(
-            f"faltan series macro imprescindibles {missing}: {'; '.join(errors)}"
-        )
     for err in errors:
         print(f"  [warn] {err}")
     return build_macro_frame(raw, end=pd.Timestamp(dt.date.today()))
 
 
 _CACHE: dict[str, pd.DataFrame] = {}
+# Ultima falla (momento, error): mientras el data-colector siga caido no se
+# vuelve a esperar el timeout en cada ticker, se reintenta cada RETRY_AFTER.
+_LAST_FAILURE: list[tuple[dt.datetime, DataUnavailableError]] = []
+RETRY_AFTER = dt.timedelta(minutes=30)
 
 
 def todays_macro_frame() -> pd.DataFrame:
     """Macro de hoy, una descarga por dia y por proceso."""
     key = dt.date.today().isoformat()
     if key not in _CACHE:
-        frame = fetch_argentina_macro()
+        now = dt.datetime.now()
+        if _LAST_FAILURE and now - _LAST_FAILURE[0][0] < RETRY_AFTER:
+            raise _LAST_FAILURE[0][1]
+        try:
+            frame = fetch_argentina_macro()
+        except DataUnavailableError as exc:
+            _LAST_FAILURE[:] = [(now, exc)]
+            raise
+        _LAST_FAILURE.clear()
         _CACHE.clear()
         _CACHE[key] = frame
     return _CACHE[key]

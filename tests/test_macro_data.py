@@ -1,5 +1,6 @@
 """Tests de las series macro del data-colector."""
 
+import datetime as dt
 from unittest.mock import Mock, patch
 
 import numpy as np
@@ -120,7 +121,7 @@ def test_fetch_argentina_macro_requires_the_main_series_but_tolerates_optional_o
         return series(list(np.linspace(100, 200, 30)))
 
     with patch("src.macro_data.fetch_collector_series", side_effect=fake_without_risk):
-        with pytest.raises(DataUnavailableError, match="imprescindibles"):
+        with pytest.raises(DataUnavailableError, match="imprescindible 'riesgo_pais'"):
             fetch_argentina_macro()
 
 
@@ -132,3 +133,34 @@ def test_todays_macro_frame_downloads_once_per_day() -> None:
         assert todays_macro_frame() is frame
     assert fetch.call_count == 1
     macro_data._CACHE.clear()
+
+
+def test_fetch_argentina_macro_stops_at_the_first_missing_required_series() -> None:
+    calls: list[str] = []
+
+    def fake(route: str, name: str) -> pd.Series:
+        calls.append(name)
+        raise DataUnavailableError("timeout")
+
+    with patch("src.macro_data.fetch_collector_series", side_effect=fake):
+        with pytest.raises(DataUnavailableError, match="imprescindible 'ccl'"):
+            fetch_argentina_macro()
+    assert calls == ["CCL"]
+
+
+def test_todays_macro_frame_remembers_failures_for_a_while(monkeypatch) -> None:
+    macro_data._CACHE.clear()
+    macro_data._LAST_FAILURE.clear()
+    with patch(
+        "src.macro_data.fetch_argentina_macro", side_effect=DataUnavailableError("caido")
+    ) as fetch:
+        for _ in range(3):
+            with pytest.raises(DataUnavailableError, match="caido"):
+                todays_macro_frame()
+        assert fetch.call_count == 1
+
+        monkeypatch.setattr(macro_data, "RETRY_AFTER", dt.timedelta(0))
+        with pytest.raises(DataUnavailableError):
+            todays_macro_frame()
+        assert fetch.call_count == 2
+    macro_data._LAST_FAILURE.clear()
