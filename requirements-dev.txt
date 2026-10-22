@@ -11,3 +11,6 @@ seaborn==0.13.2
 jupytext==1.19.5
 nbconvert==7.17.1
 ipykernel==7.3.0
+
+# Busqueda de hiperparametros del Transformer V2 (src/simulacion/optuna_v2.py)
+optuna==5.0.0

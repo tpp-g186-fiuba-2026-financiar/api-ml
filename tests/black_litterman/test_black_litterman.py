@@ -3,18 +3,26 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 import pytest
-from conftest import make_predict_function
+from conftest import fake_ohlcv, make_predict_function
 
 from src.black_litterman.black_litterman import (
+    AVERSION_AL_RIESGO,
+    DELTA_MERCADO,
     MIN_RUEDAS,
+    PESO_MAXIMO_POR_PERFIL,
+    TAU,
     BlackLittermanPrediction,
     Prediccion,
-    construir_omega_tradicional,
+    construir_omega,
     entry,
     get_data,
     get_predicciones,
+    horizonte_comun,
+    obtener_aversion_al_riesgo,
     obtener_precios_actuales,
     pesos_actuales_por_valor,
+    recomendacion_detallada,
+    tasa_al_horizonte,
 )
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
@@ -39,9 +47,7 @@ class TestPrediccion:
             model_version="test",
         )
         p = Prediccion(t)
-        # Retorno log diario: el 5% a 5 ruedas se reparte en el horizonte.
-        assert p.prediccion == pytest.approx(np.log(1.05) / 5)
-        assert p.horizon_days == 5
+        assert p.prediccion == pytest.approx(0.05)
 
     def test_retorno_negativo(self):
         t = TrendResponse(
@@ -55,25 +61,7 @@ class TestPrediccion:
             model_version="test",
         )
         p = Prediccion(t)
-        assert p.prediccion == pytest.approx(np.log(0.95) / 5)
-
-    def test_mismo_retorno_a_mayor_horizonte_es_menor_vista_diaria(self):
-        # Regresion de unidades: Q tiene que ser diario como Sigma/Pi/Omega,
-        # no el retorno al horizonte (5-20 ruedas) del modelo.
-        def trend(horizon):
-            return TrendResponse(
-                symbol="GGAL",
-                signal="alza",
-                horizon_days=horizon,
-                last_close=100.0,
-                predicted_close=110.0,
-                condition="neutral",
-                as_of="2025-01-01",
-                model_version="test",
-            )
-
-        corto, largo = Prediccion(trend(5)), Prediccion(trend(20))
-        assert corto.prediccion == pytest.approx(4 * largo.prediccion)
+        assert p.prediccion == pytest.approx(-0.05)
 
     def test_guarda_ticker(self):
         t = TrendResponse(
@@ -88,23 +76,36 @@ class TestPrediccion:
         )
         p = Prediccion(t)
         assert p.ticker == "YPFD"
+        assert p.horizonte == 5
 
 
 class TestGetPredicciones:
-    def test_arma_q_en_el_mismo_orden_que_tickers(self):
+    def test_mantiene_el_orden_de_tickers(self):
         tickers = ["GGAL", "YPFD", "PAMP"]
         predict = make_predict_function({"GGAL": 0.05, "YPFD": -0.01, "PAMP": 0.0})
         predicciones = get_predicciones(tickers, predict)
         assert [p.ticker for p in predicciones] == tickers
-        assert [p.prediccion for p in predicciones] == pytest.approx(
-            [np.log(1.05) / 5, np.log(0.99) / 5, 0.0]
-        )
+        assert [p.prediccion for p in predicciones] == pytest.approx([0.05, -0.01, 0.0])
 
-    def test_devuelve_predicciones_con_horizonte(self):
-        predicciones = get_predicciones(["GGAL"], make_predict_function({"GGAL": 0.02}))
-        assert all(isinstance(p, Prediccion) for p in predicciones)
-        assert predicciones[0].horizon_days == 5
-        assert isinstance(predicciones[0].prediccion, float)
+
+class TestHorizonteComun:
+    def test_devuelve_el_horizonte_compartido(self):
+        predicciones = get_predicciones(["GGAL", "YPFD"], make_predict_function({}))
+        assert horizonte_comun(predicciones) == 5
+
+    def test_horizontes_distintos_lanza_error(self):
+        predicciones = get_predicciones(["GGAL", "YPFD"], make_predict_function({}))
+        predicciones[1].horizonte = 10
+        with pytest.raises(ValueError, match="horizontes distintos"):
+            horizonte_comun(predicciones)
+
+
+class TestTasaAlHorizonte:
+    def test_tna_a_5_ruedas(self):
+        assert tasa_al_horizonte(0.252, 5) == pytest.approx(0.005)
+
+    def test_tasa_cero(self):
+        assert tasa_al_horizonte(0.0, 5) == 0.0
 
 
 # --------------------------------------------------------------------------- #
@@ -144,26 +145,50 @@ class TestObtenerPreciosActuales:
 
 
 # --------------------------------------------------------------------------- #
-# construir_omega_tradicional
+# construir_omega
 # --------------------------------------------------------------------------- #
-class TestConstruirOmegaTradicional:
+class TestConstruirOmega:
     def test_omega_es_diagonal(self):
         sigma = np.array([[4e-4, 1e-5, 0.0], [1e-5, 5e-4, 0.0], [0.0, 0.0, 3e-4]])
-        omega = construir_omega_tradicional(sigma, tau=0.05)
+        omega = construir_omega(sigma, tau=0.05, confianza=0.3)
         off_diagonal = omega - np.diag(np.diag(omega))
         assert np.all(off_diagonal == 0)
 
-    def test_omega_ii_es_tau_por_sigma_ii(self):
+    def test_confianza_media_es_el_omega_clasico(self):
+        # c = 0.5 => Omega_ii = tau * Sigma_ii (mezcla mitad prior, mitad vista).
         sigma = np.diag([4e-4, 5e-4, 3e-4])
-        tau = 0.05
-        omega = construir_omega_tradicional(sigma, tau)
-        assert np.diag(omega) == pytest.approx(tau * np.diag(sigma))
+        omega = construir_omega(sigma, tau=0.05, confianza=0.5)
+        assert np.diag(omega) == pytest.approx(0.05 * np.diag(sigma))
 
-    def test_mayor_tau_da_mayor_incertidumbre(self):
+    def test_menos_confianza_da_mas_incertidumbre(self):
         sigma = np.diag([4e-4, 5e-4])
-        omega_bajo = construir_omega_tradicional(sigma, tau=0.01)
-        omega_alto = construir_omega_tradicional(sigma, tau=0.1)
-        assert np.all(np.diag(omega_alto) > np.diag(omega_bajo))
+        omega_baja = construir_omega(sigma, tau=0.05, confianza=0.05)
+        omega_alta = construir_omega(sigma, tau=0.05, confianza=0.8)
+        assert np.all(np.diag(omega_baja) > np.diag(omega_alta))
+
+    def test_acepta_una_confianza_por_ticker(self):
+        sigma = np.diag([4e-4, 4e-4])
+        omega = construir_omega(sigma, tau=0.05, confianza=np.array([0.5, 0.2]))
+        assert omega[0, 0] == pytest.approx(0.05 * 4e-4)
+        assert omega[1, 1] == pytest.approx(0.05 * 4e-4 * 4)
+
+    @pytest.mark.parametrize("confianza", [0.0, 1.0, -0.1, 1.5])
+    def test_confianza_fuera_de_rango_lanza_error(self, confianza):
+        with pytest.raises(ValueError, match="confianza"):
+            construir_omega(np.diag([4e-4]), tau=0.05, confianza=confianza)
+
+    def test_mueve_el_posterior_una_fraccion_c_hacia_la_vista(
+        self, usuario_sin_cartera, historiales_3_tickers, precios_3_tickers
+    ):
+        # Con un solo activo (sin correlaciones que mezclen vistas) el
+        # retorno posterior es exactamente Pi + c * (Q - Pi).
+        historiales = {"GGAL": historiales_3_tickers["GGAL"]}
+        matriz = MatrizDeCovarianza(["GGAL"], historiales, horizonte=5)
+        ancla = CarteraAncla(usuario_sin_cartera, ["GGAL"], precios_3_tickers)
+        c = 0.2
+        omega = construir_omega(matriz.matriz, TAU, c)
+        bl = BlackLittermanPrediction(usuario_sin_cartera, matriz, ancla, [0.04], omega)
+        assert bl.bl_mu()[0] == pytest.approx(bl.pi[0] + c * (0.04 - bl.pi[0]))
 
 
 # --------------------------------------------------------------------------- #
@@ -201,9 +226,8 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_completos[ticker]
 
         tickers = [*historiales_3_tickers.keys(), "ECOG"]
-        tickers_validos, historiales, precios, excluidos = get_data(tickers, fetch_hist)
+        tickers_validos, historiales, precios = get_data(tickers, fetch_hist)
 
-        assert excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
         assert "ECOG" not in tickers_validos
         assert "ECOG" not in historiales
         assert "ECOG" not in precios
@@ -214,10 +238,9 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_3_tickers[ticker]
 
         tickers = list(historiales_3_tickers.keys())
-        tickers_validos, _, _, excluidos = get_data(tickers, fetch_hist)
+        tickers_validos, _, _ = get_data(tickers, fetch_hist)
 
         assert set(tickers_validos) == set(historiales_3_tickers.keys())
-        assert excluidos == {}
 
     def test_respeta_min_ruedas_pasado_por_parametro(self, historiales_3_tickers):
         # Con un min_ruedas mas laxo que el default, un historial que antes
@@ -231,7 +254,7 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_completos[ticker]
 
         tickers = [*historiales_3_tickers.keys(), "ECOG"]
-        tickers_validos, _, _, _ = get_data(tickers, fetch_hist, min_ruedas=10)
+        tickers_validos, _, _ = get_data(tickers, fetch_hist, min_ruedas=10)
 
         assert "ECOG" in tickers_validos
 
@@ -259,75 +282,74 @@ class TestGetDataFiltraPorMinimoDeRuedas:
 def bl_prediction(usuario_con_cartera, historiales_3_tickers, precios_3_tickers):
     tickers = list(historiales_3_tickers.keys())
     cartera_ancla = CarteraAncla(usuario_con_cartera, tickers, precios_3_tickers)
-    matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
+    matriz = MatrizDeCovarianza(tickers, historiales_3_tickers, horizonte=5)
     q = [0.02, -0.01, 0.0]
-    omega = construir_omega_tradicional(matriz.matriz, tau=0.05)
+    omega = construir_omega(matriz.matriz, TAU, 0.3)
     return BlackLittermanPrediction(usuario_con_cartera, matriz, cartera_ancla, q, omega)
 
 
-class TestObtenerAlfa:
-    @pytest.mark.parametrize(
-        "perfil,esperado",
-        [
-            (PerfilRiesgo.CONSERVADOR, 0.75),
-            (PerfilRiesgo.MODERADO, 0.5),
-            (PerfilRiesgo.ARRIESGADO, 0.25),
-        ],
-    )
-    def test_mapeo_de_perfil(self, perfil, esperado, historiales_3_tickers, precios_3_tickers):
+class TestPerfilDeRiesgo:
+    @pytest.mark.parametrize("perfil", list(PerfilRiesgo))
+    def test_usa_aversion_y_techo_del_perfil(
+        self, perfil, historiales_3_tickers, precios_3_tickers
+    ):
         usuario = Usuario(perfil_riesgo=perfil, tenencias=[{"ticker": "GGAL", "cantidad": 1}])
         tickers = list(historiales_3_tickers.keys())
         cartera_ancla = CarteraAncla(usuario, tickers, precios_3_tickers)
         matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
-        omega = construir_omega_tradicional(matriz.matriz, tau=0.05)
+        omega = construir_omega(matriz.matriz, TAU, 0.3)
         bl = BlackLittermanPrediction(usuario, matriz, cartera_ancla, [0.0, 0.0, 0.0], omega)
-        assert bl.perfil_de_riesgo == esperado
+        assert bl.aversion_al_riesgo == AVERSION_AL_RIESGO[perfil]
+        assert bl.peso_maximo == PESO_MAXIMO_POR_PERFIL[perfil]
 
-    def test_orden_correcto_conservador_mayor_que_arriesgado(self):
-        # Regresion conceptual: conservador tiene que pesar MAS (se pega mas
-        # al equilibrio), no menos, que arriesgado.
-        from src.black_litterman.black_litterman import (
-            ALFA_ARRIESGADO,
-            ALFA_CONSERVADOR,
-            ALFA_MODERADO,
+    def test_conservador_mas_averso_y_con_menos_techo_que_arriesgado(self):
+        assert (
+            AVERSION_AL_RIESGO[PerfilRiesgo.CONSERVADOR]
+            > AVERSION_AL_RIESGO[PerfilRiesgo.MODERADO]
+            > AVERSION_AL_RIESGO[PerfilRiesgo.ARRIESGADO]
+        )
+        assert (
+            PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.CONSERVADOR]
+            < PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.MODERADO]
+            < PESO_MAXIMO_POR_PERFIL[PerfilRiesgo.ARRIESGADO]
         )
 
-        assert ALFA_CONSERVADOR > ALFA_MODERADO > ALFA_ARRIESGADO
-
-
-class TestInvTauSigmaCache:
-    def test_segundo_llamado_no_explota(self, bl_prediction):
-        # Regresion del bug "== None" contra un ndarray ya calculado
-        # (ValueError: the truth value of an array...).
-        primero = bl_prediction._inv_tau_sigma()
-        segundo = bl_prediction._inv_tau_sigma()
-        assert primero is segundo  # mismo objeto cacheado, no recalculado
-
-    def test_valor_correcto(self, bl_prediction):
-        esperado = np.linalg.inv(bl_prediction.tau * bl_prediction.matriz_de_covarianza.matriz)
-        assert bl_prediction._inv_tau_sigma() == pytest.approx(esperado)
-
-    def test_bl_mu_no_explota_al_llamar_dos_veces_internamente(self, bl_prediction):
-        # bl_mu() llama a _inv_tau_sigma() mas de una vez -- si el cacheo
-        # estuviera roto, esto es justamente lo que explotaba antes.
-        mu = bl_prediction.bl_mu()
-        assert mu.shape == (3,)
-        assert not np.isnan(mu).any()
+    def test_perfil_desconocido_lanza_error(self):
+        with pytest.raises(ValueError, match="perfil de riesgo desconocido"):
+            obtener_aversion_al_riesgo("inexistente")
 
 
 class TestGetPi:
-    def test_pi_es_delta_por_sigma_por_w_ref(self, bl_prediction):
-        esperado = bl_prediction.perfil_de_riesgo * np.dot(
-            bl_prediction.matriz_de_covarianza.matriz, bl_prediction.cartera_ancla.vector
+    def test_pi_es_delta_mercado_por_sigma_por_w_ancla(self, bl_prediction):
+        esperado = DELTA_MERCADO * (
+            bl_prediction.matriz_de_covarianza.matriz @ bl_prediction.cartera_ancla.vector
         )
         assert bl_prediction.pi == pytest.approx(esperado)
 
-    def test_pi_reproduce_w_ref_si_omega_es_infinito(
+    def test_pi_no_depende_del_perfil_del_usuario(self, historiales_3_tickers, precios_3_tickers):
+        # El equilibrio es del mercado: el perfil solo entra en el optimizador.
+        tickers = list(historiales_3_tickers.keys())
+        matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
+        omega = construir_omega(matriz.matriz, TAU, 0.3)
+        pis = []
+        for perfil in PerfilRiesgo:
+            usuario = Usuario(perfil_riesgo=perfil, tenencias=[{"ticker": "GGAL", "cantidad": 1}])
+            ancla = CarteraAncla(usuario, tickers, precios_3_tickers)
+            pis.append(BlackLittermanPrediction(usuario, matriz, ancla, [0.0] * 3, omega).pi)
+        assert pis[0] == pytest.approx(pis[1])
+        assert pis[0] == pytest.approx(pis[2])
+
+
+class TestBlMu:
+    def test_vistas_iguales_al_prior_devuelven_el_prior(self, bl_prediction):
+        # Si las vistas coinciden con el equilibrio no hay nada que mover,
+        # cualquiera sea Omega.
+        bl_prediction.q = bl_prediction.pi.copy()
+        assert bl_prediction.bl_mu() == pytest.approx(bl_prediction.pi)
+
+    def test_sin_confianza_en_las_vistas_queda_en_el_prior(
         self, usuario_con_cartera, historiales_3_tickers, precios_3_tickers
     ):
-        # Chequeo de sanidad clasico de Black-Litterman: si las vistas no
-        # tienen ninguna confianza (Omega enorme), el resultado optimo
-        # deberia reproducir la cartera de referencia.
         tickers = list(historiales_3_tickers.keys())
         cartera_ancla = CarteraAncla(usuario_con_cartera, tickers, precios_3_tickers)
         matriz = MatrizDeCovarianza(tickers, historiales_3_tickers)
@@ -335,8 +357,15 @@ class TestGetPi:
         bl = BlackLittermanPrediction(
             usuario_con_cartera, matriz, cartera_ancla, [0.5, 0.5, 0.5], omega_gigante
         )
-        mu_bl = bl.bl_mu()
-        assert mu_bl == pytest.approx(bl.pi, abs=1e-6)
+        assert bl.bl_mu() == pytest.approx(bl.pi, abs=1e-6)
+
+    def test_coincide_con_la_formula_cerrada(self, bl_prediction):
+        tau_sigma_inv = np.linalg.inv(bl_prediction.tau * bl_prediction.sigma)
+        omega_inv = np.linalg.inv(bl_prediction.omega)
+        esperado = np.linalg.inv(tau_sigma_inv + omega_inv) @ (
+            tau_sigma_inv @ bl_prediction.pi + omega_inv @ bl_prediction.q
+        )
+        assert bl_prediction.bl_mu() == pytest.approx(esperado)
 
 
 class TestBlSigma:
@@ -376,8 +405,9 @@ class TestEntryEndToEnd:
         tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01, "PAMP": 0.0})
 
-        resultado = entry(usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
-        tickers, pesos = resultado.tickers, resultado.pesos
+        tickers, pesos = entry(
+            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
+        )
 
         assert set(tickers) == set(historiales_3_tickers.keys())
         assert len(pesos) == len(tickers)
@@ -396,11 +426,12 @@ class TestEntryEndToEnd:
         tickers_in = [*historiales_3_tickers.keys(), "ECOG"]
         predict = make_predict_function({})  # todas las vistas neutras (0%)
 
-        resultado = entry(usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
+        tickers, pesos = entry(
+            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
+        )
 
-        assert "ECOG" not in resultado.tickers
-        assert len(resultado.pesos) == len(resultado.tickers)
-        assert resultado.tickers_excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
+        assert "ECOG" not in tickers
+        assert len(pesos) == len(tickers)
 
     def test_usuario_sin_cartera_no_explota(self, usuario_sin_cartera, historiales_3_tickers):
         # Con la cartera ancla cayendo a EQUAL_WEIGHT por default, un
@@ -410,10 +441,10 @@ class TestEntryEndToEnd:
         tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.03})
 
-        resultado = entry(usuario_sin_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
-        assert resultado.pesos.sum() == pytest.approx(1.0, abs=1e-6)
-        assert resultado.cartera_ancla == "equal_weight"
-        assert np.all(resultado.peso_actual == 0.0)
+        tickers, pesos = entry(
+            usuario_sin_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
+        )
+        assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
 
     def test_tipo_cartera_ancla_explicito_se_respeta(
         self, usuario_con_cartera, historiales_3_tickers
@@ -424,18 +455,14 @@ class TestEntryEndToEnd:
 
         # Fuerzo EQUAL_WEIGHT aunque el usuario tenga cartera propia -- no
         # deberia fallar ni ignorar el parametro.
-        resultado = entry(
+        tickers, pesos = entry(
             usuario_con_cartera,
             predict,
             tipo_cartera_ancla=TipoCarteraAncla.EQUAL_WEIGHT,
             tickers=tickers_in,
             fetch_hist=fetch_hist,
         )
-        assert resultado.pesos.sum() == pytest.approx(1.0, abs=1e-6)
-        assert resultado.cartera_ancla == "equal_weight"
-        # peso_actual es la cartera real por valor, no el ancla 1/n.
-        assert not np.allclose(resultado.peso_actual, 1 / 3)
-        assert resultado.peso_actual.sum() == pytest.approx(1.0)
+        assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
 
     def test_con_garch_model_no_explota_y_cambia_el_resultado(
         self, usuario_con_cartera, historiales_3_tickers
@@ -451,9 +478,9 @@ class TestEntryEndToEnd:
         variancias_garch = {"GGAL": 0.05, "YPFD": 1e-6, "PAMP": 0.05}
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
+            def forecast_variance_horizonte(self, df, horizonte):
                 # identificamos el ticker por el precio base (unico por ticker
-                # en la fixture), ya que forecast_daily_variance solo recibe el df
+                # en la fixture), ya que el forecast solo recibe el df
                 ultimo_close = float(df["close"].iloc[0])
                 if ultimo_close == pytest.approx(100.0, abs=5):
                     return variancias_garch["GGAL"]
@@ -461,16 +488,16 @@ class TestEntryEndToEnd:
                     return variancias_garch["YPFD"]
                 return variancias_garch["PAMP"]
 
-        pesos_sin_garch = entry(
+        _, pesos_sin_garch = entry(
             usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
-        ).pesos
-        pesos_con_garch = entry(
+        )
+        _, pesos_con_garch = entry(
             usuario_con_cartera,
             predict,
             garch_model=FakeGarch(),
             tickers=tickers_in,
             fetch_hist=fetch_hist,
-        ).pesos
+        )
 
         assert pesos_con_garch.sum() == pytest.approx(1.0, abs=1e-6)
         assert not np.allclose(pesos_sin_garch, pesos_con_garch)
@@ -488,7 +515,7 @@ class TestEntryEndToEnd:
         capturada = {}
 
         class FakeGarch:
-            def forecast_daily_variance(self, df):
+            def forecast_variance_horizonte(self, df, horizonte):
                 return 0.0123
 
         import src.black_litterman.black_litterman as bl_mod
@@ -528,12 +555,78 @@ class TestEntryEndToEnd:
                 perfil_riesgo=perfil,
                 tenencias=[{"ticker": "GGAL", "cantidad": 10}, {"ticker": "YPFD", "cantidad": 10}],
             )
-            pesos = entry(usuario, predict, tickers=tickers_in, fetch_hist=fetch_hist).pesos
+            _, pesos = entry(usuario, predict, tickers=tickers_in, fetch_hist=fetch_hist)
             resultados[perfil] = pesos
 
         concentracion_conservador = np.max(resultados[PerfilRiesgo.CONSERVADOR])
         concentracion_arriesgado = np.max(resultados[PerfilRiesgo.ARRIESGADO])
         assert concentracion_conservador <= concentracion_arriesgado + 1e-6
+
+    def test_vista_fuerte_gana_peso_sobre_la_ancla(self, usuario_sin_cartera):
+        # Regresion: con el delta del optimizador inflado (x1000) las vistas
+        # no movian nada y salia la cartera de minima varianza. Con un
+        # universo de 6 acciones y ancla equal weight, la que tiene una vista
+        # muy positiva tiene que terminar con mas que su 1/6.
+        historiales = {f"T{i}": fake_ohlcv(seed=10 + i, n=300) for i in range(6)}
+        tickers = list(historiales)
+        predict = make_predict_function({"T0": 0.10})
+
+        _, pesos = entry(
+            Usuario(perfil_riesgo=PerfilRiesgo.ARRIESGADO, tenencias=[]),
+            predict,
+            tickers=tickers,
+            fetch_hist=self._fetch_hist(historiales),
+        )
+        assert pesos[0] > 1 / 6 + 0.02
+
+    def test_descuenta_la_tasa_libre_de_riesgo_de_las_vistas(
+        self, usuario_con_cartera, historiales_3_tickers, monkeypatch
+    ):
+        import src.black_litterman.black_litterman as bl_mod
+
+        capturado = {}
+        original = bl_mod.BlackLittermanPrediction
+
+        class SpyBlackLitterman(original):
+            def __init__(self, usuario, matriz, ancla, q, omega, **kwargs):
+                capturado["q"] = list(q)
+                super().__init__(usuario, matriz, ancla, q, omega, **kwargs)
+
+        monkeypatch.setattr(bl_mod, "BlackLittermanPrediction", SpyBlackLitterman)
+        tickers_in = list(historiales_3_tickers.keys())
+        entry(
+            usuario_con_cartera,
+            make_predict_function({"GGAL": 0.02, "YPFD": -0.01, "PAMP": 0.0}),
+            tickers=tickers_in,
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
+            tasa_libre_riesgo_anual=0.252,  # 0.5% a 5 ruedas
+        )
+        assert capturado["q"] == pytest.approx([0.015, -0.015, -0.005])
+
+    def test_sigma_queda_al_horizonte_de_las_vistas(
+        self, usuario_con_cartera, historiales_3_tickers, monkeypatch
+    ):
+        import src.black_litterman.black_litterman as bl_mod
+
+        capturado = {}
+        original = bl_mod.BlackLittermanPrediction
+
+        class SpyBlackLitterman(original):
+            def __init__(self, *args, **kwargs):
+                super().__init__(*args, **kwargs)
+                capturado["matriz"] = self.matriz_de_covarianza
+
+        monkeypatch.setattr(bl_mod, "BlackLittermanPrediction", SpyBlackLitterman)
+        tickers_in = list(historiales_3_tickers.keys())
+        entry(
+            usuario_con_cartera,
+            make_predict_function({}),
+            tickers=tickers_in,
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
+        )
+        diaria = MatrizDeCovarianza(tickers_in, historiales_3_tickers).matriz
+        assert capturado["matriz"].horizonte == 5
+        assert capturado["matriz"].matriz == pytest.approx(5 * diaria)
 
 
 def test_get_data_downloads_in_parallel_but_keeps_ticker_order() -> None:
@@ -552,7 +645,7 @@ def test_get_data_downloads_in_parallel_but_keeps_ticker_order() -> None:
 
     tickers = ["AAA", "BBB", "CCC", "DDD"]
     started = time.perf_counter()
-    validos, historiales, _, _ = bl.get_data(tickers, slow_fetch)
+    validos, historiales, _ = bl.get_data(tickers, slow_fetch)
     elapsed = time.perf_counter() - started
 
     assert validos == tickers
@@ -567,26 +660,35 @@ def test_get_predicciones_keeps_ticker_order_when_run_in_parallel() -> None:
     class FakeTrend:
         def __init__(self, symbol, ratio):
             self.symbol = symbol
-            self.horizon_days = 1
             self.last_close = 100.0
             self.predicted_close = 100.0 * ratio
+            self.horizon_days = 5
 
     ratios = {"AAA": 1.01, "BBB": 0.98, "CCC": 1.05}
-    predicciones = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
-    assert [p.prediccion for p in predicciones] == pytest.approx(np.log(list(ratios.values())))
+    q = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
+    assert [p.prediccion for p in q] == pytest.approx([0.01, -0.02, 0.05])
 
 
-class TestResultadoBL:
-    def test_detalle_trae_intermedios_por_ticker(self, usuario_con_cartera, historiales_3_tickers):
+# ---------------------------------------------------------------------------
+# recomendacion_detallada(): lo que devuelve /portfolio/recomendacion
+# ---------------------------------------------------------------------------
+
+
+class TestRecomendacionDetallada:
+    @staticmethod
+    def _fetch_hist(historiales):
         def fetch_hist(ticker, days=None):
-            return historiales_3_tickers[ticker]
+            return historiales[ticker]
 
+        return fetch_hist
+
+    def test_detalle_trae_intermedios_por_ticker(self, usuario_con_cartera, historiales_3_tickers):
         predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01})
-        resultado = entry(
+        resultado = recomendacion_detallada(
             usuario_con_cartera,
             predict,
             tickers=list(historiales_3_tickers),
-            fetch_hist=fetch_hist,
+            fetch_hist=self._fetch_hist(historiales_3_tickers),
         )
         detalle = resultado.detalle()
 
@@ -596,7 +698,8 @@ class TestResultadoBL:
             "horizon_days",
         }  # fmt: skip
         por_ticker = {d["ticker"]: d for d in detalle}
-        assert por_ticker["GGAL"]["q"] == pytest.approx(np.log(1.02) / 5)
+        # q sale por rueda: la vista al horizonte (sin tasa) dividida por 5.
+        assert por_ticker["GGAL"]["q"] == pytest.approx(0.02 / 5)
         assert por_ticker["PAMP"]["q"] == 0.0
         assert all(d["omega"] > 0 for d in detalle)
         assert all(d["horizon_days"] == 5 for d in detalle)
@@ -606,8 +709,29 @@ class TestResultadoBL:
         assert por_ticker["PAMP"]["peso_actual"] == 0.0
         assert sum(d["peso_actual"] for d in detalle) == pytest.approx(1.0)
 
-    def test_bl_mu_se_cachea(self, bl_prediction):
-        assert bl_prediction.bl_mu() is bl_prediction.bl_mu()
+    def test_mismos_pesos_que_entry(self, usuario_con_cartera, historiales_3_tickers):
+        predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01})
+        kwargs = {
+            "tickers": list(historiales_3_tickers),
+            "fetch_hist": self._fetch_hist(historiales_3_tickers),
+        }
+        tickers, pesos = entry(usuario_con_cartera, predict, **kwargs)
+        resultado = recomendacion_detallada(usuario_con_cartera, predict, **kwargs)
+
+        assert resultado.tickers == tickers
+        assert resultado.pesos == pytest.approx(pesos)
+
+    def test_informa_los_tickers_excluidos(self, usuario_con_cartera, historiales_3_tickers):
+        historiales = {**historiales_3_tickers, "ECOG": _fake_historial(rows=17)}
+        resultado = recomendacion_detallada(
+            usuario_con_cartera,
+            make_predict_function({}),
+            tickers=[*historiales_3_tickers, "ECOG"],
+            fetch_hist=self._fetch_hist(historiales),
+        )
+
+        assert "ECOG" not in resultado.tickers
+        assert resultado.tickers_excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
 
 
 def test_pesos_actuales_por_valor_ignora_tickers_fuera_del_universo() -> None:

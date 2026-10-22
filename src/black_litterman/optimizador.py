@@ -20,11 +20,11 @@ def optimizar_pesos(
     Maximiza mu.w - (delta/2) * w'.Sigma.w (equivalente a minimizar su
     negativo, que es lo que hace scipy.optimize.minimize).
 
-    peso_maximo es una salvaguarda independiente de que delta este bien
-    calibrado: aunque el objetivo este bien escalado, activos muy
-    correlacionados entre si (Sigma mal condicionada) pueden seguir
-    empujando a una solucion muy concentrada. None (default) = sin techo,
-    solo el limite implicito de 1.0 por sum(w) == 1.
+    mu, sigma y delta tienen que estar en el mismo horizonte (ej. 5 ruedas)
+    para que el termino de retorno y el de riesgo sean comparables.
+
+    peso_maximo limita la concentracion por activo. None (default) = sin
+    techo, solo el limite implicito de 1.0 por sum(w) == 1.
     """
     n = len(mu)
 
@@ -48,13 +48,22 @@ def optimizar_pesos(
 
     w0 = np.full(n, 1.0 / n)  # punto inicial: pesos iguales
 
+    # Con retornos y varianzas a pocas ruedas el objetivo vale ~1e-4, por
+    # debajo de la tolerancia por defecto de SLSQP (ftol=1e-6): el solver
+    # cortaba en la primera iteracion y devolvia w0 (pesos iguales) sin
+    # optimizar nada. Se divide el objetivo por la varianza media para
+    # llevarlo a orden 1 (no cambia el optimo) y se pide una tolerancia
+    # mas fina.
+    escala = max(float(np.mean(np.diag(sigma))), 1e-12)
+
     resultado = minimize(
-        objetivo,
+        lambda w: objetivo(w) / escala,
         w0,
-        jac=objetivo_grad,
+        jac=lambda w: objetivo_grad(w) / escala,
         method="SLSQP",
         bounds=limites,
         constraints=restricciones,
+        options={"ftol": 1e-10, "maxiter": 500},
     )
 
     if not resultado.success:

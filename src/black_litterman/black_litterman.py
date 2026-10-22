@@ -5,7 +5,6 @@ from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
-from numpy.linalg import inv
 
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
@@ -14,51 +13,49 @@ from src.config import settings
 from src.data import fetch_history
 from src.schemas import PerfilRiesgo, TrendResponse, Usuario
 
+# Black-Litterman con vistas absolutas (P = identidad): una vista por ticker,
+# el retorno que predice el modelo de tendencia a `horizon_days` ruedas.
+# Todo (Q, Sigma, Pi, Omega, tasa libre de riesgo) se lleva a ese mismo
+# horizonte para que las cuentas sean comparables.
+
+# Incertidumbre del prior: Cov(Pi) = tau * Sigma. Valor habitual en la
+# literatura (He-Litterman).
 TAU = 0.05
-ALFA_CONSERVADOR = 0.75
-ALFA_MODERADO = 0.5
-ALFA_ARRIESGADO = 0.25
 
-# Unidades: TODO en Black-Litterman esta en retornos DIARIOS. Sigma sale de
-# retornos diarios (y GARCH da la varianza a un dia), Pi = delta * Sigma @ w
-# hereda esa escala y Omega = tau * Sigma_ii tambien. Por eso Q tiene que ser
-# diario: cada modelo predice el retorno a su propio horizonte (5 ruedas LSTM,
-# 20 XGBoost/Contexto), y se pasa a diario como log(pc/lc) / horizon_days
-# (ver Prediccion). Antes Q era pc/lc - 1 al horizonte, 5-20 veces mas grande
-# que Pi y Omega: las vistas pesaban de mas y el optimizador caia en esquinas.
-#
-# ALFA_* (0.25-0.75) es el delta de mercado en get_pi(). En optimizar_pesos()
-# (max mu.w - (delta/2) * w'.Sigma.w) un delta de ese orden igual deja el
-# termino de riesgo muy chico frente al de retorno: las vistas de los modelos
-# (+-3-8% en 5-20 ruedas, o sea ~0.1-1.5% diario) son mucho mas fuertes que
-# cualquier prima de equilibrio, y con delta < 10 la cartera se va a 1-2
-# tickers. ESCALA_DELTA_OPTIMIZADOR reescala ALFA_* solo para el optimizador.
-#
-# Calibracion (2026-10-20, ya con Q diario): universo sintetico tipo panel
-# lider (20 tickers, vol diaria 2-3.5%, correlacion 0.45 y 0.75 entre bancos),
-# 30 escenarios de vistas (60% neutrales, resto +-3-8% a 5 o 20 ruedas), sin
-# techo por ticker:
-#
-#   escala | riesgo/retorno en el optimo     | corr(pesos, vistas)
-#          | arriesgado     conservador      | arriesgado  conservador
-#   10     | 0.23           0.63             | 0.60        0.62
-#   50     | 0.99           3.6              | 0.58        0.39
-#   200    | 6.2            15.6             | 0.32        0.14
-#   1000   | 26             84               | 0.10        0.05
-#
-# Con 50 los dos terminos del objetivo quedan del mismo orden (1x-4x segun
-# perfil): los pesos siguen a las vistas pero el riesgo diversifica, y los
-# perfiles se diferencian. El 1000 anterior compensaba el Q inflado por el
-# horizonte (equivalia a ~50-200 en escala diaria); con Q diario ahogaria las
-# vistas. PESO_MAXIMO_POR_TICKER sigue siendo la salvaguarda contra esquinas.
-ESCALA_DELTA_OPTIMIZADOR = 50.0
+# Aversion al riesgo del MERCADO, para el prior Pi = delta * Sigma * w_ancla
+# (equilibrio implicito). No depende del usuario: es la que hace que la
+# cartera ancla sea optima, y es adimensional (no cambia con el horizonte).
+# 2.5 es el valor de referencia de la literatura (prima de riesgo /
+# varianza del mercado).
+DELTA_MERCADO = 2.5
 
-# Techo de concentracion por ticker en la cartera final: ningun activo
-# puede pesar mas que esto, mas alla de que delta este bien calibrado.
-# Esta es la salvaguarda que efectivamente evita la solucion de esquina
-# aunque ESCALA_DELTA_OPTIMIZADOR este mal calibrada -- ver comentario de
-# arriba.
-PESO_MAXIMO_POR_TICKER = 0.20
+# Aversion al riesgo del USUARIO, solo para el optimizador final. Con un
+# valor cercano a DELTA_MERCADO y vistas sin confianza la recomendacion
+# vuelve a la cartera ancla; mas alto lleva hacia minima varianza, mas
+# bajo deja que las vistas concentren mas.
+AVERSION_AL_RIESGO: dict[PerfilRiesgo, float] = {
+    PerfilRiesgo.CONSERVADOR: 6.0,
+    PerfilRiesgo.MODERADO: 3.0,
+    PerfilRiesgo.ARRIESGADO: 1.5,
+}
+
+# Techo de concentracion por ticker en la cartera final, segun perfil.
+PESO_MAXIMO_POR_PERFIL: dict[PerfilRiesgo, float] = {
+    PerfilRiesgo.CONSERVADOR: 0.15,
+    PerfilRiesgo.MODERADO: 0.20,
+    PerfilRiesgo.ARRIESGADO: 0.30,
+}
+
+# Confianza en las vistas: fraccion (aprox.) del camino entre el prior y la
+# vista que recorre el retorno posterior de cada ticker (ver
+# construir_omega). Los modelos de tendencia casi no tienen poder
+# predictivo sobre el retorno a 5 ruedas: accuracy direccional ~0.50-0.53
+# en paper trading y correlacion prediccion/realizado ~0-0.05 en el panel
+# lider. Con eso una confianza alta solo amplifica ruido. Por ticker no hay
+# historia suficiente (~40 predicciones resueltas) para calibrarla aparte.
+CONFIANZA_VISTAS = 0.05
+
+RUEDAS_POR_ANIO = 252
 
 # Minimo de ruedas de historial para que un ticker entre a la corrida.
 # Mismo valor que MIN_ROWS en garch_volatility.py: un ticker con menos
@@ -109,7 +106,7 @@ PANEL_LIDER_TICKERS: list[str] = [
 @dataclass
 class ResultadoBL:
     """Resultado de una corrida de Black-Litterman, con los intermedios que se
-    muestran en el endpoint. pi/q/omega/mu_bl estan en retornos diarios (log);
+    muestran en el endpoint. pi/q/omega/mu_bl estan al horizonte de las vistas;
     omega es la diagonal (las vistas son independientes)."""
 
     tickers: list[str]
@@ -119,60 +116,82 @@ class ResultadoBL:
     q: np.ndarray
     omega: np.ndarray
     mu_bl: np.ndarray
-    horizon_days: list[int]
+    horizonte: int
     tickers_excluidos: dict[str, str] = field(default_factory=dict)
     cartera_ancla: str = TipoCarteraAncla.EQUAL_WEIGHT.value
 
     def detalle(self) -> list[dict]:
+        """Una fila por ticker. pi/q/omega/mu_bl se informan por rueda
+        (divididos por el horizonte), que es el contrato del endpoint: el
+        front los multiplica por ``horizon_days`` para mostrarlos al plazo."""
+        h = float(self.horizonte)
         return [
             {
                 "ticker": ticker,
                 "peso_actual": float(self.peso_actual[i]),
                 "peso_recomendado": float(self.pesos[i]),
-                "pi": float(self.pi[i]),
-                "q": float(self.q[i]),
-                "omega": float(self.omega[i]),
-                "mu_bl": float(self.mu_bl[i]),
-                "horizon_days": int(self.horizon_days[i]),
+                "pi": float(self.pi[i]) / h,
+                "q": float(self.q[i]) / h,
+                "omega": float(self.omega[i]) / h,
+                "mu_bl": float(self.mu_bl[i]) / h,
+                "horizon_days": int(self.horizonte),
             }
             for i, ticker in enumerate(self.tickers)
         ]
 
 
-def entry(
+def entry(usuario: Usuario, predict_function, garch_model=None, *args, **kwargs):
+    """Pesos recomendados para ``usuario``: ``(tickers, pesos)``. Ver
+    ``recomendacion_detallada`` para los parametros y los intermedios."""
+    resultado = recomendacion_detallada(usuario, predict_function, garch_model, *args, **kwargs)
+    return resultado.tickers, resultado.pesos
+
+
+def recomendacion_detallada(
     usuario: Usuario,
     predict_function,
     garch_model=None,
     tipo_cartera_ancla: TipoCarteraAncla | None = None,
     tickers: list[str] = PANEL_LIDER_TICKERS,
     fetch_hist=fetch_history,
+    tasa_libre_riesgo_anual: float = 0.0,
+    confianza_vistas: float = CONFIANZA_VISTAS,
 ) -> ResultadoBL:
-    tickers, precios_historicos, precios_actuales, tickers_excluidos = get_data(tickers, fetch_hist)
+    """Arma la recomendacion de cartera para ``usuario``.
+
+    ``tasa_libre_riesgo_anual`` es una TNA en decimal (0.35 = 35%): se
+    descuenta de las predicciones para que Q sea retorno en exceso, igual
+    que Pi.
+    """
+    tickers, precios_historicos, precios_actuales, tickers_excluidos = get_data_con_excluidos(
+        tickers, fetch_hist
+    )
+    predicciones = get_predicciones(tickers, predict_function)
+    horizonte = horizonte_comun(predicciones)
+    tasa_horizonte = tasa_al_horizonte(tasa_libre_riesgo_anual, horizonte)
+    q = [p.prediccion - tasa_horizonte for p in predicciones]
+    print(f"Vistas en exceso a {horizonte} ruedas (tasa {tasa_horizonte:.4f}): {q}")
+
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
-    matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
+    matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos, horizonte=horizonte)
     if garch_model is not None:
-        # Reemplaza la diagonal (varianzas) por el forecast GARCH a un dia,
-        # manteniendo la correlacion muestral. Afecta por igual a Pi,
-        # Omega y bl_sigma porque los tres se calculan a partir de esta
-        # misma matriz.
+        # Reemplaza las varianzas por el forecast GARCH al mismo horizonte,
+        # manteniendo la correlacion. Afecta por igual a Pi, Omega y
+        # bl_sigma porque los tres se calculan a partir de esta matriz.
         matriz_de_covarianza.matriz = matriz_de_covarianza.matriz_garch(
             precios_historicos, garch_model
         )
-    predicciones = get_predicciones(tickers, predict_function)
-    q = [p.prediccion for p in predicciones]
-    print(f"Predicciones (retorno diario): {q}")
-    omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
+    omega = construir_omega(matriz_de_covarianza.matriz, TAU, confianza_vistas)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
-    pesos = bl.predecir()
     return ResultadoBL(
         tickers=tickers,
-        pesos=pesos,
+        pesos=bl.predecir(),
         peso_actual=pesos_actuales_por_valor(usuario, tickers, precios_actuales),
         pi=np.asarray(bl.pi, dtype=np.float64),
         q=np.asarray(q, dtype=np.float64),
         omega=np.diag(omega).astype(np.float64),
         mu_bl=bl.bl_mu(),
-        horizon_days=[p.horizon_days for p in predicciones],
+        horizonte=horizonte,
         tickers_excluidos=tickers_excluidos,
         cartera_ancla=cartera_ancla.tipo.value,
     )
@@ -196,68 +215,75 @@ def pesos_actuales_por_valor(
 
 
 class BlackLittermanPrediction:
-    def __init__(self, usuario, matriz_de_covarianza, cartera_ancla, q, omega):
+    def __init__(self, usuario, matriz_de_covarianza, cartera_ancla, q, omega, tau=TAU):
         self.usuario: Usuario = usuario
-        self.perfil_de_riesgo: float = self.obtener_alfa()
+        self.aversion_al_riesgo: float = obtener_aversion_al_riesgo(usuario.perfil_riesgo)
+        self.peso_maximo: float = PESO_MAXIMO_POR_PERFIL[usuario.perfil_riesgo]
         self.matriz_de_covarianza: MatrizDeCovarianza = matriz_de_covarianza
         self.cartera_ancla: CarteraAncla = cartera_ancla
-        self.q: list[float] = q
-        self.omega: list[list[float]] = omega
+        self.q: np.ndarray = np.asarray(q, dtype=np.float64)
+        self.omega: np.ndarray = np.asarray(omega, dtype=np.float64)
+        self.tau: float = tau
         self.pi: np.ndarray = self.get_pi()
-        self.tau = TAU
-        self.inv_tau_sigma = None
-        self._bl_mu: np.ndarray | None = None
 
-    def get_pi(self):
-        x = np.dot(self.matriz_de_covarianza.matriz, self.cartera_ancla.vector)
-        return np.dot(self.perfil_de_riesgo, x)
+    @property
+    def sigma(self) -> np.ndarray:
+        return self.matriz_de_covarianza.matriz
 
-    def obtener_alfa(self):
-        match self.usuario.perfil_riesgo:
-            case PerfilRiesgo.CONSERVADOR:
-                return ALFA_CONSERVADOR
-            case PerfilRiesgo.MODERADO:
-                return ALFA_MODERADO
-            case PerfilRiesgo.ARRIESGADO:
-                return ALFA_ARRIESGADO
+    def get_pi(self) -> np.ndarray:
+        """Retornos en exceso de equilibrio: los que hacen optima a la
+        cartera ancla para un inversor con aversion DELTA_MERCADO.
+        """
+        return DELTA_MERCADO * self.sigma @ self.cartera_ancla.vector
 
-    def bl_mu(self):
-        # Cacheado: predecir() lo usa y entry() lo vuelve a pedir para el detalle.
-        if self._bl_mu is None:
-            left_term = inv(self._inv_tau_sigma() + inv(self.omega))
-            right_term = np.dot(self._inv_tau_sigma(), self.pi) + np.dot(inv(self.omega), self.q)
-            self._bl_mu = np.dot(left_term, right_term)
-        return self._bl_mu
+    def _incertidumbre_posterior(self) -> np.ndarray:
+        """M = [(tau*Sigma)^-1 + Omega^-1]^-1, covarianza de la media posterior."""
+        precision = np.linalg.inv(self.tau * self.sigma) + np.linalg.inv(self.omega)
+        return np.linalg.inv(precision)
 
-    def _inv_tau_sigma(self):
-        if self.inv_tau_sigma is None:
-            self.inv_tau_sigma = inv(np.dot(self.tau, self.matriz_de_covarianza.matriz))
-        return self.inv_tau_sigma
+    def bl_mu(self) -> np.ndarray:
+        """mu_BL = M [(tau*Sigma)^-1 Pi + Omega^-1 Q]."""
+        derecha = np.linalg.solve(self.tau * self.sigma, self.pi) + np.linalg.solve(
+            self.omega, self.q
+        )
+        return self._incertidumbre_posterior() @ derecha
 
-    def bl_sigma(self):
-        return self.matriz_de_covarianza.matriz + inv(self._inv_tau_sigma() + inv(self.omega))
+    def bl_sigma(self) -> np.ndarray:
+        """Covarianza predictiva de los retornos: Sigma + M (He-Litterman)."""
+        return self.sigma + self._incertidumbre_posterior()
 
-    def predecir(self):
-        delta_optimizador = self.perfil_de_riesgo * ESCALA_DELTA_OPTIMIZADOR
+    def predecir(self) -> np.ndarray:
         n = len(self.q)
-        # Si PESO_MAXIMO_POR_TICKER * n < 1 (universo chico, ej. tras
-        # filtrar tickers con pocas ruedas en get_data), el cap fijo es
-        # inviable. OJO: relajar a exactamente 1/n (como hacia antes) NO
-        # sirve -- con cap*n == 1 la unica solucion factible es w = [1/n]*n,
-        # es decir fuerza pesos iguales a la fuerza sin importar mu/Sigma,
-        # dejando al optimizador sin ningun grado de libertad (regresion
-        # detectada por test_con_garch_model_no_explota_y_cambia_el_resultado,
-        # que esperaba que GARCH pudiera diferenciar pesos incluso con
-        # pocos tickers). Se usa 2/n en cambio: deja cap*n == 2, con margen
-        # real para que el optimizador siga pudiendo concentrar mas en el
-        # activo mas favorecido, solo que sin llegar a una esquina absoluta.
-        peso_maximo_efectivo = max(PESO_MAXIMO_POR_TICKER, 2.0 / n)
+        # Con universo chico (tickers filtrados en get_data) el techo puede
+        # ser inviable (techo * n < 1). Se relaja a 2/n y no a 1/n: con
+        # techo * n == 1 la unica solucion factible es pesos iguales.
+        peso_maximo = max(self.peso_maximo, 2.0 / n)
         return optimizar_pesos(
-            self.bl_mu(), self.bl_sigma(), delta_optimizador, peso_maximo=peso_maximo_efectivo
+            self.bl_mu(), self.bl_sigma(), self.aversion_al_riesgo, peso_maximo=peso_maximo
         )
 
 
+def obtener_aversion_al_riesgo(perfil: PerfilRiesgo) -> float:
+    try:
+        return AVERSION_AL_RIESGO[perfil]
+    except KeyError as exc:
+        raise ValueError(f"perfil de riesgo desconocido: {perfil}") from exc
+
+
 def get_data(
+    tickers: list[str] = PANEL_LIDER_TICKERS,
+    fetch_hist=fetch_history,
+    min_ruedas: int = MIN_RUEDAS,
+):
+    """Como ``get_data_con_excluidos`` pero sin los excluidos:
+    ``(tickers_validos, historiales, precios_actuales)``."""
+    tickers_validos, historiales, precios, _ = get_data_con_excluidos(
+        tickers, fetch_hist, min_ruedas
+    )
+    return tickers_validos, historiales, precios
+
+
+def get_data_con_excluidos(
     tickers: list[str] = PANEL_LIDER_TICKERS,
     fetch_hist=fetch_history,
     min_ruedas: int = MIN_RUEDAS,
@@ -275,8 +301,7 @@ def get_data(
     se les pasa un fake directo.
 
     Devuelve (tickers_validos, historiales, precios_actuales, tickers_excluidos),
-    donde tickers_excluidos es un dict {ticker: motivo} para poder
-    reportarlo en el endpoint.
+    con el motivo de cada excluido.
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
@@ -319,40 +344,49 @@ def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, 
     return precios_actuales
 
 
-def get_predicciones(tickers, predict_functions) -> list[Prediccion]:
-    """Una Prediccion por ticker, en el mismo orden que ``tickers``."""
-    # Cada prediccion baja su propio historico: se hacen en paralelo (``map``
-    # conserva el orden de ``tickers``).
+def get_predicciones(tickers, predict_function) -> list[Prediccion]:
+    # Cada prediccion baja su propio historico: se hacen en paralelo (mismo
+    # orden de resultados que ``tickers``).
     with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
-        predictions = list(pool.map(predict_functions, tickers))
-    return [Prediccion(prediction) for prediction in predictions]
+        return [Prediccion(t) for t in pool.map(predict_function, tickers)]
 
 
-def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
-    """Omega clasico de Black-Litterman para vistas absolutas (P = identidad):
-
-        Omega_ii = tau * Sigma_ii
-
-    La incertidumbre de cada vista es proporcional a la propia varianza de
-    ese activo en Sigma, escalada por el mismo tau que ya se usa en Pi y en
-    la mezcla bayesiana -- mismo orden de magnitud por construccion, a
-    diferencia de un placeholder generico como la identidad. Todavia NO usa
-    confidence del modelo; es el default estandar de la literatura antes de
-    calibrar con eso.
+def horizonte_comun(predicciones: list[Prediccion]) -> int:
+    """Horizonte (en ruedas) de las vistas. Todas tienen que compartirlo:
+    Q, Sigma y la tasa se escalan a ese horizonte.
     """
-    varianzas = np.diag(sigma)  # Sigma_ii de cada ticker, en el mismo orden
-    return np.diag(tau * varianzas)
+    horizontes = {p.horizonte for p in predicciones}
+    if len(horizontes) != 1:
+        raise ValueError(f"las predicciones tienen horizontes distintos: {sorted(horizontes)}")
+    return horizontes.pop()
+
+
+def tasa_al_horizonte(tasa_anual: float, horizonte: int) -> float:
+    """TNA (decimal) -> tasa simple para ``horizonte`` ruedas."""
+    return tasa_anual * horizonte / RUEDAS_POR_ANIO
+
+
+def construir_omega(sigma: np.ndarray, tau: float, confianza: float | np.ndarray) -> np.ndarray:
+    """Omega diagonal a partir de la confianza en cada vista (estilo Idzorek):
+
+        Omega_ii = tau * Sigma_ii * (1 - c_i) / c_i
+
+    Para una vista aislada, el retorno posterior queda en
+    Pi_i + c_i * (Q_i - Pi_i): c = 0.5 equivale al Omega clasico
+    tau * Sigma_ii (mezcla mitad y mitad), c -> 0 ignora la vista y c -> 1
+    la toma tal cual. Con vistas sobre activos correlacionados la mezcla
+    real se aparta un poco de c_i, pero el orden de magnitud se mantiene.
+    ``confianza`` puede ser un valor unico o uno por ticker.
+    """
+    varianzas = np.diag(sigma)
+    c = np.broadcast_to(np.asarray(confianza, dtype=np.float64), varianzas.shape)
+    if np.any(c <= 0) or np.any(c >= 1):
+        raise ValueError(f"la confianza en las vistas tiene que estar en (0, 1): {confianza}")
+    return np.diag(tau * varianzas * (1 - c) / c)
 
 
 class Prediccion:
-    """Vista de un modelo para un ticker, como retorno log DIARIO: el modelo
-    predice el cierre a ``horizon_days`` ruedas y se reparte parejo en el
-    horizonte, para quedar en la misma escala que Sigma/Pi/Omega (ver el
-    comentario de ESCALA_DELTA_OPTIMIZADOR).
-    """
-
     def __init__(self, t: TrendResponse):
-        self.horizon_days = max(int(t.horizon_days), 1)
-        self.prediccion = float(np.log(t.predicted_close / t.last_close)) / self.horizon_days
+        self.prediccion = (t.predicted_close / t.last_close) - 1.0
         self.ticker = t.symbol
-        self.confianza = 1
+        self.horizonte = t.horizon_days

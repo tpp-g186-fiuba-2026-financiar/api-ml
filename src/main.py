@@ -8,11 +8,11 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 
-from src.black_litterman.black_litterman import entry
+from src.black_litterman.black_litterman import recomendacion_detallada
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
 from src.consensus import LEDGER_PATH, compute_consensus, load_track_record
-from src.data import fetch_history
+from src.data import fetch_history, fetch_interest_rate
 from src.errors import (
     ApiMlError,
     DataUnavailableError,
@@ -261,8 +261,8 @@ async def predict_trend_get(
     model: str | None = Query(
         default=None,
         description=(
-            "lstm | xgboost | transformer | arima | lstm-modal | xgboost-modal | "
-            "arima-modal | ... (ver /models para el default vigente)"
+            "lstm | xgboost | transformer (V2) | transformer-v1 | arima | lstm-modal | "
+            "xgboost-modal | arima-modal | ... (ver /models para el default vigente)"
         ),
     ),
 ) -> TrendResponse:
@@ -366,7 +366,7 @@ async def predict_volatility_modal(symbol: str) -> dict:
 
 
 def _predict_function(model: str | None):
-    """Arma la funcion (ticker -> TrendResponse) que necesita entry(),
+    """Arma la funcion (ticker -> TrendResponse) que necesita Black-Litterman,
     usando el trend_registry que main.py ya tiene. Asi black_litterman.py
     nunca necesita importar nada de main.py.
     """
@@ -379,19 +379,34 @@ def _predict_function(model: str | None):
     return _predict
 
 
+def _tasa_libre_riesgo_anual() -> float:
+    """Ultima TNA (decimal) de la serie configurada en
+    ``settings.tasa_libre_riesgo_series`` (BADLAR por default), para que las
+    vistas de Black-Litterman sean retorno en exceso. Si data-colector o el
+    BCRA fallan se sigue con 0 (vistas nominales) en vez de cortar el pedido.
+    """
+    try:
+        serie = fetch_interest_rate("ar", settings.tasa_libre_riesgo_series, days=30)
+        return float(serie.iloc[-1]) / 100.0
+    except ApiMlError as exc:
+        print(f"  [warn] sin tasa libre de riesgo, se usa 0: {exc}")
+        return 0.0
+
+
 @app.post(
     "/portfolio/recomendacion",
     response_model=dict,
     tags=["Predicciones"],
     summary="Recomendacion de cartera (Black-Litterman)",
     description=(
-        "Arma Q (retorno log diario de cada modelo: log(pc/lc)/horizon_days) y "
-        "Omega (tau * Sigma_ii) con las predicciones de tendencia, Pi a partir "
-        "de la cartera ancla, y devuelve los pesos optimos recomendados. "
-        "`detalle` trae, por ticker, peso actual (participacion real por valor), "
-        "peso recomendado y los intermedios pi/q/omega/mu_bl (retornos diarios); "
-        "`tickers_excluidos` los descartados con su motivo; `cartera_ancla` la "
-        "estrategia efectivamente usada."
+        "Combina el equilibrio implicito de la cartera ancla (Pi) con las "
+        "predicciones de tendencia de cada ticker del panel lider (Q, en exceso "
+        "sobre la tasa BADLAR, con confianza baja y fija), y devuelve los pesos "
+        "optimos segun el perfil de riesgo del usuario. `detalle` trae, por "
+        "ticker, peso actual (participacion real por valor), peso recomendado "
+        "y los intermedios pi/q/omega/mu_bl (retornos log diarios: multiplicar "
+        "por horizon_days para verlos al horizonte); `tickers_excluidos` los "
+        "descartados con su motivo; `cartera_ancla` la estrategia usada."
     ),
 )
 async def portfolio_recomendacion(
@@ -420,7 +435,13 @@ async def portfolio_recomendacion(
     if cached and time.monotonic() - cached[0] < RECOMENDACION_TTL_SEGUNDOS:
         return cached[1]
     try:
-        resultado = entry(usuario, _predict_function(model), garch_volatility_model, cartera_ancla)
+        resultado = recomendacion_detallada(
+            usuario,
+            _predict_function(model),
+            garch_volatility_model,
+            cartera_ancla,
+            tasa_libre_riesgo_anual=_tasa_libre_riesgo_anual(),
+        )
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ModelNotLoadedError as exc:

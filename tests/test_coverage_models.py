@@ -90,7 +90,7 @@ def test_garch_prediction_and_variance(monkeypatch):
     output = model.predict_df(frame)
     assert output["daily_volatility_pct"] == [1.0, 2.0, 3.0]
     assert output["cumulative_volatility_pct"] == pytest.approx(3.7417)
-    assert model.forecast_daily_variance(frame) == pytest.approx(0.0001)
+    assert model.forecast_variance_horizonte(frame, 3) == pytest.approx(0.0014)
     with pytest.raises(NotEnoughDataError):
         model._forecast_variance_pct2(np.arange(10.0))
 

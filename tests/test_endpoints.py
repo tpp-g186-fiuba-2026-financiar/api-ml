@@ -1,6 +1,7 @@
 from unittest.mock import MagicMock
 
 import numpy as np
+import pandas as pd
 import pytest
 from fastapi.testclient import TestClient
 
@@ -400,6 +401,14 @@ def test_predict_volatility_modal_data_unavailable(client: TestClient, monkeypat
 # --- /portfolio/recomendacion (Black-Litterman) ---
 
 
+@pytest.fixture
+def tasa_badlar(monkeypatch) -> MagicMock:
+    """Evita pegarle a data-colector: BADLAR fija en 36% TNA."""
+    fake = MagicMock(return_value=pd.Series([35.0, 36.0]))
+    monkeypatch.setattr(main, "fetch_interest_rate", fake)
+    return fake
+
+
 @pytest.fixture(autouse=True)
 def _clear_recomendacion_cache():
     main._recomendacion_cache.clear()
@@ -423,11 +432,11 @@ def fake_resultado(tickers=("GGAL", "YPFD"), pesos=(0.6, 0.4), **overrides) -> R
         "tickers": list(tickers),
         "pesos": np.array(pesos),
         "peso_actual": np.full(n, 1.0 / n),
-        "pi": np.full(n, 1e-4),
-        "q": np.full(n, 2e-3),
-        "omega": np.full(n, 2e-5),
-        "mu_bl": np.full(n, 1.5e-3),
-        "horizon_days": [5] * n,
+        "pi": np.full(n, 5e-4),
+        "q": np.full(n, 1e-2),
+        "omega": np.full(n, 1e-4),
+        "mu_bl": np.full(n, 7.5e-3),
+        "horizonte": 5,
         "tickers_excluidos": {},
         "cartera_ancla": "propia",
     }
@@ -435,39 +444,41 @@ def fake_resultado(tickers=("GGAL", "YPFD"), pesos=(0.6, 0.4), **overrides) -> R
     return ResultadoBL(**campos)
 
 
-def test_portfolio_recomendacion_success(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_success(client: TestClient, monkeypatch, tasa_badlar) -> None:
     fake_entry = MagicMock(
         return_value=fake_resultado(
             peso_actual=np.array([0.8, 0.2]),
             tickers_excluidos={"ECOG": "17 ruedas, minimo 60"},
         )
     )
-    monkeypatch.setattr(main, "entry", fake_entry)
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
 
     response = client.post("/portfolio/recomendacion", json=usuario_payload())
 
     assert response.status_code == 200
     body = response.json()
     assert body["pesos_recomendados"] == {"GGAL": 0.6, "YPFD": 0.4}
+    assert fake_entry.call_args.kwargs["tasa_libre_riesgo_anual"] == pytest.approx(0.36)
     assert body["tickers_excluidos"] == {"ECOG": "17 ruedas, minimo 60"}
     assert body["cartera_ancla"] == "propia"
+    # Los intermedios salen por rueda (al horizonte / horizon_days).
     assert body["detalle"][0] == {
         "ticker": "GGAL",
         "peso_actual": 0.8,
         "peso_recomendado": 0.6,
-        "pi": 1e-4,
-        "q": 2e-3,
-        "omega": 2e-5,
-        "mu_bl": 1.5e-3,
+        "pi": pytest.approx(1e-4),
+        "q": pytest.approx(2e-3),
+        "omega": pytest.approx(2e-5),
+        "mu_bl": pytest.approx(1.5e-3),
         "horizon_days": 5,
     }
 
 
 def test_portfolio_recomendacion_with_model_and_cartera_ancla(
-    client: TestClient, monkeypatch
+    client: TestClient, monkeypatch, tasa_badlar
 ) -> None:
     fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
-    monkeypatch.setattr(main, "entry", fake_entry)
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
 
     response = client.post(
         "/portfolio/recomendacion",
@@ -490,17 +501,34 @@ def test_portfolio_recomendacion_with_model_and_cartera_ancla(
         (ValueError("pesos no suman 1"), 422),
     ],
 )
-def test_portfolio_recomendacion_maps_errors(client: TestClient, monkeypatch, exc, status) -> None:
-    monkeypatch.setattr(main, "entry", MagicMock(side_effect=exc))
+def test_portfolio_recomendacion_maps_errors(
+    client: TestClient, monkeypatch, tasa_badlar, exc, status
+) -> None:
+    monkeypatch.setattr(main, "recomendacion_detallada", MagicMock(side_effect=exc))
 
     response = client.post("/portfolio/recomendacion", json=usuario_payload())
 
     assert response.status_code == status
 
 
-def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_sin_tasa_usa_cero(client: TestClient, monkeypatch) -> None:
+    monkeypatch.setattr(
+        main, "fetch_interest_rate", MagicMock(side_effect=DataUnavailableError("BCRA caido"))
+    )
     fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
-    monkeypatch.setattr(main, "entry", fake_entry)
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
+
+    response = client.post("/portfolio/recomendacion", json=usuario_payload())
+
+    assert response.status_code == 200
+    assert fake_entry.call_args.kwargs["tasa_libre_riesgo_anual"] == 0.0
+
+
+def test_portfolio_recomendacion_reuses_a_recent_result(
+    client: TestClient, monkeypatch, tasa_badlar
+) -> None:
+    fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
 
     first = client.post("/portfolio/recomendacion", json=usuario_payload())
     second = client.post("/portfolio/recomendacion", json=usuario_payload())
@@ -510,10 +538,10 @@ def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monk
 
 
 def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
-    client: TestClient, monkeypatch
+    client: TestClient, monkeypatch, tasa_badlar
 ) -> None:
     fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
-    monkeypatch.setattr(main, "entry", fake_entry)
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
     other = {"perfil_riesgo": "moderate", "tenencias": [{"ticker": "BMA", "cantidad": 1.0}]}
 
     client.post("/portfolio/recomendacion", json=usuario_payload())
@@ -525,9 +553,11 @@ def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
     assert fake_entry.call_count == 3  # vencido, se recalcula
 
 
-def test_portfolio_recomendacion_errors_are_not_cached(client: TestClient, monkeypatch) -> None:
+def test_portfolio_recomendacion_errors_are_not_cached(
+    client: TestClient, monkeypatch, tasa_badlar
+) -> None:
     fake_entry = MagicMock(side_effect=ValueError("sin datos"))
-    monkeypatch.setattr(main, "entry", fake_entry)
+    monkeypatch.setattr(main, "recomendacion_detallada", fake_entry)
 
     assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422
     assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422

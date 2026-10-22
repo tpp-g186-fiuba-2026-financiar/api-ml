@@ -12,6 +12,9 @@ class Settings(BaseSettings):
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
     transformer_model_path: str = "models/transformer.pt"
+    # Artefacto del Transformer V2 (src/panel/transformer_v2.py), que la API sirve como
+    # "transformer" (el original, transformer_model_path, queda como "transformer-v1").
+    transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"
     # Comparacion de modelos de cada accion que deja el paper trading diario
@@ -22,7 +25,10 @@ class Settings(BaseSettings):
     # URL base del servicio data-colector. Se usa para el historico si
     # data_source == "collector", y siempre para listar tickers disponibles
     # (el catalogo de tickers solo vive en data-colector, no en Yahoo).
-    data_collector_url: str | None = "https://data-colector-k7h6.onrender.com"
+    # Default: el data-colector local (red docker financiar_shared_network).
+    # El deployado solo se usa si se pasa DATA_COLLECTOR_URL explicitamente
+    # (crons de GitHub Actions, deploy de Render).
+    data_collector_url: str | None = "http://service_data_collector:3000"
     # URL del data-colector que sirve las series macro (default: data_collector_url).
     macro_collector_url: str | None = None
     # Sufijo de mercado para Yahoo Finance (BYMA = ".BA").
@@ -38,6 +44,9 @@ class Settings(BaseSettings):
     # de agregar esta feature estaba caida del lado de data-colector.
     macro_rate_source: str = "us"
     macro_rate_series: str = "TNX"
+    # Serie del BCRA (via data-colector, /interest-rate/ar/{serie}) usada
+    # como tasa libre de riesgo en Black-Litterman (TNA en %).
+    tasa_libre_riesgo_series: str = "BADLAR"
 
     # --- Modelos alternativos deployados en Modal (repo `models`) ---
     # Ninguno configurado por default: hay que pegar la URL de `modal deploy`
