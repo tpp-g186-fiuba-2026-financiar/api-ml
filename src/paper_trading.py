@@ -35,6 +35,7 @@ import numpy as np
 import pandas as pd
 
 from src.backtest import summarize
+from src.compare_snapshot import DEFAULT_SNAPSHOT_PATH, save_snapshot
 from src.config import settings
 from src.consensus import compute_consensus
 from src.data import fetch_available_tickers, fetch_history
@@ -148,27 +149,51 @@ def resolve_pending(pending: list[dict], days: int) -> tuple[list[dict], list[di
     return still_pending, newly_resolved
 
 
+def compare_all(registry: TrendRegistry, tickers: list[str]) -> dict[str, dict]:
+    """``compare()`` de cada ticker calculado de cero (lo que guarda el snapshot)."""
+    compared: dict[str, dict] = {}
+    for symbol in tickers:
+        try:
+            compared[symbol.strip().upper()] = registry.compare(symbol, use_snapshot=False)
+        except ApiMlError as exc:
+            print(f"  [skip] {symbol}: {exc}")
+    return compared
+
+
+def _compared_prediction(compared: dict[str, dict] | None, name: str, symbol: str) -> dict | None:
+    entry = (compared or {}).get(symbol.strip().upper())
+    pred = (entry or {}).get("predictions", {}).get(name)
+    if not pred or "reason" in pred or "signal" not in pred:
+        return None
+    return pred
+
+
 def record_new_predictions(
     registry: TrendRegistry,
     model_names: list[str],
     tickers: list[str],
     existing_keys: set[tuple],
+    compared: dict[str, dict] | None = None,
 ) -> list[dict]:
     """Corre cada modelo cargado sobre cada ticker y arma las entradas nuevas.
 
     ``existing_keys`` evita duplicar una prediccion ya registrada para el
     mismo (simbolo, modelo, as_of) -- pasa si el job se corre mas de una vez
-    el mismo dia, o antes de que cierre una nueva rueda.
+    el mismo dia, o antes de que cierre una nueva rueda. Si ``compared`` ya
+    trae la prediccion de ese modelo para ese ticker, se usa esa en vez de
+    volver a correr el modelo.
     """
     new_entries: list[dict] = []
     for name in model_names:
         service = registry.resolve(name)
         for symbol in tickers:
-            try:
-                pred = service.predict(symbol)
-            except ApiMlError as exc:
-                print(f"  [skip] {name}/{symbol}: {exc}")
-                continue
+            pred = _compared_prediction(compared, name, symbol)
+            if pred is None:
+                try:
+                    pred = service.predict(symbol)
+                except ApiMlError as exc:
+                    print(f"  [skip] {name}/{symbol}: {exc}")
+                    continue
 
             entry = {
                 "symbol": pred["symbol"],
@@ -274,8 +299,79 @@ def build_summary(resolved: list[dict]) -> dict[str, dict]:
             symbol: summarize([r for r in model_records if r["symbol"] == symbol])
             for symbol in sorted({r["symbol"] for r in model_records})
         }
-        summary[name] = {"overall": summarize(model_records), "per_ticker": per_ticker}
+        # Separado por version y horizonte: un XGBoost de 5 ruedas y otro de 20
+        # son modelos distintos aunque compartan el nombre.
+        by_version = {
+            f"{version} · {horizon}r": summarize(
+                [
+                    r
+                    for r in model_records
+                    if r.get("model_version") == version and r.get("horizon_days") == horizon
+                ]
+            )
+            for version, horizon in sorted(
+                {(r.get("model_version"), r.get("horizon_days")) for r in model_records},
+                key=lambda key: (str(key[0]), key[1] or 0),
+            )
+        }
+        summary[name] = {
+            "overall": summarize(model_records),
+            "per_ticker": per_ticker,
+            "by_version": by_version,
+        }
     return summary
+
+
+def _signal_hit(entry: dict) -> bool | None:
+    """Mismo criterio que ``signal_hit_rate`` de ``src.backtest.summarize``:
+    acierta si el signo del retorno realizado coincide con alza/baja. None si
+    todavia no se resolvio o si la senal fue neutral (no opino)."""
+    if "realized_close" not in entry or entry.get("signal") not in ("alza", "baja"):
+        return None
+    realized = float(np.sign(np.log(entry["realized_close"] / entry["last_close"])))
+    return realized == (1.0 if entry["signal"] == "alza" else -1.0)
+
+
+def signal_history(ledger: dict, symbols: list[str] | None = None, limit: int = 200) -> dict:
+    """Historial de senales del ledger (pendientes + resueltas), la mas nueva
+    primero, filtrado por ``symbols`` si se pasa. ``summary`` cuenta solo las
+    filas devueltas que ya tienen resultado (``hit`` no nulo)."""
+    wanted = {s.strip().upper() for s in symbols} if symbols else None
+    rows = []
+    for entry in [*ledger.get("pending", []), *ledger.get("resolved", [])]:
+        if wanted is not None and entry.get("symbol", "").upper() not in wanted:
+            continue
+        rows.append(
+            {
+                "symbol": entry["symbol"],
+                "model": entry["model"],
+                "model_version": entry.get("model_version"),
+                "as_of": entry["as_of"],
+                "signal": entry["signal"],
+                "horizon_days": int(entry["horizon_days"]),
+                "last_close": entry["last_close"],
+                "predicted_close": entry["predicted_close"],
+                "realized_close": entry.get("realized_close"),
+                "hit": _signal_hit(entry),
+                "resolved_at": entry.get("resolved_at"),
+            }
+        )
+    rows.sort(key=lambda r: (r["as_of"], r["symbol"], r["model"]), reverse=True)
+    rows = rows[:limit]
+    evaluated = [r["hit"] for r in rows if r["hit"] is not None]
+    hits = sum(evaluated)
+    return {
+        "rows": rows,
+        "summary": {
+            "evaluated": len(evaluated),
+            "hits": hits,
+            "hit_rate": round(hits / len(evaluated), 4) if evaluated else None,
+            # Fecha de la ultima senal registrada y del ultimo guardado del
+            # ledger: si quedaron viejas, el job diario esta frenado.
+            "last_signal": max((r["as_of"] for r in rows), default=None),
+            "updated_at": ledger.get("updated_at"),
+        },
+    }
 
 
 def known_tickers(ledger: dict) -> list[str]:
@@ -303,6 +399,11 @@ def main() -> None:
     )
     parser.add_argument(
         "--ledger", default=DEFAULT_LEDGER_PATH, help="Donde persistir el historial (JSON)."
+    )
+    parser.add_argument(
+        "--snapshot",
+        default=DEFAULT_SNAPSHOT_PATH,
+        help="Donde guardar la comparacion del dia que sirve el comparador (JSON).",
     )
     args = parser.parse_args()
 
@@ -336,10 +437,26 @@ def main() -> None:
     if not model_names:
         raise SystemExit("Ningun modelo cargado para registrar predicciones.")
 
+    print(f"\nComparando modelos en {len(tickers)} tickers...")
+    compared = compare_all(registry, tickers)
+    print(f"  [ok] {len(compared)} tickers con precios")
+    if not compared:
+        ledger["summary"] = build_summary(ledger["resolved"])
+        save_ledger(ledger_path, ledger)
+        raise SystemExit(
+            "No se pudo bajar el historico de ningun ticker (fuente: "
+            f"{settings.data_source}). Revisar Yahoo / data-colector: no se registran "
+            "predicciones ni se actualiza el snapshot."
+        )
+    save_snapshot(args.snapshot, compared)
+    print(f"  [ok] snapshot del comparador: {args.snapshot}")
+
     print(f"\nRegistrando predicciones de hoy: {len(tickers)} tickers x {len(model_names)} modelos")
     existing_keys = {_pending_key(e) for e in ledger["pending"]}
     existing_keys |= {_pending_key(e) for e in ledger["resolved"]}
-    new_entries = record_new_predictions(registry, model_names, tickers, existing_keys)
+    new_entries = record_new_predictions(
+        registry, model_names, list(compared), existing_keys, compared
+    )
     print(f"  [ok] {len(new_entries)} predicciones nuevas")
     consensus_entries = record_consensus_entries(
         ledger["pending"], new_entries, ledger["resolved"], existing_keys

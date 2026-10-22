@@ -31,9 +31,6 @@ jobs:
       - name: Entrenar LSTM
         run: python -m src.train
 
-      - name: Entrenar XGBoost
-        run: python -m src.train_xgb
-
       - name: Entrenar Transformer
         run: python -m src.train_transformer
 

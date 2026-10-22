@@ -14,12 +14,15 @@ class Settings(BaseSettings):
     transformer_model_path: str = "models/transformer.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"
+    # Comparacion de modelos de cada accion que deja el paper trading diario
+    # (src/compare_snapshot.py). Vacio = siempre calcular en vivo.
+    compare_snapshot_path: str | None = "models/compare_snapshot.json"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si
     # data_source == "collector", y siempre para listar tickers disponibles
     # (el catalogo de tickers solo vive en data-colector, no en Yahoo).
-    data_collector_url: str | None = "https://data-colector.onrender.com"
+    data_collector_url: str | None = "https://data-colector-k7h6.onrender.com"
     # URL del data-colector que sirve las series macro (default: data_collector_url).
     macro_collector_url: str | None = None
     # Sufijo de mercado para Yahoo Finance (BYMA = ".BA").

@@ -93,6 +93,18 @@ class ConsensusTrackRecord(BaseModel):
     scope: str  # "ticker" | "global"
 
 
+class ConsensusComponent(BaseModel):
+    """Aporte de un modelo al consenso (ver ``src.consensus.compute_consensus``)."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    model: str
+    expected_return: float  # retorno log implicito al horizonte del modelo
+    quality: float  # acierto direccional de backtest ajustado por casos (0.5 sin datos)
+    agreement: float  # 1.0, o 0.5 si signal y signo del retorno no coinciden
+    signal: str | None = None
+
+
 class ConsensusResponse(BaseModel):
     """Lectura unica (sobrecompra/sobreventa/neutral) combinando todos los
     modelos de tendencia, ajustada por perfil de riesgo. Ver src.consensus.
@@ -108,6 +120,7 @@ class ConsensusResponse(BaseModel):
     confidence_min: float
     models_considered: int
     explanation: str
+    components: list[ConsensusComponent] = Field(default_factory=list)
     track_record: ConsensusTrackRecord | None = None
 
 
@@ -129,3 +142,61 @@ class Usuario(BaseModel):
         y calcular pesos de cartera (w_actual) mas adelante.
         """
         return {t.ticker: t.cantidad for t in self.tenencias}
+
+
+class FeatureContribution(BaseModel):
+    feature: str  # nombre tecnico (ej: t_ret20, r_m_rel20)
+    label: str  # nombre en castellano para mostrar
+    value: float | None  # valor de la variable en la ultima rueda (None si falta)
+    contribution: float  # aporte en log-odds a P(sube); positivo empuja a "sube"
+    help: str | None = None  # que mide, en palabras simples
+    unit: str = "num"  # como mostrar value: pct, flag, days, index, rank o num
+
+
+class ExplainResponse(BaseModel):
+    """Contribuciones SHAP de XGBoost a la P(sube) de la ultima rueda."""
+
+    model_config = ConfigDict(protected_namespaces=())
+
+    symbol: str
+    as_of: str
+    probability_up: float
+    base_value: float  # log-odds de partida (antes de mirar las variables)
+    contributions: list[FeatureContribution]
+    model_version: str | None = None
+    # Senal que emite el modelo con esa probabilidad (la misma que /predict/trend).
+    signal: str | None = None
+    # Desde que P(sube) dice "alza" / hasta cual dice "baja"; None = lado apagado.
+    alza_threshold: float | None = None
+    baja_threshold: float | None = None
+    # Que tan seguido subieron las acciones fuera de muestra ("lo normal" real).
+    base_up_rate: float | None = None
+
+
+class SignalRow(BaseModel):
+    model_config = ConfigDict(protected_namespaces=())
+
+    symbol: str
+    model: str
+    model_version: str | None = None
+    as_of: str
+    signal: str
+    horizon_days: int
+    last_close: float
+    predicted_close: float
+    realized_close: float | None = None
+    hit: bool | None = None  # None: pendiente o senal neutral
+    resolved_at: str | None = None
+
+
+class SignalHistorySummary(BaseModel):
+    evaluated: int  # filas con resultado (resueltas y no neutrales)
+    hits: int
+    hit_rate: float | None
+    last_signal: str | None = None  # fecha de la ultima senal registrada
+    updated_at: str | None = None  # ultimo guardado del ledger
+
+
+class SignalHistoryResponse(BaseModel):
+    rows: list[SignalRow]
+    summary: SignalHistorySummary

@@ -5,6 +5,7 @@ import pytest
 from fastapi.testclient import TestClient
 
 import src.main as main
+from src.black_litterman.black_litterman import ResultadoBL
 from src.errors import (
     DataUnavailableError,
     ModelNotLoadedError,
@@ -416,8 +417,31 @@ def usuario_payload() -> dict:
     }
 
 
+def fake_resultado(tickers=("GGAL", "YPFD"), pesos=(0.6, 0.4), **overrides) -> ResultadoBL:
+    n = len(tickers)
+    campos = {
+        "tickers": list(tickers),
+        "pesos": np.array(pesos),
+        "peso_actual": np.full(n, 1.0 / n),
+        "pi": np.full(n, 1e-4),
+        "q": np.full(n, 2e-3),
+        "omega": np.full(n, 2e-5),
+        "mu_bl": np.full(n, 1.5e-3),
+        "horizon_days": [5] * n,
+        "tickers_excluidos": {},
+        "cartera_ancla": "propia",
+    }
+    campos.update(overrides)
+    return ResultadoBL(**campos)
+
+
 def test_portfolio_recomendacion_success(client: TestClient, monkeypatch) -> None:
-    fake_entry = MagicMock(return_value=(["GGAL", "YPFD"], np.array([0.6, 0.4])))
+    fake_entry = MagicMock(
+        return_value=fake_resultado(
+            peso_actual=np.array([0.8, 0.2]),
+            tickers_excluidos={"ECOG": "17 ruedas, minimo 60"},
+        )
+    )
     monkeypatch.setattr(main, "entry", fake_entry)
 
     response = client.post("/portfolio/recomendacion", json=usuario_payload())
@@ -425,12 +449,24 @@ def test_portfolio_recomendacion_success(client: TestClient, monkeypatch) -> Non
     assert response.status_code == 200
     body = response.json()
     assert body["pesos_recomendados"] == {"GGAL": 0.6, "YPFD": 0.4}
+    assert body["tickers_excluidos"] == {"ECOG": "17 ruedas, minimo 60"}
+    assert body["cartera_ancla"] == "propia"
+    assert body["detalle"][0] == {
+        "ticker": "GGAL",
+        "peso_actual": 0.8,
+        "peso_recomendado": 0.6,
+        "pi": 1e-4,
+        "q": 2e-3,
+        "omega": 2e-5,
+        "mu_bl": 1.5e-3,
+        "horizon_days": 5,
+    }
 
 
 def test_portfolio_recomendacion_with_model_and_cartera_ancla(
     client: TestClient, monkeypatch
 ) -> None:
-    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
     monkeypatch.setattr(main, "entry", fake_entry)
 
     response = client.post(
@@ -463,7 +499,7 @@ def test_portfolio_recomendacion_maps_errors(client: TestClient, monkeypatch, ex
 
 
 def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monkeypatch) -> None:
-    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
     monkeypatch.setattr(main, "entry", fake_entry)
 
     first = client.post("/portfolio/recomendacion", json=usuario_payload())
@@ -476,7 +512,7 @@ def test_portfolio_recomendacion_reuses_a_recent_result(client: TestClient, monk
 def test_portfolio_recomendacion_cache_is_per_portfolio_and_expires(
     client: TestClient, monkeypatch
 ) -> None:
-    fake_entry = MagicMock(return_value=(["GGAL"], np.array([1.0])))
+    fake_entry = MagicMock(return_value=fake_resultado(["GGAL"], [1.0]))
     monkeypatch.setattr(main, "entry", fake_entry)
     other = {"perfil_riesgo": "moderate", "tenencias": [{"ticker": "BMA", "cantidad": 1.0}]}
 
@@ -496,3 +532,168 @@ def test_portfolio_recomendacion_errors_are_not_cached(client: TestClient, monke
     assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422
     assert client.post("/portfolio/recomendacion", json=usuario_payload()).status_code == 422
     assert fake_entry.call_count == 2
+
+
+# --- /predict/trend/consensus/{symbol} (componentes) ---
+
+
+def test_consensus_includes_components(client: TestClient, monkeypatch) -> None:
+    fake_registry = MagicMock()
+    fake_registry.compare.return_value = {
+        "symbol": "GGAL",
+        "as_of": "2026-09-03",
+        "default_model": "lstm",
+        "predictions": {
+            "lstm": make_trend_result(backtest={"directional_accuracy": 0.6}),
+            "xgboost": {"available": False, "reason": "modelo no entrenado"},
+        },
+    }
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+    monkeypatch.setattr(main, "load_track_record", lambda profile, symbol: None)
+
+    response = client.get("/predict/trend/consensus/GGAL")
+
+    assert response.status_code == 200
+    components = response.json()["components"]
+    assert len(components) == 1
+    assert components[0]["model"] == "lstm"
+    assert components[0]["expected_return"] == pytest.approx(np.log(1.05), abs=1e-5)
+    assert components[0]["quality"] == 0.6
+    assert components[0]["agreement"] == 1.0
+    assert components[0]["signal"] == "alza"
+
+
+# --- /predict/trend/xgboost/explain/{symbol} ---
+
+
+def test_explain_xgboost_success(client: TestClient, monkeypatch) -> None:
+    fake_model = MagicMock()
+    fake_model.version = "xgb-1"
+    fake_model.explain.return_value = {
+        "as_of": "2026-09-03",
+        "probability_up": 0.61,
+        "base_value": 0.1,
+        "contributions": [
+            {"feature": "a", "label": "A", "value": 1.0, "contribution": 0.2},
+            {"feature": "b", "label": "B", "value": None, "contribution": -0.05},
+        ],
+    }
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = MagicMock(model=fake_model)
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+    monkeypatch.setattr(main, "fetch_history_with_macro", MagicMock(return_value="df"))
+
+    response = client.get("/predict/trend/xgboost/explain/ggal")
+
+    assert response.status_code == 200
+    body = response.json()
+    assert body["symbol"] == "GGAL"
+    assert body["probability_up"] == 0.61
+    assert body["contributions"][1]["value"] is None
+    fake_registry.resolve.assert_called_once_with("xgboost")
+    fake_model.explain.assert_called_once_with("df")
+
+
+def test_explain_xgboost_not_loaded(client: TestClient, monkeypatch) -> None:
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = MagicMock(model=None)
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+
+    assert client.get("/predict/trend/xgboost/explain/GGAL").status_code == 503
+
+
+@pytest.mark.parametrize(
+    ("exc", "status"),
+    [
+        (DataUnavailableError("sin historico"), 502),
+        (NotEnoughDataError("pocas ruedas"), 422),
+    ],
+)
+def test_explain_xgboost_maps_errors(client: TestClient, monkeypatch, exc, status) -> None:
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = MagicMock(model=MagicMock())
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+    monkeypatch.setattr(main, "fetch_history_with_macro", MagicMock(side_effect=exc))
+
+    assert client.get("/predict/trend/xgboost/explain/GGAL").status_code == status
+
+
+# --- /signals/history ---
+
+
+def test_signals_history_reads_the_ledger(client: TestClient, monkeypatch, tmp_path) -> None:
+    import json
+
+    ledger = tmp_path / "ledger.json"
+    base = {"horizon_days": 5, "last_close": 100.0, "predicted_close": 104.0}
+    ledger.write_text(
+        json.dumps(
+            {
+                "pending": [
+                    {**base, "symbol": "YPFD", "model": "lstm", "as_of": "2026-10-10",
+                     "signal": "alza"},
+                ],
+                "resolved": [
+                    {**base, "symbol": "GGAL", "model": "xgboost", "as_of": "2026-10-01",
+                     "signal": "alza", "realized_close": 106.0, "resolved_at": "2026-10-08"},
+                ],
+            }
+        )
+    )  # fmt: skip
+    monkeypatch.setattr(main, "LEDGER_PATH", ledger)
+
+    body = client.get("/signals/history").json()
+    assert [r["symbol"] for r in body["rows"]] == ["YPFD", "GGAL"]
+    assert body["rows"][1]["hit"] is True
+    summary = body["summary"]
+    assert {k: summary[k] for k in ("evaluated", "hits", "hit_rate")} == {
+        "evaluated": 1,
+        "hits": 1,
+        "hit_rate": 1.0,
+    }
+    assert summary["last_signal"] == max(r["as_of"] for r in body["rows"])
+
+    body = client.get("/signals/history", params={"symbols": "GGAL", "limit": 1}).json()
+    assert [r["symbol"] for r in body["rows"]] == ["GGAL"]
+
+
+def test_signals_history_without_ledger_is_empty(client: TestClient, monkeypatch, tmp_path):
+    monkeypatch.setattr(main, "LEDGER_PATH", tmp_path / "missing.json")
+
+    body = client.get("/signals/history").json()
+    assert body["rows"] == []
+    assert body["summary"]["evaluated"] == 0
+    assert body["summary"]["hit_rate"] is None
+    assert body["summary"]["last_signal"] is None
+
+
+# --- /models/diagnostics ---
+
+
+def test_models_diagnostics(client: TestClient, monkeypatch, tmp_path) -> None:
+    results = tmp_path / "backtest.json"
+    results.write_text('{"run_at": "2026-09-03T03:19:34Z", "results": {}}')
+    monkeypatch.setattr(main, "BACKTEST_RESULTS_PATH", results)
+    fake_model = MagicMock(version="xgb-1", trained_at="20261019T000000Z")
+    fake_model.metrics = {"oos_auc": 0.55, "oos_baja_hit_rate": float("nan")}
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = MagicMock(model=fake_model)
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+
+    body = client.get("/models/diagnostics").json()
+
+    assert body["backtest"]["run_at"] == "2026-09-03T03:19:34Z"
+    assert body["xgboost"] == {
+        "version": "xgb-1",
+        "trained_at": "20261019T000000Z",
+        "metrics": {"oos_auc": 0.55, "oos_baja_hit_rate": None},
+    }
+
+
+def test_models_diagnostics_without_artifacts(client: TestClient, monkeypatch, tmp_path) -> None:
+    monkeypatch.setattr(main, "BACKTEST_RESULTS_PATH", tmp_path / "missing.json")
+    fake_registry = MagicMock()
+    fake_registry.resolve.side_effect = UnknownModelError("no registrado")
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+
+    assert client.get("/models/diagnostics").json() == {"backtest": None, "xgboost": None}

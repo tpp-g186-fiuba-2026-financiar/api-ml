@@ -14,6 +14,7 @@ from src.black_litterman.black_litterman import (
     get_data,
     get_predicciones,
     obtener_precios_actuales,
+    pesos_actuales_por_valor,
 )
 from src.black_litterman.cartera_ancla import CarteraAncla, TipoCarteraAncla
 from src.black_litterman.matriz_de_covarianza import MatrizDeCovarianza
@@ -38,7 +39,9 @@ class TestPrediccion:
             model_version="test",
         )
         p = Prediccion(t)
-        assert p.prediccion == pytest.approx(0.05)
+        # Retorno log diario: el 5% a 5 ruedas se reparte en el horizonte.
+        assert p.prediccion == pytest.approx(np.log(1.05) / 5)
+        assert p.horizon_days == 5
 
     def test_retorno_negativo(self):
         t = TrendResponse(
@@ -52,7 +55,25 @@ class TestPrediccion:
             model_version="test",
         )
         p = Prediccion(t)
-        assert p.prediccion == pytest.approx(-0.05)
+        assert p.prediccion == pytest.approx(np.log(0.95) / 5)
+
+    def test_mismo_retorno_a_mayor_horizonte_es_menor_vista_diaria(self):
+        # Regresion de unidades: Q tiene que ser diario como Sigma/Pi/Omega,
+        # no el retorno al horizonte (5-20 ruedas) del modelo.
+        def trend(horizon):
+            return TrendResponse(
+                symbol="GGAL",
+                signal="alza",
+                horizon_days=horizon,
+                last_close=100.0,
+                predicted_close=110.0,
+                condition="neutral",
+                as_of="2025-01-01",
+                model_version="test",
+            )
+
+        corto, largo = Prediccion(trend(5)), Prediccion(trend(20))
+        assert corto.prediccion == pytest.approx(4 * largo.prediccion)
 
     def test_guarda_ticker(self):
         t = TrendResponse(
@@ -73,14 +94,17 @@ class TestGetPredicciones:
     def test_arma_q_en_el_mismo_orden_que_tickers(self):
         tickers = ["GGAL", "YPFD", "PAMP"]
         predict = make_predict_function({"GGAL": 0.05, "YPFD": -0.01, "PAMP": 0.0})
-        q = get_predicciones(tickers, predict)
-        assert q == pytest.approx([0.05, -0.01, 0.0])
+        predicciones = get_predicciones(tickers, predict)
+        assert [p.ticker for p in predicciones] == tickers
+        assert [p.prediccion for p in predicciones] == pytest.approx(
+            [np.log(1.05) / 5, np.log(0.99) / 5, 0.0]
+        )
 
-    def test_devuelve_lista_no_objetos(self):
-        tickers = ["GGAL"]
-        predict = make_predict_function({"GGAL": 0.02})
-        q = get_predicciones(tickers, predict)
-        assert all(isinstance(x, float) for x in q)
+    def test_devuelve_predicciones_con_horizonte(self):
+        predicciones = get_predicciones(["GGAL"], make_predict_function({"GGAL": 0.02}))
+        assert all(isinstance(p, Prediccion) for p in predicciones)
+        assert predicciones[0].horizon_days == 5
+        assert isinstance(predicciones[0].prediccion, float)
 
 
 # --------------------------------------------------------------------------- #
@@ -177,8 +201,9 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_completos[ticker]
 
         tickers = [*historiales_3_tickers.keys(), "ECOG"]
-        tickers_validos, historiales, precios = get_data(tickers, fetch_hist)
+        tickers_validos, historiales, precios, excluidos = get_data(tickers, fetch_hist)
 
+        assert excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
         assert "ECOG" not in tickers_validos
         assert "ECOG" not in historiales
         assert "ECOG" not in precios
@@ -189,9 +214,10 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_3_tickers[ticker]
 
         tickers = list(historiales_3_tickers.keys())
-        tickers_validos, _, _ = get_data(tickers, fetch_hist)
+        tickers_validos, _, _, excluidos = get_data(tickers, fetch_hist)
 
         assert set(tickers_validos) == set(historiales_3_tickers.keys())
+        assert excluidos == {}
 
     def test_respeta_min_ruedas_pasado_por_parametro(self, historiales_3_tickers):
         # Con un min_ruedas mas laxo que el default, un historial que antes
@@ -205,7 +231,7 @@ class TestGetDataFiltraPorMinimoDeRuedas:
             return historiales_completos[ticker]
 
         tickers = [*historiales_3_tickers.keys(), "ECOG"]
-        tickers_validos, _, _ = get_data(tickers, fetch_hist, min_ruedas=10)
+        tickers_validos, _, _, _ = get_data(tickers, fetch_hist, min_ruedas=10)
 
         assert "ECOG" in tickers_validos
 
@@ -350,9 +376,8 @@ class TestEntryEndToEnd:
         tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01, "PAMP": 0.0})
 
-        tickers, pesos = entry(
-            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
-        )
+        resultado = entry(usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
+        tickers, pesos = resultado.tickers, resultado.pesos
 
         assert set(tickers) == set(historiales_3_tickers.keys())
         assert len(pesos) == len(tickers)
@@ -371,12 +396,11 @@ class TestEntryEndToEnd:
         tickers_in = [*historiales_3_tickers.keys(), "ECOG"]
         predict = make_predict_function({})  # todas las vistas neutras (0%)
 
-        tickers, pesos = entry(
-            usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
-        )
+        resultado = entry(usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
 
-        assert "ECOG" not in tickers
-        assert len(pesos) == len(tickers)
+        assert "ECOG" not in resultado.tickers
+        assert len(resultado.pesos) == len(resultado.tickers)
+        assert resultado.tickers_excluidos == {"ECOG": f"17 ruedas, minimo {MIN_RUEDAS}"}
 
     def test_usuario_sin_cartera_no_explota(self, usuario_sin_cartera, historiales_3_tickers):
         # Con la cartera ancla cayendo a EQUAL_WEIGHT por default, un
@@ -386,10 +410,10 @@ class TestEntryEndToEnd:
         tickers_in = list(historiales_3_tickers.keys())
         predict = make_predict_function({"GGAL": 0.03})
 
-        tickers, pesos = entry(
-            usuario_sin_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
-        )
-        assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
+        resultado = entry(usuario_sin_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist)
+        assert resultado.pesos.sum() == pytest.approx(1.0, abs=1e-6)
+        assert resultado.cartera_ancla == "equal_weight"
+        assert np.all(resultado.peso_actual == 0.0)
 
     def test_tipo_cartera_ancla_explicito_se_respeta(
         self, usuario_con_cartera, historiales_3_tickers
@@ -400,14 +424,18 @@ class TestEntryEndToEnd:
 
         # Fuerzo EQUAL_WEIGHT aunque el usuario tenga cartera propia -- no
         # deberia fallar ni ignorar el parametro.
-        tickers, pesos = entry(
+        resultado = entry(
             usuario_con_cartera,
             predict,
             tipo_cartera_ancla=TipoCarteraAncla.EQUAL_WEIGHT,
             tickers=tickers_in,
             fetch_hist=fetch_hist,
         )
-        assert pesos.sum() == pytest.approx(1.0, abs=1e-6)
+        assert resultado.pesos.sum() == pytest.approx(1.0, abs=1e-6)
+        assert resultado.cartera_ancla == "equal_weight"
+        # peso_actual es la cartera real por valor, no el ancla 1/n.
+        assert not np.allclose(resultado.peso_actual, 1 / 3)
+        assert resultado.peso_actual.sum() == pytest.approx(1.0)
 
     def test_con_garch_model_no_explota_y_cambia_el_resultado(
         self, usuario_con_cartera, historiales_3_tickers
@@ -433,16 +461,16 @@ class TestEntryEndToEnd:
                     return variancias_garch["YPFD"]
                 return variancias_garch["PAMP"]
 
-        _, pesos_sin_garch = entry(
+        pesos_sin_garch = entry(
             usuario_con_cartera, predict, tickers=tickers_in, fetch_hist=fetch_hist
-        )
-        _, pesos_con_garch = entry(
+        ).pesos
+        pesos_con_garch = entry(
             usuario_con_cartera,
             predict,
             garch_model=FakeGarch(),
             tickers=tickers_in,
             fetch_hist=fetch_hist,
-        )
+        ).pesos
 
         assert pesos_con_garch.sum() == pytest.approx(1.0, abs=1e-6)
         assert not np.allclose(pesos_sin_garch, pesos_con_garch)
@@ -500,7 +528,7 @@ class TestEntryEndToEnd:
                 perfil_riesgo=perfil,
                 tenencias=[{"ticker": "GGAL", "cantidad": 10}, {"ticker": "YPFD", "cantidad": 10}],
             )
-            _, pesos = entry(usuario, predict, tickers=tickers_in, fetch_hist=fetch_hist)
+            pesos = entry(usuario, predict, tickers=tickers_in, fetch_hist=fetch_hist).pesos
             resultados[perfil] = pesos
 
         concentracion_conservador = np.max(resultados[PerfilRiesgo.CONSERVADOR])
@@ -524,7 +552,7 @@ def test_get_data_downloads_in_parallel_but_keeps_ticker_order() -> None:
 
     tickers = ["AAA", "BBB", "CCC", "DDD"]
     started = time.perf_counter()
-    validos, historiales, _ = bl.get_data(tickers, slow_fetch)
+    validos, historiales, _, _ = bl.get_data(tickers, slow_fetch)
     elapsed = time.perf_counter() - started
 
     assert validos == tickers
@@ -539,9 +567,53 @@ def test_get_predicciones_keeps_ticker_order_when_run_in_parallel() -> None:
     class FakeTrend:
         def __init__(self, symbol, ratio):
             self.symbol = symbol
+            self.horizon_days = 1
             self.last_close = 100.0
             self.predicted_close = 100.0 * ratio
 
     ratios = {"AAA": 1.01, "BBB": 0.98, "CCC": 1.05}
-    q = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
-    assert q == pytest.approx([0.01, -0.02, 0.05])
+    predicciones = bl.get_predicciones(list(ratios), lambda t: FakeTrend(t, ratios[t]))
+    assert [p.prediccion for p in predicciones] == pytest.approx(np.log(list(ratios.values())))
+
+
+class TestResultadoBL:
+    def test_detalle_trae_intermedios_por_ticker(self, usuario_con_cartera, historiales_3_tickers):
+        def fetch_hist(ticker, days=None):
+            return historiales_3_tickers[ticker]
+
+        predict = make_predict_function({"GGAL": 0.02, "YPFD": -0.01})
+        resultado = entry(
+            usuario_con_cartera,
+            predict,
+            tickers=list(historiales_3_tickers),
+            fetch_hist=fetch_hist,
+        )
+        detalle = resultado.detalle()
+
+        assert [d["ticker"] for d in detalle] == resultado.tickers
+        assert set(detalle[0]) == {
+            "ticker", "peso_actual", "peso_recomendado", "pi", "q", "omega", "mu_bl",
+            "horizon_days",
+        }  # fmt: skip
+        por_ticker = {d["ticker"]: d for d in detalle}
+        assert por_ticker["GGAL"]["q"] == pytest.approx(np.log(1.02) / 5)
+        assert por_ticker["PAMP"]["q"] == 0.0
+        assert all(d["omega"] > 0 for d in detalle)
+        assert all(d["horizon_days"] == 5 for d in detalle)
+        assert sum(d["peso_recomendado"] for d in detalle) == pytest.approx(1.0, abs=1e-6)
+        assert resultado.cartera_ancla == "propia"
+        # PAMP tiene cantidad 0: no participa de la cartera real.
+        assert por_ticker["PAMP"]["peso_actual"] == 0.0
+        assert sum(d["peso_actual"] for d in detalle) == pytest.approx(1.0)
+
+    def test_bl_mu_se_cachea(self, bl_prediction):
+        assert bl_prediction.bl_mu() is bl_prediction.bl_mu()
+
+
+def test_pesos_actuales_por_valor_ignora_tickers_fuera_del_universo() -> None:
+    usuario = Usuario(
+        perfil_riesgo=PerfilRiesgo.MODERADO,
+        tenencias=[{"ticker": "GGAL", "cantidad": 1}, {"ticker": "AAPL", "cantidad": 100}],
+    )
+    w = pesos_actuales_por_valor(usuario, ["GGAL", "YPFD"], {"GGAL": 10.0, "YPFD": 5.0})
+    assert w == pytest.approx([1.0, 0.0])

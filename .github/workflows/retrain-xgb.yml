@@ -1,0 +1,44 @@
+name: Reentrenar modelo XGBoost
+
+# El XGBoost v2 predice a 20 ruedas y calibra sus umbrales fuera de muestra: reentrenarlo
+# todos los dias solo mueve los umbrales y ensucia el historial con binarios. Mensual (usa Yahoo directo).
+on:
+  schedule:
+    - cron: "0 23 2 * *"
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  retrain:
+    runs-on: ubuntu-latest
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+          cache: pip
+
+      - name: Install dependencies
+        run: pip install -r requirements.txt
+
+      - name: Reentrenar
+        env:
+          DATA_SOURCE: yahoo
+        run: python -m src.train_xgb
+
+      - name: Commitear el artefacto actualizado
+        run: |
+          git config user.name "github-actions[bot]"
+          git config user.email "github-actions[bot]@users.noreply.github.com"
+          git add -f models/xgb.pkl
+          if git diff --cached --quiet; then
+            echo "sin cambios en el modelo"
+          else
+            git commit -m "chore: reentrena el modelo xgboost [skip ci]"
+            git push
+          fi

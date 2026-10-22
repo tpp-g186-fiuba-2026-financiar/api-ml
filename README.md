@@ -150,15 +150,15 @@ artefacto nuevo cada vez que cambie el feature set o el código de la red.
 > como no cargado (igual que si nunca se hubiese entrenado) en vez de tirar
 > abajo el arranque del servicio. Mismo mecanismo para XGBoost y Transformer.
 
-## Modelo XGBoost de tendencia
+## Modelo XGBoost de tendencia (v2)
 
-Modelo tabular (gradient boosting) que resuelve la **misma tarea** que el LSTM
-—predecir el retorno log acumulado a `horizon` días— para poder compararlos:
-
-- **Mismos features base y mismo target** que el LSTM (`src/lstm.py`).
-- Como XGBoost no es secuencial, la ventana de los últimos `window` días se
-  **aplana** a un único vector de features.
-- **Misma salida** (`src/trend_common.py`), así las predicciones son comparables.
+Clasificador P(sube a 20 ruedas) con árboles chicos y regularizados, variables
+técnicas + contexto de mercado + **rango de cada variable frente al resto del
+universo ese día**, peso decreciente en el tiempo y abstención calibrada fuera
+de muestra: solo emite `alza`/`baja` en el 10% más extremo de cada lado y
+`neutral` en el resto. Su accuracy global **no** supera a "siempre sube"; lo que
+mide es cuánto mejor que la tasa base acierta cuando opina (ver
+`notebooks/evaluacion_xgb_v2.py`).
 
 Código: `src/xgb_trend.py` (modelo) y `src/train_xgb.py` (entrenamiento).
 
@@ -166,8 +166,7 @@ Código: `src/xgb_trend.py` (modelo) y `src/train_xgb.py` (entrenamiento).
 
 ```bash
 python -m src.train_xgb
-# o con parámetros:
-python -m src.train_xgb --n-estimators 500 --max-depth 5 --window 30
+python -m src.train_xgb --tickers GGAL YPFD BMA PAMP TXAR ALUA TECO2 CEPU  # hacen falta los líderes
 ```
 
 Guarda el artefacto en `XGB_MODEL_PATH` (default `models/xgb.pkl`). Requiere la

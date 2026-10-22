@@ -57,6 +57,31 @@ def test_fetch_history_yahoo_parses_candles() -> None:
     assert df.index.is_monotonic_increasing
 
 
+def test_fetch_history_yahoo_adjusts_for_dividends_and_splits() -> None:
+    # Un split 2x el dia 3: sin ajustar el cierre cae de 101 a 51 de golpe.
+    payload = _yahoo_payload(4)
+    quote = payload["chart"]["result"][0]["indicators"]["quote"][0]
+    quote["close"] = [100.0, 101.0, 51.0, 52.0]
+    quote["open"] = quote["high"] = quote["low"] = quote["close"]
+    payload["chart"]["result"][0]["indicators"]["adjclose"] = [
+        {"adjclose": [50.0, 50.5, 51.0, 52.0]}
+    ]
+    with patch("src.data.requests.get", return_value=_mock_response(payload)):
+        df = fetch_history_yahoo("GGAL", days=100)
+
+    assert df["close"].tolist() == pytest.approx([50.0, 50.5, 51.0, 52.0])
+    assert df["open"].tolist() == pytest.approx([50.0, 50.5, 51.0, 52.0])
+
+
+def test_fetch_history_yahoo_without_adjclose_keeps_raw_prices() -> None:
+    payload = _yahoo_payload(3)
+    payload["chart"]["result"][0]["indicators"]["adjclose"] = [{"adjclose": [None, None, None]}]
+    with patch("src.data.requests.get", return_value=_mock_response(payload)):
+        df = fetch_history_yahoo("GGAL", days=100)
+
+    assert df["close"].tolist() == [100.0, 101.0, 102.0]
+
+
 def test_fetch_history_yahoo_raises_on_request_exception() -> None:
     with patch("src.data.requests.get", side_effect=requests.RequestException("timeout")):
         with pytest.raises(DataUnavailableError):

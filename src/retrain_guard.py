@@ -54,7 +54,7 @@ def pooled_directional_accuracy(
         if result is None:
             continue
         total_observations += result["observations"]
-        total_correct += result["directional_accuracy"] * result["observations"]
+        total_correct += (result["directional_accuracy"] or 0.0) * result["observations"]
     if total_observations == 0:
         return {"directional_accuracy": None, "observations": 0}
     return {

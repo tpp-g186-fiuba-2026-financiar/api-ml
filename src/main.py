@@ -1,6 +1,9 @@
+import json
+import math
 import time
 from contextlib import asynccontextmanager
 from datetime import date
+from pathlib import Path
 from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
@@ -8,7 +11,7 @@ from fastapi import FastAPI, HTTPException, Query
 from src.black_litterman.black_litterman import entry
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
-from src.consensus import compute_consensus, load_track_record
+from src.consensus import LEDGER_PATH, compute_consensus, load_track_record
 from src.data import fetch_history
 from src.errors import (
     ApiMlError,
@@ -20,14 +23,18 @@ from src.errors import (
 from src.garch_volatility import GarchVolatilityModel
 from src.modal_client import call_modal
 from src.model import PredictionModel
+from src.paper_trading import load_ledger, signal_history
+from src.registry import _fetch_history_with_macro as fetch_history_with_macro
 from src.registry import build_registry
 from src.schemas import (
     ConsensusResponse,
     DirectionResponse,
+    ExplainResponse,
     HealthResponse,
     PerfilRiesgo,
     PredictionRequest,
     PredictionResponse,
+    SignalHistoryResponse,
     TrendRequest,
     TrendResponse,
     Usuario,
@@ -35,6 +42,7 @@ from src.schemas import (
 )
 from src.svm_direction import SvmDirectionModel
 
+BACKTEST_RESULTS_PATH = Path(__file__).resolve().parent.parent / "models" / "backtest_results.json"
 RECOMENDACION_TTL_SEGUNDOS = 600
 _RECOMENDACION_CACHE_MAX = 64
 _recomendacion_cache: dict[tuple, tuple[float, dict]] = {}
@@ -205,6 +213,39 @@ async def predict_trend_consensus(
 
 
 @app.get(
+    "/predict/trend/xgboost/explain/{symbol}",
+    response_model=ExplainResponse,
+    tags=["Predicciones"],
+    summary="Por que XGBoost dice lo que dice (contribuciones SHAP)",
+    description=(
+        "Contribucion de cada variable a la P(sube) de la ultima rueda, en "
+        "log-odds (TreeSHAP de XGBoost, promediado entre las semillas del "
+        "ensamble). `base_value + sum(contribution)` es el margen del modelo; "
+        "positivo empuja a 'sube'. Ordenadas por |contribution| descendente; "
+        "`label` es un nombre en castellano para mostrar."
+    ),
+)
+async def explain_xgboost(symbol: str) -> ExplainResponse:
+    try:
+        service = trend_registry.resolve("xgboost")
+        model = getattr(service, "model", None)
+        if model is None:
+            raise ModelNotLoadedError("el modelo 'xgboost' no esta entrenado")
+        # El mismo historico que usa /compare, para que la probabilidad coincida.
+        df = fetch_history_with_macro(symbol, settings.history_days)
+        result = model.explain(df)
+    except UnknownModelError as exc:
+        raise HTTPException(status_code=404, detail=str(exc)) from exc
+    except ModelNotLoadedError as exc:
+        raise HTTPException(status_code=503, detail=str(exc)) from exc
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return ExplainResponse(symbol=symbol.strip().upper(), model_version=model.version, **result)
+
+
+@app.get(
     "/predict/trend/{symbol}",
     response_model=TrendResponse,
     tags=["Predicciones"],
@@ -338,29 +379,19 @@ def _predict_function(model: str | None):
     return _predict
 
 
-def _predict_function(model: str | None):
-    """Arma la funcion (ticker -> TrendResponse) que necesita entry(),
-    usando el trend_registry que main.py ya tiene. Asi black_litterman.py
-    nunca necesita importar nada de main.py.
-    """
-
-    def _predict(ticker: str) -> TrendResponse:
-        service = trend_registry.resolve(model)
-        resultado = service.predict(ticker)
-        return TrendResponse(**resultado)
-
-    return _predict
-
-
 @app.post(
     "/portfolio/recomendacion",
     response_model=dict,
     tags=["Predicciones"],
     summary="Recomendacion de cartera (Black-Litterman)",
     description=(
-        "Arma Q y Omega con las predicciones de tendencia de cada ticker "
-        "(placeholder: confidence=1 para todos), Pi a partir de la cartera "
-        "actual del usuario, y devuelve los pesos optimos recomendados."
+        "Arma Q (retorno log diario de cada modelo: log(pc/lc)/horizon_days) y "
+        "Omega (tau * Sigma_ii) con las predicciones de tendencia, Pi a partir "
+        "de la cartera ancla, y devuelve los pesos optimos recomendados. "
+        "`detalle` trae, por ticker, peso actual (participacion real por valor), "
+        "peso recomendado y los intermedios pi/q/omega/mu_bl (retornos diarios); "
+        "`tickers_excluidos` los descartados con su motivo; `cartera_ancla` la "
+        "estrategia efectivamente usada."
     ),
 )
 async def portfolio_recomendacion(
@@ -389,9 +420,7 @@ async def portfolio_recomendacion(
     if cached and time.monotonic() - cached[0] < RECOMENDACION_TTL_SEGUNDOS:
         return cached[1]
     try:
-        tickers, pesos = entry(
-            usuario, _predict_function(model), garch_volatility_model, cartera_ancla
-        )
+        resultado = entry(usuario, _predict_function(model), garch_volatility_model, cartera_ancla)
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
     except ModelNotLoadedError as exc:
@@ -405,8 +434,81 @@ async def portfolio_recomendacion(
     except ValueError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
 
-    result = {"pesos_recomendados": dict(zip(tickers, pesos.tolist(), strict=True))}
+    result = {
+        "pesos_recomendados": dict(zip(resultado.tickers, resultado.pesos.tolist(), strict=True)),
+        "detalle": resultado.detalle(),
+        "tickers_excluidos": resultado.tickers_excluidos,
+        "cartera_ancla": resultado.cartera_ancla,
+    }
     if len(_recomendacion_cache) >= _RECOMENDACION_CACHE_MAX:
         _recomendacion_cache.pop(next(iter(_recomendacion_cache)))
     _recomendacion_cache[cache_key] = (time.monotonic(), result)
     return result
+
+
+@app.get(
+    "/signals/history",
+    response_model=SignalHistoryResponse,
+    tags=["Modelos"],
+    summary="Historial de senales (paper trading)",
+    description=(
+        "Senales registradas por el paper trading diario (pendientes y ya "
+        "resueltas), la mas nueva primero. `hit` es true/false si ya se cumplio "
+        "el horizonte y la senal fue alza/baja; null si esta pendiente o fue "
+        "neutral. `summary` resume las filas devueltas con resultado."
+    ),
+)
+async def signals_history(
+    symbols: Annotated[
+        str | None, Query(description="Tickers separados por coma (ej: GGAL,YPFD). Vacio = todos.")
+    ] = None,
+    limit: Annotated[int, Query(ge=1, le=5000)] = 200,
+) -> SignalHistoryResponse:
+    wanted = [s for s in (symbols or "").split(",") if s.strip()] or None
+    try:
+        ledger = load_ledger(LEDGER_PATH)
+    except (OSError, ValueError):
+        ledger = {"pending": [], "resolved": []}
+    return SignalHistoryResponse(**signal_history(ledger, wanted, limit))
+
+
+def _json_safe(value):
+    """NaN/inf no son JSON valido: se devuelven como null."""
+    if isinstance(value, float) and not math.isfinite(value):
+        return None
+    if isinstance(value, dict):
+        return {k: _json_safe(v) for k, v in value.items()}
+    if isinstance(value, list):
+        return [_json_safe(v) for v in value]
+    return value
+
+
+@app.get(
+    "/models/diagnostics",
+    response_model=dict,
+    tags=["Modelos"],
+    summary="Diagnostico de modelos",
+    description=(
+        "`backtest`: ultimo backtest walk-forward (models/backtest_results.json, "
+        "null si no hay). `xgboost`: version y metricas fuera de muestra del "
+        "artefacto XGBoost cargado (null si no esta cargado)."
+    ),
+)
+async def models_diagnostics() -> dict:
+    try:
+        backtest = json.loads(BACKTEST_RESULTS_PATH.read_text())
+    except (OSError, ValueError):
+        backtest = None
+
+    xgboost = None
+    try:
+        model = getattr(trend_registry.resolve("xgboost"), "model", None)
+    except UnknownModelError:
+        model = None
+    if model is not None:
+        xgboost = {
+            "version": model.version,
+            "trained_at": getattr(model, "trained_at", None),
+            "metrics": dict(getattr(model, "metrics", {}) or {}),
+        }
+    return _json_safe({"backtest": backtest, "xgboost": xgboost})

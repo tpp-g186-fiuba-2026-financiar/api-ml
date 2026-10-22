@@ -19,10 +19,8 @@ from src import (
     svm_direction,
     train,
     train_transformer,
-    train_xgb,
     transformer,
     trend_common,
-    xgb_trend,
 )
 from src.errors import DataUnavailableError, NotEnoughDataError
 
@@ -243,56 +241,6 @@ def test_retrain_guard_scores_and_promotes(monkeypatch, tmp_path):
     forced.save.assert_called_once_with(model_path)
 
 
-class FakeBooster:
-    def __init__(self, **kwargs):
-        self.kwargs = kwargs
-
-    def fit(self, x, y, **kwargs):
-        self.fitted = (x, y, kwargs)
-
-    def predict(self, x):
-        return np.full(len(x), 0.02)
-
-
-def test_xgb_model_fit_predict_save_and_load(monkeypatch, tmp_path):
-    monkeypatch.setitem(sys.modules, "xgboost", SimpleNamespace(XGBRegressor=FakeBooster))
-    feats = np.ones((80, 3))
-    target = np.linspace(-0.1, 0.1, 80)
-    monkeypatch.setattr(xgb_trend, "build_features", lambda df, horizon: (feats, target))
-    monkeypatch.setattr(
-        xgb_trend,
-        "make_windows",
-        lambda f, t, window: (np.ones((50, window, 3)), np.linspace(-0.1, 0.1, 50)),
-    )
-    monkeypatch.setattr(
-        xgb_trend,
-        "derive_trend_output",
-        lambda df, value, horizon, band: {"value": value, "horizon": horizon},
-    )
-
-    model = xgb_trend.XGBTrendModel(xgb_trend.XGBConfig(window=2, n_estimators=1))
-    assert model.version == "untrained"
-    metrics = model.fit({"GGAL": history()})
-    assert metrics["val_samples"] > 0
-    assert model.version.startswith("xgb-")
-    assert model.predict_df(history())["horizon"] == 5
-    assert model._evaluate(np.empty((0, 6)), np.empty((0,))) == {}
-
-    path = tmp_path / "xgb.pkl"
-    model.save(path)
-    loaded = xgb_trend.XGBTrendModel.load(path)
-    assert loaded.predict_df(history())["value"] == pytest.approx(0.02)
-
-    empty = xgb_trend.XGBTrendModel(xgb_trend.XGBConfig(window=2))
-    with pytest.raises(NotEnoughDataError):
-        empty.predict_df(history())
-    with pytest.raises(NotEnoughDataError):
-        empty.save(path)
-    monkeypatch.setattr(xgb_trend, "make_windows", lambda *a: (np.empty((0,)), np.empty((0,))))
-    with pytest.raises(NotEnoughDataError):
-        empty.fit({"GGAL": history()})
-
-
 def test_transformer_building_blocks_and_guards(tmp_path):
     positional = transformer._LearnedPositionalEncoding(max_len=4, d_model=4)
     assert positional(torch.zeros(2, 3, 4)).shape == (2, 3, 4)
@@ -324,7 +272,6 @@ def test_transformer_building_blocks_and_guards(tmp_path):
     ("module", "model_name", "config_name"),
     [
         (train, "TrendModel", "TrainConfig"),
-        (train_xgb, "XGBTrendModel", "XGBConfig"),
         (train_transformer, "TransformerTrendModel", "TransformerTrainConfig"),
     ],
 )
@@ -371,3 +318,42 @@ def test_training_entrypoints_force_and_reject(monkeypatch, module, model_name, 
     monkeypatch.setattr(module, "fetch_histories", lambda *a: {})
     with pytest.raises(SystemExit):
         module.main()
+
+
+def test_backtest_predict_df_neutral_cases_are_not_errors():
+    # Un modelo que casi siempre se abstiene (proyecta el mismo precio) no
+    # puede quedar con 0% de acierto: esos casos no cuentan.
+    class AbstainingPredictor:
+        calls = 0
+
+        def predict_df(self, frame):
+            self.calls += 1
+            last = float(frame["close"].iloc[-1])
+            return {"predicted_close": last * 1.02 if self.calls == 1 else last}
+
+    result = trend_common.backtest_predict_df(AbstainingPredictor(), history(), 2, 15, step=2)
+    assert result is not None
+    assert result["observations"] == 1
+    assert result["cases"] > 1
+    assert result["directional_accuracy"] == 1.0
+
+
+def test_backtest_predict_df_without_any_signal_has_no_accuracy():
+    class NeverOpines:
+        def predict_df(self, frame):
+            return {"predicted_close": float(frame["close"].iloc[-1])}
+
+    result = trend_common.backtest_predict_df(NeverOpines(), history(), 2, 15, step=2)
+    assert result is not None
+    assert result["directional_accuracy"] is None
+    assert result["observations"] == 0
+
+
+def test_pooled_accuracy_skips_models_that_never_opine(monkeypatch):
+    monkeypatch.setattr(
+        retrain_guard,
+        "backtest_predict_df",
+        lambda *a, **k: {"directional_accuracy": None, "observations": 0},
+    )
+    score = retrain_guard.pooled_directional_accuracy(object(), {"A": history()}, 5)
+    assert score == {"directional_accuracy": None, "observations": 0}

@@ -26,7 +26,7 @@ from src.data import fetch_history
 from src.data_quality import drop_stale, is_stale
 from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
 from src.macro_trend import TECH_FEATURES, UNIVERSE, technical_features
-from src.trend_common import derive_trend_output
+from src.trend_common import derive_trend_output, weak_signal_sides
 
 HORIZON = 20
 MIN_ROWS = 260
@@ -189,6 +189,16 @@ class ContextTrendModel:
             raise NotEnoughDataError("no hay historia suficiente para medir fuera de muestra")
         return pd.concat(parts)
 
+    def _apply_signal_edge(self) -> None:
+        """Apaga el lado (alza/baja) cuya ventaja fuera de muestra es chica."""
+        alza_weak, baja_weak = weak_signal_sides(self.metrics)
+        if alza_weak:
+            self.alza_threshold = float("-inf")
+            self.metrics["alza_disabled"] = 1.0
+        if baja_weak:
+            self.baja_threshold = float("inf")
+            self.metrics["baja_disabled"] = 1.0
+
     def fit_panel(self, panel: pd.DataFrame) -> dict[str, float]:
         """Calibra umbrales fuera de muestra y entrena el modelo final."""
         cfg = self.config
@@ -223,6 +233,7 @@ class ContextTrendModel:
             "baja_disabled": float(baja_off),
             "alza_disabled": float(alza_off),
         }
+        self._apply_signal_edge()
         latest = pd.Timestamp(panel.index.max())
         weights = _decay_weights(panel.index, latest)
         self._models = _fit_ensemble(
@@ -311,6 +322,7 @@ class ContextTrendModel:
                 baja_move=blob["baja_move"],
             )
             model._models = blob["models"]
+            model._apply_signal_edge()
         except (TypeError, KeyError) as exc:
             raise StaleArtifactError(
                 f"el artefacto 'contexto' tiene un formato desactualizado ({exc!r}): "

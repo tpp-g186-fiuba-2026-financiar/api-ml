@@ -18,6 +18,7 @@ from __future__ import annotations
 import time
 
 import certifi
+import numpy as np
 import pandas as pd
 import requests
 
@@ -111,7 +112,30 @@ def fetch_history_yahoo(symbol: str, days: int | None = None) -> pd.DataFrame:
         },
         index=pd.to_datetime(timestamps, unit="s"),
     )
-    return _clean(frame, days)
+    return _clean(_adjust_for_corporate_actions(frame, node), days)
+
+
+def _adjust_for_corporate_actions(frame: pd.DataFrame, node: dict) -> pd.DataFrame:
+    """Lleva OHLC a precios ajustados por dividendos y splits.
+
+    Sin ajustar, un split o un dividendo aparecen como una caida de un dia que
+    nunca existio, y contaminan retornos, indicadores y el target. Yahoo manda
+    ``adjclose``: se aplica el mismo factor (ajustado / cierre) a apertura,
+    maximo, minimo y cierre. Si no viene, se deja la serie como esta.
+    """
+    adj = ((node.get("indicators") or {}).get("adjclose") or [{}])[0].get("adjclose")
+    if not adj or len(adj) != len(frame):
+        return frame
+    adjusted = pd.Series(adj, index=frame.index, dtype="float64")
+    factor = adjusted / frame["close"].astype("float64")
+    factor = factor.where(np.isfinite(factor) & (factor > 0))
+    if factor.isna().all():
+        return frame
+    factor = factor.ffill().bfill()
+    out = frame.copy()
+    for column in ("open", "high", "low", "close"):
+        out[column] = frame[column].astype("float64") * factor
+    return out
 
 
 def fetch_history_collector(symbol: str, days: int | None = None) -> pd.DataFrame:

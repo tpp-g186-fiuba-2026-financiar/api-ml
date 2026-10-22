@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -18,30 +19,39 @@ ALFA_CONSERVADOR = 0.75
 ALFA_MODERADO = 0.5
 ALFA_ARRIESGADO = 0.25
 
-# ALFA_* (0.25-0.75) funciona bien como delta de mercado en get_pi(), donde
-# Pi = delta * Sigma @ w_ancla -- ahi Pi queda en la misma escala que mu
-# porque los dos lados de esa cuenta usan Sigma. Pero optimizar_pesos()
-# resuelve mu.w - (delta/2) * w'.Sigma.w, y ahi mu (retornos esperados,
-# ~1e-2) y Sigma (varianzas de retornos diarios, ~1e-4) NO estan en la
-# misma escala relativa: con delta=0.25-0.75 el termino de riesgo queda
-# ordenes de magnitud mas chico que el de retorno, y el optimizador termina
-# concentrando todo en el ticker de mayor mu (solucion de esquina), no
-# porque el solver falle sino porque el objetivo, tal como queda planteado,
-# casi no penaliza el riesgo.
+# Unidades: TODO en Black-Litterman esta en retornos DIARIOS. Sigma sale de
+# retornos diarios (y GARCH da la varianza a un dia), Pi = delta * Sigma @ w
+# hereda esa escala y Omega = tau * Sigma_ii tambien. Por eso Q tiene que ser
+# diario: cada modelo predice el retorno a su propio horizonte (5 ruedas LSTM,
+# 20 XGBoost/Contexto), y se pasa a diario como log(pc/lc) / horizon_days
+# (ver Prediccion). Antes Q era pc/lc - 1 al horizonte, 5-20 veces mas grande
+# que Pi y Omega: las vistas pesaban de mas y el optimizador caia en esquinas.
 #
-# ESCALA_DELTA_OPTIMIZADOR reescala ALFA_* para que el termino de riesgo
-# vuelva a competir. OJO: el valor correcto depende de la correlacion entre
-# tickers, no solo de mu/Sigma_ii -- con tickers muy correlacionados (varios
-# bancos del panel lider) probado empiricamente con datos sinteticos
-# representativos, hicieron falta valores de delta del orden de 1e3-1e4
-# para dejar de dar soluciones de esquina, no ~200 como una cuenta ingenua
-# de mu_tipico/Sigma_ii_tipico sugeriria. 1000 es un punto de partida
-# razonable, pero HAY QUE recalibrar corriendo optimizar_pesos con mu/Sigma
-# reales de una corrida (ver script de calibracion) antes de confiar en
-# este numero solo -- por eso PESO_MAXIMO_POR_TICKER es la salvaguarda que
-# de verdad garantiza diversificacion, independientemente de que este bien
-# calibrado o no.
-ESCALA_DELTA_OPTIMIZADOR = 1000.0
+# ALFA_* (0.25-0.75) es el delta de mercado en get_pi(). En optimizar_pesos()
+# (max mu.w - (delta/2) * w'.Sigma.w) un delta de ese orden igual deja el
+# termino de riesgo muy chico frente al de retorno: las vistas de los modelos
+# (+-3-8% en 5-20 ruedas, o sea ~0.1-1.5% diario) son mucho mas fuertes que
+# cualquier prima de equilibrio, y con delta < 10 la cartera se va a 1-2
+# tickers. ESCALA_DELTA_OPTIMIZADOR reescala ALFA_* solo para el optimizador.
+#
+# Calibracion (2026-10-20, ya con Q diario): universo sintetico tipo panel
+# lider (20 tickers, vol diaria 2-3.5%, correlacion 0.45 y 0.75 entre bancos),
+# 30 escenarios de vistas (60% neutrales, resto +-3-8% a 5 o 20 ruedas), sin
+# techo por ticker:
+#
+#   escala | riesgo/retorno en el optimo     | corr(pesos, vistas)
+#          | arriesgado     conservador      | arriesgado  conservador
+#   10     | 0.23           0.63             | 0.60        0.62
+#   50     | 0.99           3.6              | 0.58        0.39
+#   200    | 6.2            15.6             | 0.32        0.14
+#   1000   | 26             84               | 0.10        0.05
+#
+# Con 50 los dos terminos del objetivo quedan del mismo orden (1x-4x segun
+# perfil): los pesos siguen a las vistas pero el riesgo diversifica, y los
+# perfiles se diferencian. El 1000 anterior compensaba el Q inflado por el
+# horizonte (equivalia a ~50-200 en escala diaria); con Q diario ahogaria las
+# vistas. PESO_MAXIMO_POR_TICKER sigue siendo la salvaguarda contra esquinas.
+ESCALA_DELTA_OPTIMIZADOR = 50.0
 
 # Techo de concentracion por ticker en la cartera final: ningun activo
 # puede pesar mas que esto, mas alla de que delta este bien calibrado.
@@ -96,6 +106,39 @@ PANEL_LIDER_TICKERS: list[str] = [
 ]
 
 
+@dataclass
+class ResultadoBL:
+    """Resultado de una corrida de Black-Litterman, con los intermedios que se
+    muestran en el endpoint. pi/q/omega/mu_bl estan en retornos diarios (log);
+    omega es la diagonal (las vistas son independientes)."""
+
+    tickers: list[str]
+    pesos: np.ndarray
+    peso_actual: np.ndarray  # participacion real del usuario por valor (0 si no tiene)
+    pi: np.ndarray
+    q: np.ndarray
+    omega: np.ndarray
+    mu_bl: np.ndarray
+    horizon_days: list[int]
+    tickers_excluidos: dict[str, str] = field(default_factory=dict)
+    cartera_ancla: str = TipoCarteraAncla.EQUAL_WEIGHT.value
+
+    def detalle(self) -> list[dict]:
+        return [
+            {
+                "ticker": ticker,
+                "peso_actual": float(self.peso_actual[i]),
+                "peso_recomendado": float(self.pesos[i]),
+                "pi": float(self.pi[i]),
+                "q": float(self.q[i]),
+                "omega": float(self.omega[i]),
+                "mu_bl": float(self.mu_bl[i]),
+                "horizon_days": int(self.horizon_days[i]),
+            }
+            for i, ticker in enumerate(self.tickers)
+        ]
+
+
 def entry(
     usuario: Usuario,
     predict_function,
@@ -103,8 +146,8 @@ def entry(
     tipo_cartera_ancla: TipoCarteraAncla | None = None,
     tickers: list[str] = PANEL_LIDER_TICKERS,
     fetch_hist=fetch_history,
-):
-    tickers, precios_historicos, precios_actuales = get_data(tickers, fetch_hist)
+) -> ResultadoBL:
+    tickers, precios_historicos, precios_actuales, tickers_excluidos = get_data(tickers, fetch_hist)
     cartera_ancla = CarteraAncla(usuario, tickers, precios_actuales, tipo=tipo_cartera_ancla)
     matriz_de_covarianza = MatrizDeCovarianza(tickers, precios_historicos)
     if garch_model is not None:
@@ -115,11 +158,41 @@ def entry(
         matriz_de_covarianza.matriz = matriz_de_covarianza.matriz_garch(
             precios_historicos, garch_model
         )
-    q = get_predicciones(tickers, predict_function)
-    print(f"Predicciones: {q}")
+    predicciones = get_predicciones(tickers, predict_function)
+    q = [p.prediccion for p in predicciones]
+    print(f"Predicciones (retorno diario): {q}")
     omega = construir_omega_tradicional(matriz_de_covarianza.matriz, TAU)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
-    return tickers, bl.predecir()
+    pesos = bl.predecir()
+    return ResultadoBL(
+        tickers=tickers,
+        pesos=pesos,
+        peso_actual=pesos_actuales_por_valor(usuario, tickers, precios_actuales),
+        pi=np.asarray(bl.pi, dtype=np.float64),
+        q=np.asarray(q, dtype=np.float64),
+        omega=np.diag(omega).astype(np.float64),
+        mu_bl=bl.bl_mu(),
+        horizon_days=[p.horizon_days for p in predicciones],
+        tickers_excluidos=tickers_excluidos,
+        cartera_ancla=cartera_ancla.tipo.value,
+    )
+
+
+def pesos_actuales_por_valor(
+    usuario: Usuario, tickers: list[str], precios: dict[str, float]
+) -> np.ndarray:
+    """Participacion real de cada ticker en la cartera del usuario, por valor
+    (cantidad * ultimo cierre), sobre el universo de la corrida. Es lo que el
+    usuario tiene hoy, independientemente de la cartera ancla elegida (con
+    equal_weight el ancla es 1/n pero esto sigue siendo su cartera real).
+    Todo cero si no tiene tenencias con valor en el universo.
+    """
+    cantidades = usuario.cantidades_por_ticker()
+    valores = np.array(
+        [max(cantidades.get(t, 0.0), 0.0) * precios[t] for t in tickers], dtype=np.float64
+    )
+    total = valores.sum()
+    return valores / total if total > 0 else np.zeros(len(tickers))
 
 
 class BlackLittermanPrediction:
@@ -133,6 +206,7 @@ class BlackLittermanPrediction:
         self.pi: np.ndarray = self.get_pi()
         self.tau = TAU
         self.inv_tau_sigma = None
+        self._bl_mu: np.ndarray | None = None
 
     def get_pi(self):
         x = np.dot(self.matriz_de_covarianza.matriz, self.cartera_ancla.vector)
@@ -148,9 +222,12 @@ class BlackLittermanPrediction:
                 return ALFA_ARRIESGADO
 
     def bl_mu(self):
-        left_term = inv(self._inv_tau_sigma() + inv(self.omega))
-        right_term = np.dot(self._inv_tau_sigma(), self.pi) + np.dot(inv(self.omega), self.q)
-        return np.dot(left_term, right_term)
+        # Cacheado: predecir() lo usa y entry() lo vuelve a pedir para el detalle.
+        if self._bl_mu is None:
+            left_term = inv(self._inv_tau_sigma() + inv(self.omega))
+            right_term = np.dot(self._inv_tau_sigma(), self.pi) + np.dot(inv(self.omega), self.q)
+            self._bl_mu = np.dot(left_term, right_term)
+        return self._bl_mu
 
     def _inv_tau_sigma(self):
         if self.inv_tau_sigma is None:
@@ -227,7 +304,7 @@ def get_data(
 
     tickers_validos = [t for t in tickers if t not in tickers_excluidos]
     precios_actuales = obtener_precios_actuales(historiales)
-    return tickers_validos, historiales, precios_actuales
+    return tickers_validos, historiales, precios_actuales, tickers_excluidos
 
 
 def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, float]:
@@ -242,16 +319,13 @@ def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, 
     return precios_actuales
 
 
-def get_predicciones(tickers, predict_functions):
-    r = {}
-    # Cada prediccion baja su propio historico: se hacen en paralelo (mismo
-    # orden de resultados que ``tickers``).
+def get_predicciones(tickers, predict_functions) -> list[Prediccion]:
+    """Una Prediccion por ticker, en el mismo orden que ``tickers``."""
+    # Cada prediccion baja su propio historico: se hacen en paralelo (``map``
+    # conserva el orden de ``tickers``).
     with ThreadPoolExecutor(max_workers=MAX_WORKERS_DESCARGA) as pool:
         predictions = list(pool.map(predict_functions, tickers))
-    for ticker, prediction in zip(tickers, predictions, strict=True):
-        r[ticker] = Prediccion(prediction)
-    q = [r[ticker].prediccion for ticker in tickers]
-    return q
+    return [Prediccion(prediction) for prediction in predictions]
 
 
 def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
@@ -271,7 +345,14 @@ def construir_omega_tradicional(sigma: np.ndarray, tau: float) -> np.ndarray:
 
 
 class Prediccion:
+    """Vista de un modelo para un ticker, como retorno log DIARIO: el modelo
+    predice el cierre a ``horizon_days`` ruedas y se reparte parejo en el
+    horizonte, para quedar en la misma escala que Sigma/Pi/Omega (ver el
+    comentario de ESCALA_DELTA_OPTIMIZADOR).
+    """
+
     def __init__(self, t: TrendResponse):
-        self.prediccion = (t.predicted_close / t.last_close) - 1.0
+        self.horizon_days = max(int(t.horizon_days), 1)
+        self.prediccion = float(np.log(t.predicted_close / t.last_close)) / self.horizon_days
         self.ticker = t.symbol
         self.confianza = 1
