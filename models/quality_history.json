@@ -278,5 +278,31 @@
       "xgboost-modal": 0.2741,
       "transformer": -0.0125
     }
+  },
+  {
+    "date": "2026-10-24",
+    "period": {
+      "from": "2026-07-22",
+      "to": "2026-10-19"
+    },
+    "n_resolved": 10120,
+    "paper_accuracy": {
+      "arima": 0.505,
+      "consensus-aggressive": 0.466,
+      "consensus-conservative": 0.466,
+      "consensus-moderate": 0.466,
+      "lstm": 0.4776,
+      "lstm-modal": 0.4933,
+      "transformer": 0.509,
+      "xgboost": 0.4957,
+      "xgboost-modal": 0.4839
+    },
+    "gap_accuracy": {
+      "lstm": 0.0317,
+      "lstm-modal": 0.016,
+      "xgboost": 0.2636,
+      "xgboost-modal": 0.2754,
+      "transformer": -0.009
+    }
   }
 ]
