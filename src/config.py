@@ -11,6 +11,9 @@ class Settings(BaseSettings):
     lstm_model_path: str = "models/lstm.pt"
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
+    # XGBoost de panel a 5 ruedas: reemplaza a los modelos de 5 ruedas que solo
+    # miran el precio (LSTM: 47,9% de acierto de direccion en vivo).
+    xgb5_model_path: str = "models/xgb5.pkl"
     transformer_model_path: str = "models/transformer.pt"
     # Artefacto del Transformer V2 (src/panel/transformer_v2.py), que la API sirve como
     # "transformer" (el original, transformer_model_path, queda como "transformer-v1").

@@ -112,20 +112,18 @@ def test_predict_df_returns_a_coherent_trend_response(trained, histories) -> Non
     assert out["signal"] in {"alza", "baja", "neutral"}
     assert out["horizon_days"] == trained.config.horizon
     assert out["probability_up"] == pytest.approx(1 - out["probability_down"], abs=1e-3)
+    assert 0 < out["probability_up_calibrated"] < 1
+    assert out["base_up_rate"] == trained.calibration["base_up"]
     if out["signal"] == "neutral":
         assert out["predicted_close"] == pytest.approx(out["last_close"])
 
 
-def test_signal_follows_calibrated_thresholds(trained, histories) -> None:
+def test_signal_follows_the_daily_ranking(trained, histories) -> None:
     df = histories["BBAR"]
     p = trained.probability_down(df)
-    expected = (
-        "baja"
-        if p >= trained.baja_threshold
-        else "alza"
-        if p <= trained.alza_threshold
-        else "neutral"
-    )
+    cuts = trained.day_cuts(df.index[-1])
+    baja_cut, alza_cut = cuts if cuts else (trained.baja_threshold, trained.alza_threshold)
+    expected = "baja" if p >= baja_cut else "alza" if p <= alza_cut else "neutral"
     assert trained.predict_df(df)["signal"] == expected
 
 

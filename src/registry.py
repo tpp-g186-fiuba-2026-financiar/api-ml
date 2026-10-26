@@ -365,7 +365,7 @@ class EnsembleTrendService:
 
 
 # contexto y macro son clasificadores de arboles: predecir 12 cortes es barato.
-_LIVE_BACKTEST_MODELS = {"lstm", "xgboost", "contexto", "macro"}
+_LIVE_BACKTEST_MODELS = {"lstm", "xgboost", "xgboost-5", "contexto", "macro"}
 
 
 def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str | None:
@@ -662,6 +662,9 @@ def build_registry(history_days: int) -> TrendRegistry:
     )
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
+    # Mismo modelo de panel a 5 ruedas (walk-forward 2016-2026: AUC por mes
+    # 0,546, IC95 [0,526; 0,565]); compite con LSTM/ARIMA, que miran solo el precio.
+    registry.register("xgboost-5", settings.xgb5_model_path, XGBTrendModel.load)
     # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
     # predice las acciones del panel lider ordenandolas entre si. El original queda
     # como "transformer-v1" y responde por los tickers de fuera del panel.

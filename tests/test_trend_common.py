@@ -81,3 +81,20 @@ def test_acierto_balanceado() -> None:
     # Sin bajas cuenta solo el acierto en subas; sin casos, 0,5.
     assert acierto_balanceado(np.array([1, -1]), np.array([0.1, 0.2])) == pytest.approx(0.5)
     assert acierto_balanceado(np.array([]), np.array([])) == 0.5
+
+
+def test_probability_calibration_maps_overconfident_scores_to_real_frequency() -> None:
+    from src.trend_common import calibrated_probability, fit_probability_calibration
+
+    rng = np.random.default_rng(0)
+    p = rng.uniform(0.1, 0.9, 5000)
+    # Lo que pasa de verdad depende poco del puntaje: 55% a 65%.
+    up = (rng.uniform(size=p.size) < 0.55 + 0.125 * (p - 0.1)).astype(float)
+    cal = fit_probability_calibration(p, up)
+
+    assert cal["base_up"] == pytest.approx(up.mean(), abs=1e-4)
+    # El modelo dice 15% u 85%; la realidad queda cerca de 56% y 64%.
+    assert 0.48 < calibrated_probability(cal, 0.15) < 0.62
+    assert 0.58 < calibrated_probability(cal, 0.85) < 0.72
+    assert calibrated_probability(cal, 0.15) <= calibrated_probability(cal, 0.85)
+    assert calibrated_probability(None, 0.5) is None
