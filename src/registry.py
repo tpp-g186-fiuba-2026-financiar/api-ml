@@ -17,6 +17,7 @@ Nada mas cambia: endpoints, health y comparacion lo toman automaticamente.
 from __future__ import annotations
 
 import datetime as dt
+import threading
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -414,6 +415,10 @@ class TrendRegistry:
         # endpoint tarde o se caiga. Solo el primer pedido del dia paga el
         # costo completo.
         self._compare_cache: dict[tuple[str, str], dict] = {}
+        # Un candado por ticker: si llegan dos pedidos juntos (comparacion y
+        # consenso), el segundo espera y reusa el resultado del primero.
+        self._compare_locks: dict[str, threading.Lock] = {}
+        self._compare_locks_guard = threading.Lock()
 
     def register(
         self, name: str, model_path: str, loader: LoaderFn, *, default: bool = False
@@ -573,6 +578,15 @@ class TrendRegistry:
             if stored is not None:
                 return stored
 
+        with self._compare_locks_guard:
+            lock = self._compare_locks.setdefault(symbol_key, threading.Lock())
+        with lock:
+            cached = self._compare_cache.get((symbol_key, today))
+            if use_snapshot and cached is not None:
+                return cached
+            return self._compare_live(symbol, symbol_key, today)
+
+    def _compare_live(self, symbol: str, symbol_key: str, today: str) -> dict:
         df = _fetch_history_with_macro(symbol, self._history_days)
         predictions: dict[str, dict] = {}
         for name, service in self._services.items():

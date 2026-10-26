@@ -39,14 +39,20 @@ import numpy as np
 import pandas as pd
 from sklearn.metrics import roc_auc_score
 
-from src.context_trend import FEATURES, HORIZON, MIN_ROWS, build_features, market_frame
+from src.context_trend import FEATURES as CONTEXT_FEATURES
+from src.context_trend import HORIZON, MIN_ROWS, market_frame
+from src.context_trend import build_features as context_features
 from src.data import fetch_history
 from src.data_quality import drop_stale, is_stale
 from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
+from src.fair_value import TREND_FEATURES, trend_features
 from src.feature_labels import feature_help, feature_label, feature_unit
 from src.macro_trend import UNIVERSE
 from src.trend_common import derive_trend_output, weak_signal_sides
 
+# Tecnicas + contexto de mercado (las del modelo contexto) + distancia a la
+# recta de tendencia del ultimo semestre y año (src.fair_value).
+FEATURES = CONTEXT_FEATURES + TREND_FEATURES
 RANK_FEATURES = [f"r_{name}" for name in FEATURES]
 ALL_FEATURES = FEATURES + RANK_FEATURES
 HALF_LIFE_YEARS = 3.0  # los datos recientes pesan mas al entrenar
@@ -82,6 +88,11 @@ class Universe:
 
     market: pd.DataFrame
     features: dict[str, pd.DataFrame]
+
+
+def build_features(df: pd.DataFrame, market: pd.DataFrame) -> pd.DataFrame:
+    """Variables de una accion, en el orden de ``FEATURES``."""
+    return context_features(df, market).join(trend_features(df["close"]))[FEATURES]
 
 
 def build_universe(histories: dict[str, pd.DataFrame]) -> Universe:

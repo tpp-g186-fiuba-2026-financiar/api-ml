@@ -8,7 +8,7 @@ from typing import Annotated
 
 from fastapi import FastAPI, HTTPException, Query
 
-from src.black_litterman.black_litterman import recomendacion_detallada
+from src.black_litterman.black_litterman import MAX_ACCIONES_NUEVAS, recomendacion_detallada
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
 from src.consensus import LEDGER_PATH, compute_consensus, load_track_record
@@ -20,6 +20,7 @@ from src.errors import (
     NotEnoughDataError,
     UnknownModelError,
 )
+from src.fair_value import VENTANA_DEFAULT, precio_estimado
 from src.garch_volatility import GarchVolatilityModel
 from src.modal_client import call_modal
 from src.model import PredictionModel
@@ -170,7 +171,7 @@ async def predict_trend(payload: TrendRequest) -> TrendResponse:
         "entrenados se reportan como no disponibles."
     ),
 )
-async def predict_trend_compare(symbol: str) -> dict:
+def predict_trend_compare(symbol: str) -> dict:
     """Corre todos los modelos entrenados y devuelve las predicciones lado a lado."""
     try:
         return trend_registry.compare(symbol)
@@ -191,7 +192,7 @@ async def predict_trend_compare(symbol: str) -> dict:
         "respecto del prototipo original."
     ),
 )
-async def predict_trend_consensus(
+def predict_trend_consensus(
     symbol: str,
     profile: Annotated[
         PerfilRiesgo,
@@ -210,6 +211,33 @@ async def predict_trend_consensus(
         track_record=load_track_record(profile, compared["symbol"]),
         **consensus,
     )
+
+
+@app.get(
+    "/predict/fair-value/{symbol}",
+    response_model=dict,
+    tags=["Predicciones"],
+    summary="Precio estimado por regresion lineal",
+    description=(
+        "Ajusta log(precio) contra el tiempo con minimos cuadrados sobre las "
+        "ultimas `ventana` ruedas y devuelve el precio que marca la tendencia "
+        "hoy, cuanto se aparta el precio real (en % y en desvios estandar), "
+        "si esta por encima o por debajo, la recta con el canal de +-1 y +-2 "
+        "desvios, y que paso historicamente en las 20 ruedas siguientes en el "
+        "panel lider desde una distancia parecida."
+    ),
+)
+def predict_fair_value(
+    symbol: str,
+    ventana: Annotated[int, Query(ge=60, le=1260)] = VENTANA_DEFAULT,
+) -> dict:
+    try:
+        df = fetch_history(symbol, max(ventana + 10, settings.history_days))
+        return {"symbol": symbol.strip().upper(), **precio_estimado(df, ventana)}
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
 
 
 @app.get(
@@ -422,13 +450,30 @@ async def portfolio_recomendacion(
             )
         ),
     ] = None,
+    max_nuevas: Annotated[
+        int | None,
+        Query(
+            ge=0,
+            le=20,
+            description=(
+                "Cuantas acciones que el usuario no tiene puede sumar la "
+                "recomendacion (default 2). 0 = solo redistribuir entre las suyas; "
+                "sin valor y con todas=true, todo el panel."
+            ),
+        ),
+    ] = MAX_ACCIONES_NUEVAS,
+    todas: Annotated[
+        bool, Query(description="Si es true, puede usar todo el panel (ignora max_nuevas).")
+    ] = False,
 ) -> dict:
+    limite_nuevas = None if todas else max_nuevas
     # La recomendacion tarda segundos (historicos + predicciones + GARCH) y solo
     # cambia con la cartera, el modelo o el dia: se reutiliza unos minutos.
     cache_key = (
         usuario.model_dump_json(),
         model,
         cartera_ancla.value if cartera_ancla else None,
+        limite_nuevas,
         date.today().isoformat(),
     )
     cached = _recomendacion_cache.get(cache_key)
@@ -441,6 +486,7 @@ async def portfolio_recomendacion(
             garch_volatility_model,
             cartera_ancla,
             tasa_libre_riesgo_anual=_tasa_libre_riesgo_anual(),
+            max_nuevas=limite_nuevas,
         )
     except UnknownModelError as exc:
         raise HTTPException(status_code=404, detail=str(exc)) from exc
@@ -460,6 +506,11 @@ async def portfolio_recomendacion(
         "detalle": resultado.detalle(),
         "tickers_excluidos": resultado.tickers_excluidos,
         "cartera_ancla": resultado.cartera_ancla,
+        "acciones_nuevas": resultado.acciones_nuevas,
+        "rotacion": round(resultado.rotacion, 4),
+        "costo_estimado": round(resultado.costo_estimado, 5),
+        "costo_operacion": resultado.costo_operacion,
+        "max_nuevas": limite_nuevas,
     }
     if len(_recomendacion_cache) >= _RECOMENDACION_CACHE_MAX:
         _recomendacion_cache.pop(next(iter(_recomendacion_cache)))

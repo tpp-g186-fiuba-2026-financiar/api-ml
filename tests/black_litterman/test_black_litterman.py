@@ -741,3 +741,110 @@ def test_pesos_actuales_por_valor_ignora_tickers_fuera_del_universo() -> None:
     )
     w = pesos_actuales_por_valor(usuario, ["GGAL", "YPFD"], {"GGAL": 10.0, "YPFD": 5.0})
     assert w == pytest.approx([1.0, 0.0])
+
+
+# ---------------------------------------------------------------------------
+# Cuanto se rota la cartera: acciones nuevas acotadas y costo de operar
+# ---------------------------------------------------------------------------
+
+
+def test_universo_permitido_suma_como_mucho_n_nuevas_con_retorno_positivo() -> None:
+    from src.black_litterman.black_litterman import universo_permitido
+
+    tickers = ["A", "B", "C", "D", "E"]
+    actuales = np.array([0.6, 0.4, 0.0, 0.0, 0.0])
+    mu = np.array([0.01, 0.0, 0.03, -0.02, 0.02])
+    var = np.full(5, 0.01)
+
+    permitidos, nuevas = universo_permitido(tickers, actuales, mu, var, max_nuevas=1)
+    assert nuevas == ["C"]
+    assert permitidos.tolist() == [True, True, True, False, False]
+
+    _, ninguna = universo_permitido(tickers, actuales, mu, var, max_nuevas=0)
+    assert ninguna == []
+
+    todos, _ = universo_permitido(tickers, actuales, mu, var, max_nuevas=None)
+    assert todos.all()
+
+
+def test_universo_permitido_sin_cartera_usa_todo_el_panel() -> None:
+    from src.black_litterman.black_litterman import universo_permitido
+
+    permitidos, nuevas = universo_permitido(
+        ["A", "B"], np.zeros(2), np.array([0.01, 0.02]), np.full(2, 0.01), max_nuevas=0
+    )
+    assert permitidos.all() and nuevas == []
+
+
+def test_costo_de_operar_reduce_la_rotacion() -> None:
+    from src.black_litterman.optimizador import optimizar_pesos
+
+    mu = np.array([0.004, 0.006, 0.005])
+    sigma = np.diag([0.002, 0.002, 0.002])
+    actuales = np.array([0.6, 0.2, 0.2])
+
+    sin_costo = optimizar_pesos(mu, sigma, 3.0, pesos_actuales=actuales, costo=0.0)
+    con_costo = optimizar_pesos(mu, sigma, 3.0, pesos_actuales=actuales, costo=0.006)
+
+    def rotacion(w):
+        return np.abs(w - actuales).sum() / 2
+
+    assert rotacion(con_costo) < rotacion(sin_costo)
+    assert con_costo.sum() == pytest.approx(1.0)
+
+
+def test_permitidos_deja_en_cero_lo_que_no_puede_entrar() -> None:
+    from src.black_litterman.optimizador import optimizar_pesos
+
+    mu = np.array([0.01, 0.05, 0.02])
+    sigma = np.diag([0.002, 0.002, 0.002])
+    w = optimizar_pesos(mu, sigma, 3.0, permitidos=np.array([True, False, True]))
+    assert w[1] == pytest.approx(0.0, abs=1e-9)
+    assert w.sum() == pytest.approx(1.0)
+
+
+class TestRecomendacionAcotada:
+    def test_redistribuye_entre_las_del_usuario_y_suma_pocas(
+        self, usuario_con_cartera, historiales_3_tickers
+    ):
+        def fetch_hist(ticker, days=None):
+            return historiales_3_tickers[ticker]
+
+        resultado = recomendacion_detallada(
+            usuario_con_cartera,
+            make_predict_function({"GGAL": 0.02, "YPFD": 0.01, "PAMP": 0.03}),
+            tickers=list(historiales_3_tickers),
+            fetch_hist=fetch_hist,
+            max_nuevas=0,
+        )
+        pesos = dict(zip(resultado.tickers, resultado.pesos, strict=True))
+        # PAMP no esta en la cartera y no se permiten nuevas: queda en 0.
+        assert pesos["PAMP"] == pytest.approx(0.0, abs=1e-9)
+        assert resultado.acciones_nuevas == []
+        assert 0.0 <= resultado.rotacion <= 1.0
+        assert resultado.costo_estimado == pytest.approx(
+            2 * resultado.rotacion * resultado.costo_operacion
+        )
+
+
+def test_no_compra_posiciones_testimoniales(
+    monkeypatch, usuario_con_cartera, historiales_3_tickers
+):
+    import src.black_litterman.black_litterman as bl_mod
+
+    def fetch_hist(ticker, days=None):
+        return historiales_3_tickers[ticker]
+
+    resultado = recomendacion_detallada(
+        usuario_con_cartera,
+        make_predict_function({"GGAL": 0.01, "YPFD": 0.01, "PAMP": 0.012}),
+        tickers=list(historiales_3_tickers),
+        fetch_hist=fetch_hist,
+        max_nuevas=1,
+    )
+    pesos = dict(zip(resultado.tickers, resultado.pesos, strict=True))
+    # PAMP es la candidata nueva: o entra con un peso que vale la pena, o no entra.
+    assert (
+        pesos["PAMP"] == pytest.approx(0.0, abs=1e-9)
+        or pesos["PAMP"] >= bl_mod.PESO_MINIMO_NUEVA - 1e-6
+    )

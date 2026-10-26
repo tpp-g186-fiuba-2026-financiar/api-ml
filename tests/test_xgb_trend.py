@@ -6,13 +6,16 @@ import pandas as pd
 import pytest
 
 from src import train_xgb, xgb_trend
-from src.context_trend import FEATURES, LEADERS, MIN_ROWS, build_features
+from src.context_trend import LEADERS, MIN_ROWS
 from src.errors import DataUnavailableError, NotEnoughDataError, StaleArtifactError
+from src.fair_value import TREND_FEATURES
 from src.xgb_trend import (
     ALL_FEATURES,
+    FEATURES,
     RANK_FEATURES,
     XGBConfig,
     XGBTrendModel,
+    build_features,
     build_universe,
     rank_against_peers,
 )
@@ -60,6 +63,9 @@ def trained(histories, universe) -> XGBTrendModel:
 def test_feature_layout() -> None:
     assert ALL_FEATURES == FEATURES + RANK_FEATURES
     assert len(set(ALL_FEATURES)) == len(ALL_FEATURES)
+    # la distancia a la tendencia (src.fair_value) entra con su rango vs pares
+    assert set(TREND_FEATURES) <= set(FEATURES)
+    assert {f"r_{t}" for t in TREND_FEATURES} <= set(RANK_FEATURES)
 
 
 def test_panel_has_one_row_per_stock_and_day_with_ranks_inside_each_day(histories) -> None:

@@ -22,6 +22,12 @@ FEATURE_LABELS: dict[str, str] = {
     "t_down_streak": "Días seguidos en baja",
     "t_up_streak": "Días seguidos en alza",
     "t_dd252": "Distancia al máximo del año",
+    "tz126": "Distancia a su tendencia de 6 meses",
+    "tz252": "Distancia a su tendencia del año",
+    "tslope126": "Tendencia de 6 meses (por año)",
+    "tslope252": "Tendencia del año (por año)",
+    "tr2_126": "Qué tan marcada es la tendencia de 6 meses",
+    "tr2_252": "Qué tan marcada es la tendencia del año",
     "t_dd60": "Distancia al máximo de 3 meses",
     "t_dist_min60": "Distancia al mínimo de 3 meses",
     "t_new_low252": "Mínimo del año",
@@ -100,6 +106,12 @@ FEATURE_HELP: dict[str, str] = {
     "t_down_streak": "Cuántas ruedas seguidas viene cerrando en baja.",
     "t_up_streak": "Cuántas ruedas seguidas viene cerrando en alza.",
     "t_dd252": "Cuánto está por debajo del precio más alto del último año (0% = está en el máximo).",
+    "tz126": "Cuántos desvíos está el precio por encima (+) o por debajo (−) de la recta de regresión de los últimos 6 meses.",
+    "tz252": "Cuántos desvíos está el precio por encima (+) o por debajo (−) de la recta de regresión del último año.",
+    "tslope126": "Cuánto sube o baja por año la recta de regresión de los últimos 6 meses.",
+    "tslope252": "Cuánto sube o baja por año la recta de regresión del último año.",
+    "tr2_126": "Qué parte del movimiento de los últimos 6 meses explica la recta (R², de 0 a 1).",
+    "tr2_252": "Qué parte del movimiento del último año explica la recta (R², de 0 a 1).",
     "t_dd60": "Cuánto está por debajo del precio más alto de los últimos 3 meses (0% = está en el máximo).",
     "t_dist_min60": "Cuánto está por encima del precio más bajo de los últimos 3 meses.",
     "t_new_low252": "Si hoy marcó el precio más bajo del año.",
@@ -154,6 +166,7 @@ _PCT = {
     *("t_vol5", "t_vol20", "t_vol60", "t_gk20", "t_vol_chg5", "t_stoch"),
     *("m_ret5", "m_ret20", "m_ret60", "m_vol20", "m_dd252", "m_breadth50"),
     *("m_rel5", "m_rel20", "m_rel60"),
+    *("tslope126", "tslope252"),
 }
 _FLAGS = {"t_new_low252", "t_death_cross", "t_gap_down"}
 _DAYS = {"t_down_streak", "t_up_streak"}
