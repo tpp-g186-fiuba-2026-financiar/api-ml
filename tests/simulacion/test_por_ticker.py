@@ -114,7 +114,7 @@ def test_constructores_de_busqueda(snapshot) -> None:
         modelo = MODELOS[nombre]({}, "cpu", snapshot)
         assert isinstance(modelo, por_ticker.PorTicker) and isinstance(modelo.modelo, tipo)
     assert MODELOS["lstm"]({"epochs": 3}, "cpu", None).modelo.config.epochs == 3
-    assert MODELOS["xgboost"]({"max_depth": 2}, "cpu", None).modelo.config.max_depth == 2
+    assert MODELOS["xgboost"]({"seed": 7}, "cpu", None).modelo.config.seed == 7
     assert MODELOS["arima"]({"seed": 7, "horizon": 10}, "cpu", None).modelo.horizon == 10
     assert MODELOS["macro"]({"seed": 3}, "cpu", snapshot).modelo.config.seed == 3
     for nombre in ("macro", "contexto"):

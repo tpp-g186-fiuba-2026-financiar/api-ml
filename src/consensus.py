@@ -188,8 +188,9 @@ def compute_consensus(
     considered = 0
     alza_count = 0
     baja_count = 0
+    components: list[dict] = []
 
-    for prediction in predictions.values():
+    for model, prediction in predictions.items():
         if prediction.get("available") is False:
             continue
         expected_return = _expected_return(prediction)
@@ -199,6 +200,15 @@ def compute_consensus(
         quality = _model_quality(prediction)
         agreement = _agreement(prediction.get("signal"), expected_return)
 
+        components.append(
+            {
+                "model": model,
+                "expected_return": round(expected_return, 6),
+                "quality": round(quality, 4),
+                "agreement": agreement,
+                "signal": prediction.get("signal"),
+            }
+        )
         num_score += quality * expected_return * agreement
         den_score += quality
         num_confidence += quality
@@ -240,6 +250,9 @@ def compute_consensus(
         "confidence_min": round(confidence_min, 3),
         "models_considered": considered,
         "explanation": explanation,
+        # Terminos de cada modelo considerado: composite_score es
+        # sum(quality * expected_return * agreement) / sum(quality).
+        "components": components,
     }
 
 

@@ -14,7 +14,7 @@ permissions:
 # Los runners de GitHub no llegan al data-colector local (default de
 # settings.py): se usa el deployado. El V2 siempre entrena con el collector.
 env:
-  DATA_COLLECTOR_URL: https://data-colector.onrender.com
+  DATA_COLLECTOR_URL: https://data-colector-k7h6.onrender.com
 
 jobs:
   retrain:

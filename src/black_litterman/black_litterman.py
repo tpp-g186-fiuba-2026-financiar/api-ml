@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from concurrent.futures import ThreadPoolExecutor
+from dataclasses import dataclass, field
 
 import numpy as np
 import pandas as pd
@@ -56,6 +57,23 @@ CONFIANZA_VISTAS = 0.05
 
 RUEDAS_POR_ANIO = 252
 
+# Costo de mover plata, por unidad operada y por punta: comision del broker,
+# derechos de mercado e IVA mas el spread, valores tipicos para una persona
+# en BYMA. Se descuenta del objetivo, asi solo se rota si la mejora esperada
+# lo paga.
+COSTO_OPERACION = 0.006
+
+# Acciones nuevas que puede sumar la recomendacion ademas de las que el
+# usuario ya tiene: rearmar toda la cartera es caro y con modelos de poco
+# poder predictivo no se justifica. None = todo el panel.
+MAX_ACCIONES_NUEVAS = 2
+
+# Por debajo de esto un peso se considera 0 (ruido numerico del optimizador).
+PESO_MINIMO_VISIBLE = 0.005
+
+# Peso minimo para que valga la pena comprar una accion que el usuario no tiene.
+PESO_MINIMO_NUEVA = 0.03
+
 # Minimo de ruedas de historial para que un ticker entre a la corrida.
 # Mismo valor que MIN_ROWS en garch_volatility.py: un ticker con menos
 # ruedas que esto no llega a ajustar GARCH (NotEnoughDataError) y ademas
@@ -102,7 +120,64 @@ PANEL_LIDER_TICKERS: list[str] = [
 ]
 
 
-def entry(
+@dataclass
+class ResultadoBL:
+    """Resultado de una corrida de Black-Litterman, con los intermedios que se
+    muestran en el endpoint. pi/q/omega/mu_bl estan al horizonte de las vistas;
+    omega es la diagonal (las vistas son independientes)."""
+
+    tickers: list[str]
+    pesos: np.ndarray
+    peso_actual: np.ndarray  # participacion real del usuario por valor (0 si no tiene)
+    pi: np.ndarray
+    q: np.ndarray
+    omega: np.ndarray
+    mu_bl: np.ndarray
+    horizonte: int
+    tickers_excluidos: dict[str, str] = field(default_factory=dict)
+    cartera_ancla: str = TipoCarteraAncla.EQUAL_WEIGHT.value
+    acciones_nuevas: list[str] = field(default_factory=list)
+    costo_operacion: float = 0.0
+
+    @property
+    def rotacion(self) -> float:
+        """Fraccion de la cartera que cambia de manos (compras = ventas)."""
+        return float(np.abs(self.pesos - self.peso_actual).sum() / 2)
+
+    @property
+    def costo_estimado(self) -> float:
+        """Costo de llevar la cartera actual a la recomendada, como fraccion
+        de su valor (se paga en las compras y en las ventas)."""
+        return float(np.abs(self.pesos - self.peso_actual).sum() * self.costo_operacion)
+
+    def detalle(self) -> list[dict]:
+        """Una fila por ticker. pi/q/omega/mu_bl se informan por rueda
+        (divididos por el horizonte), que es el contrato del endpoint: el
+        front los multiplica por ``horizon_days`` para mostrarlos al plazo."""
+        h = float(self.horizonte)
+        return [
+            {
+                "ticker": ticker,
+                "peso_actual": float(self.peso_actual[i]),
+                "peso_recomendado": float(self.pesos[i]),
+                "pi": float(self.pi[i]) / h,
+                "q": float(self.q[i]) / h,
+                "omega": float(self.omega[i]) / h,
+                "mu_bl": float(self.mu_bl[i]) / h,
+                "horizon_days": int(self.horizonte),
+            }
+            for i, ticker in enumerate(self.tickers)
+        ]
+
+
+def entry(usuario: Usuario, predict_function, garch_model=None, *args, **kwargs):
+    """Pesos recomendados para ``usuario``: ``(tickers, pesos)``. Ver
+    ``recomendacion_detallada`` para los parametros y los intermedios."""
+    resultado = recomendacion_detallada(usuario, predict_function, garch_model, *args, **kwargs)
+    return resultado.tickers, resultado.pesos
+
+
+def recomendacion_detallada(
     usuario: Usuario,
     predict_function,
     garch_model=None,
@@ -111,14 +186,23 @@ def entry(
     fetch_hist=fetch_history,
     tasa_libre_riesgo_anual: float = 0.0,
     confianza_vistas: float = CONFIANZA_VISTAS,
-):
+    max_nuevas: int | None = MAX_ACCIONES_NUEVAS,
+    costo_operacion: float = COSTO_OPERACION,
+) -> ResultadoBL:
     """Arma la recomendacion de cartera para ``usuario``.
 
     ``tasa_libre_riesgo_anual`` es una TNA en decimal (0.35 = 35%): se
     descuenta de las predicciones para que Q sea retorno en exceso, igual
     que Pi.
+
+    Si el usuario ya tiene acciones del panel, la recomendacion redistribuye
+    entre esas y suma como mucho ``max_nuevas`` (las de mejor retorno
+    esperado por unidad de riesgo); None = todo el panel. Cada unidad que se
+    compra o vende descuenta ``costo_operacion`` del objetivo.
     """
-    tickers, precios_historicos, precios_actuales = get_data(tickers, fetch_hist)
+    tickers, precios_historicos, precios_actuales, tickers_excluidos = get_data_con_excluidos(
+        tickers, fetch_hist
+    )
     predicciones = get_predicciones(tickers, predict_function)
     horizonte = horizonte_comun(predicciones)
     tasa_horizonte = tasa_al_horizonte(tasa_libre_riesgo_anual, horizonte)
@@ -136,7 +220,77 @@ def entry(
         )
     omega = construir_omega(matriz_de_covarianza.matriz, TAU, confianza_vistas)
     bl = BlackLittermanPrediction(usuario, matriz_de_covarianza, cartera_ancla, q, omega)
-    return tickers, bl.predecir()
+    actuales = pesos_actuales_por_valor(usuario, tickers, precios_actuales)
+    permitidos, _ = universo_permitido(tickers, actuales, bl.bl_mu(), np.diag(bl.sigma), max_nuevas)
+    # Con cartera propia, "nuevas" son las permitidas que el usuario no tiene
+    # (con todo el panel pueden ser muchas). Sin cartera no hay nada que
+    # comparar: todo es nuevo y no se informa.
+    tiene = actuales > 0
+    candidatas = (
+        [t for i, t in enumerate(tickers) if permitidos[i] and not tiene[i]] if tiene.any() else []
+    )
+    pesos = bl.predecir(pesos_actuales=actuales, costo=costo_operacion, permitidos=permitidos)
+    # Una accion nueva con un peso testimonial es casi todo comision: si no
+    # llega a PESO_MINIMO_NUEVA se saca y se vuelve a optimizar sin ella.
+    chicas = [t for t in candidatas if pesos[tickers.index(t)] < PESO_MINIMO_NUEVA]
+    if chicas:
+        for t in chicas:
+            permitidos[tickers.index(t)] = False
+        pesos = bl.predecir(pesos_actuales=actuales, costo=costo_operacion, permitidos=permitidos)
+    nuevas = [t for t in candidatas if pesos[tickers.index(t)] > PESO_MINIMO_VISIBLE]
+    return ResultadoBL(
+        tickers=tickers,
+        pesos=pesos,
+        peso_actual=actuales,
+        pi=np.asarray(bl.pi, dtype=np.float64),
+        q=np.asarray(q, dtype=np.float64),
+        omega=np.diag(omega).astype(np.float64),
+        mu_bl=bl.bl_mu(),
+        horizonte=horizonte,
+        tickers_excluidos=tickers_excluidos,
+        cartera_ancla=cartera_ancla.tipo.value,
+        acciones_nuevas=nuevas,
+        costo_operacion=costo_operacion,
+    )
+
+
+def universo_permitido(
+    tickers: list[str],
+    actuales: np.ndarray,
+    mu: np.ndarray,
+    varianzas: np.ndarray,
+    max_nuevas: int | None,
+) -> tuple[np.ndarray, list[str]]:
+    """Que tickers pueden tener peso: los que el usuario ya tiene mas hasta
+    ``max_nuevas`` de los que no, elegidos por mayor retorno esperado por
+    unidad de riesgo (y solo si ese retorno es positivo). Sin cartera, o con
+    ``max_nuevas`` None, entra todo el panel."""
+    tiene = actuales > 0
+    if max_nuevas is None or not tiene.any():
+        return np.ones(len(tickers), dtype=bool), []
+    atractivo = mu / np.sqrt(np.maximum(varianzas, 1e-12))
+    candidatas = [i for i in np.argsort(-atractivo) if not tiene[i] and mu[i] > 0]
+    elegidas = candidatas[:max_nuevas]
+    permitidos = tiene.copy()
+    permitidos[elegidas] = True
+    return permitidos, [tickers[i] for i in elegidas]
+
+
+def pesos_actuales_por_valor(
+    usuario: Usuario, tickers: list[str], precios: dict[str, float]
+) -> np.ndarray:
+    """Participacion real de cada ticker en la cartera del usuario, por valor
+    (cantidad * ultimo cierre), sobre el universo de la corrida. Es lo que el
+    usuario tiene hoy, independientemente de la cartera ancla elegida (con
+    equal_weight el ancla es 1/n pero esto sigue siendo su cartera real).
+    Todo cero si no tiene tenencias con valor en el universo.
+    """
+    cantidades = usuario.cantidades_por_ticker()
+    valores = np.array(
+        [max(cantidades.get(t, 0.0), 0.0) * precios[t] for t in tickers], dtype=np.float64
+    )
+    total = valores.sum()
+    return valores / total if total > 0 else np.zeros(len(tickers))
 
 
 class BlackLittermanPrediction:
@@ -177,14 +331,26 @@ class BlackLittermanPrediction:
         """Covarianza predictiva de los retornos: Sigma + M (He-Litterman)."""
         return self.sigma + self._incertidumbre_posterior()
 
-    def predecir(self) -> np.ndarray:
-        n = len(self.q)
-        # Con universo chico (tickers filtrados en get_data) el techo puede
-        # ser inviable (techo * n < 1). Se relaja a 2/n y no a 1/n: con
-        # techo * n == 1 la unica solucion factible es pesos iguales.
-        peso_maximo = max(self.peso_maximo, 2.0 / n)
+    def predecir(
+        self,
+        *,
+        pesos_actuales: np.ndarray | None = None,
+        costo: float = 0.0,
+        permitidos: np.ndarray | None = None,
+    ) -> np.ndarray:
+        n = len(self.q) if permitidos is None else int(np.sum(permitidos))
+        # Con universo chico (tickers filtrados en get_data, o solo los del
+        # usuario) el techo puede ser inviable (techo * n < 1). Se relaja a
+        # 2/n y no a 1/n: con techo * n == 1 la unica solucion es pesos iguales.
+        peso_maximo = min(1.0, max(self.peso_maximo, 2.0 / n))
         return optimizar_pesos(
-            self.bl_mu(), self.bl_sigma(), self.aversion_al_riesgo, peso_maximo=peso_maximo
+            self.bl_mu(),
+            self.bl_sigma(),
+            self.aversion_al_riesgo,
+            peso_maximo=peso_maximo,
+            pesos_actuales=pesos_actuales,
+            costo=costo,
+            permitidos=permitidos,
         )
 
 
@@ -196,6 +362,19 @@ def obtener_aversion_al_riesgo(perfil: PerfilRiesgo) -> float:
 
 
 def get_data(
+    tickers: list[str] = PANEL_LIDER_TICKERS,
+    fetch_hist=fetch_history,
+    min_ruedas: int = MIN_RUEDAS,
+):
+    """Como ``get_data_con_excluidos`` pero sin los excluidos:
+    ``(tickers_validos, historiales, precios_actuales)``."""
+    tickers_validos, historiales, precios, _ = get_data_con_excluidos(
+        tickers, fetch_hist, min_ruedas
+    )
+    return tickers_validos, historiales, precios
+
+
+def get_data_con_excluidos(
     tickers: list[str] = PANEL_LIDER_TICKERS,
     fetch_hist=fetch_history,
     min_ruedas: int = MIN_RUEDAS,
@@ -212,7 +391,8 @@ def get_data(
     funcion real de src.data) para poder testear sin mockear el modulo --
     se les pasa un fake directo.
 
-    Devuelve (tickers_validos, historiales, precios_actuales).
+    Devuelve (tickers_validos, historiales, precios_actuales, tickers_excluidos),
+    con el motivo de cada excluido.
     """
     historiales = {}
     tickers_excluidos: dict[str, str] = {}
@@ -240,7 +420,7 @@ def get_data(
 
     tickers_validos = [t for t in tickers if t not in tickers_excluidos]
     precios_actuales = obtener_precios_actuales(historiales)
-    return tickers_validos, historiales, precios_actuales
+    return tickers_validos, historiales, precios_actuales, tickers_excluidos
 
 
 def obtener_precios_actuales(historiales: dict[str, pd.DataFrame]) -> dict[str, float]:

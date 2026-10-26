@@ -199,6 +199,7 @@ def backtest_predict_df(
     horizon: int,
     backtest_days: int = BACKTEST_DAYS,
     step: int = BACKTEST_STEP,
+    since: pd.Timestamp | None = None,
 ) -> dict | None:
     """Backtest walk-forward generico para cualquier modelo con `predict_df`.
 
@@ -216,6 +217,10 @@ def backtest_predict_df(
     actual_returns: list[float] = []
     series: list[dict] = []
     for cutoff in range(split, len(df) - horizon, step):
+        # Fechas que el modelo ya vio al entrenarse no son una prueba: con
+        # ``since`` (fecha de entrenamiento) solo se evaluan las posteriores.
+        if since is not None and df.index[cutoff] <= since:
+            continue
         try:
             result = predictor.predict_df(df.iloc[: cutoff + 1])
         except ApiMlError:
@@ -238,6 +243,10 @@ def backtest_predict_df(
         return None
     predicted_arr = np.asarray(predicted_returns)
     actual_arr = np.asarray(actual_returns)
+    # Los modelos que se abstienen (neutral = precio proyectado igual al de
+    # hoy) no apostaron a ningun lado: esos casos no cuentan como error. El
+    # acierto se mide solo donde el modelo opino, y se informa en cuantos.
+    opined = predicted_arr != 0
     # Retorno de "seguir la senal al pie de la letra" (long si predijo alza,
     # short si predijo baja, afuera en neutral) vs. comprar-y-mantener lisa y
     # llanamente -- misma cuenta que `summarize()` en `src/backtest.py`, pero
@@ -245,11 +254,56 @@ def backtest_predict_df(
     # vea junto al resto de las metricas sin pagar un segundo backtest.
     position = np.sign(predicted_arr)
     strategy_logrets = position * actual_arr
+    hits = np.sign(predicted_arr[opined]) == np.sign(actual_arr[opined])
     return {
-        "directional_accuracy": float(np.mean(np.sign(predicted_arr) == np.sign(actual_arr))),
+        "directional_accuracy": float(np.mean(hits)) if opined.any() else None,
         "mae": float(np.mean(np.abs(predicted_arr - actual_arr))),
-        "observations": len(actual_returns),
+        "observations": int(opined.sum()),
+        "cases": len(actual_returns),
         "series": series[-30:],
         "avg_strategy_return_pct": float(np.expm1(np.mean(strategy_logrets)) * 100),
         "avg_buy_hold_return_pct": float(np.expm1(np.mean(actual_arr)) * 100),
+    }
+
+
+# Un lado de la senal (alza o baja) solo se emite si, fuera de muestra, le
+# gano a su tasa base por al menos este margen: +3 puntos sobre 20.000 casos
+# solapados no alcanzan para distinguirlo del azar.
+MIN_SIGNAL_EDGE = 0.05
+
+
+def weak_signal_sides(metrics: dict) -> tuple[bool, bool]:
+    """(alza_debil, baja_debil) segun las metricas fuera de muestra del artefacto."""
+    up = metrics.get("oos_up_rate")
+    if up is None and metrics.get("oos_down_rate") is not None:
+        up = 1.0 - float(metrics["oos_down_rate"])
+    if up is None:
+        return False, False
+    alza, baja = metrics.get("oos_alza_hit_rate"), metrics.get("oos_baja_hit_rate")
+    alza_weak = alza is not None and float(alza) - up < MIN_SIGNAL_EDGE
+    baja_weak = baja is not None and float(baja) - (1.0 - up) < MIN_SIGNAL_EDGE
+    return alza_weak, baja_weak
+
+
+def oos_signal_backtest(metrics: dict, horizon: int) -> dict | None:
+    """Acierto de las senales medido fuera de muestra al entrenar (todas las
+    acciones juntas). Las observaciones diarias a ``horizon`` ruedas se
+    solapan: se informa una cantidad efectiva de casos (n / horizon)."""
+    alza_weak, baja_weak = weak_signal_sides(metrics)
+    hits = 0.0
+    n = 0.0
+    for side, weak in (("alza", alza_weak), ("baja", baja_weak)):
+        rate = metrics.get(f"oos_{side}_hit_rate")
+        count = metrics.get(f"oos_{side}_samples")
+        if weak or rate is None or not count or metrics.get(f"{side}_disabled"):
+            continue
+        hits += float(rate) * float(count)
+        n += float(count)
+    if n == 0:
+        return None
+    effective = max(1, int(round(n / max(1, horizon))))
+    return {
+        "directional_accuracy": hits / n,
+        "observations": effective,
+        "scope": "oos_global",
     }

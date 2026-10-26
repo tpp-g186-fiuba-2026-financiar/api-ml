@@ -240,3 +240,33 @@ def test_load_track_record_prefers_ticker_then_global(tmp_path) -> None:
     assert ypfd["scope"] == "global" and ypfd["n_resolved"] == 50
     assert load_track_record(PerfilRiesgo.ARRIESGADO, "GGAL", ledger) is None
     assert load_track_record(PerfilRiesgo.MODERADO, "GGAL", tmp_path / "missing.json") is None
+
+
+def test_compute_consensus_exposes_the_terms_of_each_model() -> None:
+    predictions = {
+        "lstm": _prediction(predicted_close=105.0, signal="neutral", directional_accuracy=0.4),
+        "xgboost": _prediction(predicted_close=110.0, signal="alza", directional_accuracy=0.8),
+        "svm-modal": {"signal": "alza"},  # sin precio: no entra
+        "arima": _prediction(available=False),
+    }
+    result = compute_consensus(predictions, PerfilRiesgo.MODERADO)
+
+    components = {c["model"]: c for c in result["components"]}
+    assert set(components) == {"lstm", "xgboost"}
+    assert components["lstm"] == {
+        "model": "lstm",
+        "expected_return": pytest.approx(0.04879, abs=1e-5),
+        "quality": 0.4,
+        "agreement": 0.5,
+        "signal": "neutral",
+    }
+    assert components["xgboost"]["agreement"] == 1.0
+    # composite_score se reconstruye con los terminos expuestos.
+    num = sum(c["quality"] * c["expected_return"] * c["agreement"] for c in components.values())
+    den = sum(c["quality"] for c in components.values())
+    assert result["composite_score"] == pytest.approx(num / den, abs=1e-4)
+
+
+def test_compute_consensus_without_usable_models_has_no_components() -> None:
+    result = compute_consensus({"lstm": _prediction(available=False)}, PerfilRiesgo.MODERADO)
+    assert result["components"] == []

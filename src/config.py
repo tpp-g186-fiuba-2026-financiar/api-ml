@@ -17,6 +17,9 @@ class Settings(BaseSettings):
     transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"
+    # Comparacion de modelos de cada accion que deja el paper trading diario
+    # (src/compare_snapshot.py). Vacio = siempre calcular en vivo.
+    compare_snapshot_path: str | None = "models/compare_snapshot.json"
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si

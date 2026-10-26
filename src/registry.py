@@ -16,6 +16,8 @@ Nada mas cambia: endpoints, health y comparacion lo toman automaticamente.
 
 from __future__ import annotations
 
+import datetime as dt
+import threading
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
@@ -24,6 +26,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
+from src.compare_snapshot import is_fresh, load_snapshot
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.data_quality import is_stale
 from src.errors import (
@@ -34,7 +37,7 @@ from src.errors import (
     UnknownModelError,
 )
 from src.modal_client import call_modal
-from src.trend_common import backtest_predict_df, derive_trend_output
+from src.trend_common import backtest_predict_df, derive_trend_output, oos_signal_backtest
 
 if TYPE_CHECKING:
     from src.panel.servicio import PanelTrendService
@@ -95,6 +98,12 @@ class TrendService:
     def version(self) -> str:
         return self._model.version if self._model else "unloaded"
 
+    @property
+    def model(self) -> TrendPredictor | None:
+        """Artefacto cargado (None si no esta entrenado), para endpoints propios
+        de un modelo (ej: explicacion de XGBoost, metricas fuera de muestra)."""
+        return self._model
+
     def predict_on(self, df: pd.DataFrame, symbol: str) -> dict:
         """Predice sobre un historico ya descargado (para reusar entre modelos)."""
         if self._model is None:
@@ -113,10 +122,38 @@ class TrendService:
         return self.predict_on(df, symbol)
 
     def backtest_on(self, df: pd.DataFrame, horizon: int) -> dict | None:
-        """Backtest walk-forward sobre el artefacto ya cargado (ver `backtest_predict_df`)."""
+        """Acierto del artefacto ya cargado, sin fuga de informacion.
+
+        Solo se evaluan fechas posteriores al entrenamiento: las anteriores el
+        modelo ya las vio y el acierto saldria inflado. Si todavia no hay casos
+        nuevos resueltos, se usa lo medido fuera de muestra al entrenar (para
+        los clasificadores que lo guardan), aclarando que es sobre todas las
+        acciones juntas (``scope``).
+        """
         if self._model is None:
             return None
-        return backtest_predict_df(self._model, df, horizon)
+        since = _trained_since(self._model)
+        live = (
+            backtest_predict_df(self._model, df, horizon, since=since)
+            if since is not None
+            else None
+        )
+        if live and live.get("observations"):
+            live["scope"] = "live_post_training"
+            return live
+        oos = oos_signal_backtest(getattr(self._model, "metrics", None) or {}, horizon)
+        return oos or live
+
+
+def _trained_since(model) -> pd.Timestamp | None:
+    """Fecha de entrenamiento del artefacto (``trained_at``: 20261019T041911Z)."""
+    raw = getattr(model, "trained_at", None)
+    if not raw:
+        return None
+    try:
+        return pd.Timestamp(dt.datetime.strptime(raw, "%Y%m%dT%H%M%SZ"))
+    except ValueError:
+        return None
 
 
 class OnDemandTrendService:
@@ -327,16 +364,17 @@ class EnsembleTrendService:
         return self.predict_on(df, symbol)
 
 
-_LIVE_BACKTEST_MODELS = {"lstm", "xgboost"}
+# contexto y macro son clasificadores de arboles: predecir 12 cortes es barato.
+_LIVE_BACKTEST_MODELS = {"lstm", "xgboost", "contexto", "macro"}
 
 
 def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str | None:
     """Elige, entre los modelos con backtest, el de mejor accuracy direccional.
 
     El "default" ya no es un modelo fijo: cada ticker puede tener un ganador
-    distinto segun como le fue prediciendolo. Solo lstm/xgboost calculan
-    backtest en vivo en `compare()` (ver `_LIVE_BACKTEST_MODELS`), asi que la
-    eleccion queda entre esos dos; en empate de accuracy gana el de menor
+    distinto segun como le fue prediciendolo. Solo los modelos de
+    `_LIVE_BACKTEST_MODELS` calculan backtest en vivo en `compare()`, asi que
+    la eleccion queda entre esos; en empate de accuracy gana el de menor
     error (mae). Si ninguno tiene metricas todavia (poca historia, backtest
     fallo), se cae al default global de siempre.
     """
@@ -358,8 +396,9 @@ def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str 
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
-    def __init__(self, history_days: int):
+    def __init__(self, history_days: int, snapshot_path: str | Path | None = None):
         self._history_days = history_days
+        self._snapshot_path = snapshot_path
         self._services: dict[
             str,
             TrendService
@@ -376,6 +415,10 @@ class TrendRegistry:
         # endpoint tarde o se caiga. Solo el primer pedido del dia paga el
         # costo completo.
         self._compare_cache: dict[tuple[str, str], dict] = {}
+        # Un candado por ticker: si llegan dos pedidos juntos (comparacion y
+        # consenso), el segundo espera y reusa el resultado del primero.
+        self._compare_locks: dict[str, threading.Lock] = {}
+        self._compare_locks_guard = threading.Lock()
 
     def register(
         self, name: str, model_path: str, loader: LoaderFn, *, default: bool = False
@@ -496,7 +539,22 @@ class TrendRegistry:
     def names(self) -> list[str]:
         return list(self._services)
 
-    def compare(self, symbol: str) -> dict:
+    def _from_snapshot(self, symbol_key: str) -> dict | None:
+        if not self._snapshot_path:
+            return None
+        snapshot = load_snapshot(self._snapshot_path)
+        if snapshot is None or not is_fresh(snapshot["generated_at"]):
+            return None
+        entry = snapshot["symbols"].get(symbol_key)
+        if not entry:
+            return None
+        return {
+            **entry,
+            "source": "snapshot",
+            "generated_at": snapshot["generated_at"].strftime("%Y-%m-%dT%H:%M:%SZ"),
+        }
+
+    def compare(self, symbol: str, *, use_snapshot: bool = True) -> dict:
         """Corre todos los modelos entrenados sobre el mismo historico.
 
         Descarga la serie una sola vez y la pasa a cada modelo, asi la
@@ -505,13 +563,30 @@ class TrendRegistry:
         reportan como no disponibles en vez de cortar la comparacion entera
         -- un modelo roto (o sin recursos en el dyno de Render) no debe
         tumbar a los demas.
+
+        Si el job diario dejo un snapshot vigente con este ticker, se sirve
+        ese (``source: "snapshot"``) en vez de recalcular. El job pasa
+        ``use_snapshot=False`` para calcularlo de cero.
         """
         symbol_key = symbol.strip().upper()
         today = date.today().isoformat()
-        cached = self._compare_cache.get((symbol_key, today))
-        if cached is not None:
-            return cached
+        if use_snapshot:
+            cached = self._compare_cache.get((symbol_key, today))
+            if cached is not None:
+                return cached
+            stored = self._from_snapshot(symbol_key)
+            if stored is not None:
+                return stored
 
+        with self._compare_locks_guard:
+            lock = self._compare_locks.setdefault(symbol_key, threading.Lock())
+        with lock:
+            cached = self._compare_cache.get((symbol_key, today))
+            if use_snapshot and cached is not None:
+                return cached
+            return self._compare_live(symbol, symbol_key, today)
+
+    def _compare_live(self, symbol: str, symbol_key: str, today: str) -> dict:
         df = _fetch_history_with_macro(symbol, self._history_days)
         predictions: dict[str, dict] = {}
         for name, service in self._services.items():
@@ -523,8 +598,8 @@ class TrendRegistry:
             except Exception as exc:  # noqa: BLE001 - un modelo no debe tumbar la comparacion
                 predictions[name] = {"available": False, "reason": str(exc)}
                 continue
-            # Backtest en vivo solo para lstm/xgboost: son los que importa
-            # comparar (los mas fuertes) y ya así el comparador se puso al
+            # Backtest en vivo solo para `_LIVE_BACKTEST_MODELS`: son los que
+            # importa comparar y ya así el comparador se puso al
             # limite de timeout en el dyno de Render (CPU compartida) con
             # los 3 -- transformer es el mas caro (self-attention) y el
             # menos diferencial, se deja afuera del calculo en vivo.
@@ -541,6 +616,7 @@ class TrendRegistry:
             "as_of": df.index[-1].strftime("%Y-%m-%d"),
             "default_model": _pick_best_model(predictions, self._default),
             "predictions": predictions,
+            "source": "live",
         }
         self._compare_cache[(symbol_key, today)] = response
         return response
@@ -573,7 +649,7 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
-    registry = TrendRegistry(history_days)
+    registry = TrendRegistry(history_days, snapshot_path=settings.compare_snapshot_path)
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):

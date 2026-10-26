@@ -266,3 +266,34 @@ def test_build_registry_sirve_el_v2_como_transformer() -> None:
     assert isinstance(servicio, PanelTrendService)
     assert servicio.respaldo is registry.resolve("transformer-v1")
     assert isinstance(registry.resolve("transformer-v1"), TrendService)
+
+
+def test_compare_concurrent_requests_for_the_same_ticker_compute_once(monkeypatch) -> None:
+    import threading
+    import time
+
+    calls = []
+
+    def slow_fetch(symbol, days):
+        calls.append(symbol)
+        time.sleep(0.2)
+        return pd.DataFrame(
+            {"close": np.linspace(100, 110, 40)},
+            index=pd.date_range("2024-01-01", periods=40, freq="B"),
+        )
+
+    monkeypatch.setattr(registry_module, "_fetch_history_with_macro", slow_fetch)
+    registry = TrendRegistry(history_days=750)
+    results = []
+    threads = [
+        threading.Thread(target=lambda: results.append(registry.compare("GGAL", use_snapshot=True)))
+        for _ in range(3)
+    ]
+    for t in threads:
+        t.start()
+    for t in threads:
+        t.join()
+
+    assert calls == ["GGAL"]
+    assert len(results) == 3
+    assert all(r is results[0] for r in results)

@@ -85,6 +85,28 @@ def test_record_new_predictions_skips_existing_keys() -> None:
     assert entries == []
 
 
+def test_record_new_predictions_reuses_compared_results() -> None:
+    class _MustNotPredict(_FakeService):
+        def predict(self, symbol: str) -> dict:
+            raise AssertionError("ya estaba en la comparacion")
+
+    registry = _registry_with("lstm", _MustNotPredict(_PREDICTION))
+    compared = {"GGAL": {"predictions": {"lstm": {**_PREDICTION, "symbol": "GGAL"}}}}
+
+    entries = record_new_predictions(registry, ["lstm"], ["GGAL"], set(), compared)
+
+    assert [e["model"] for e in entries] == ["lstm"]
+
+
+def test_record_new_predictions_falls_back_when_compare_failed_for_model() -> None:
+    registry = _registry_with("lstm", _FakeService(_PREDICTION))
+    compared = {"GGAL": {"predictions": {"lstm": {"available": False, "reason": "timeout"}}}}
+
+    entries = record_new_predictions(registry, ["lstm"], ["GGAL"], set(), compared)
+
+    assert entries[0]["signal"] == "alza"
+
+
 def test_resolve_pending_moves_matured_predictions(monkeypatch) -> None:
     df = _synthetic_ohlcv(40)
     monkeypatch.setattr("src.paper_trading.fetch_history", lambda symbol, days: df)
@@ -253,3 +275,94 @@ def test_consensus_entries_are_measured_like_any_model() -> None:
 
     assert overall["n_predictions"] == 3
     assert overall["signal_hit_rate"] == 0.5
+
+
+def test_signal_history_merges_pending_and_resolved_newest_first() -> None:
+    from src.paper_trading import signal_history
+
+    base = {"horizon_days": 5, "last_close": 100.0, "predicted_close": 104.0}
+    ledger = {
+        "pending": [{**base, "symbol": "GGAL", "model": "lstm", "as_of": "2026-10-10",
+                     "signal": "alza"}],
+        "resolved": [
+            {**base, "symbol": "GGAL", "model": "lstm", "as_of": "2026-10-01", "signal": "alza",
+             "realized_close": 103.0, "resolved_at": "2026-10-08"},
+            {**base, "symbol": "YPFD", "model": "xgboost", "as_of": "2026-10-02",
+             "signal": "baja", "realized_close": 101.0, "resolved_at": "2026-10-09"},
+            {**base, "symbol": "GGAL", "model": "arima", "as_of": "2026-10-03",
+             "signal": "neutral", "realized_close": 99.0, "resolved_at": "2026-10-10"},
+        ],
+    }  # fmt: skip
+    out = signal_history(ledger)
+    assert [r["as_of"] for r in out["rows"]] == [
+        "2026-10-10", "2026-10-03", "2026-10-02", "2026-10-01",
+    ]  # fmt: skip
+    # pendiente -> None, neutral -> None, alza que subio -> True, baja que subio -> False
+    assert [r["hit"] for r in out["rows"]] == [None, None, False, True]
+    assert out["rows"][0]["realized_close"] is None
+    assert {k: out["summary"][k] for k in ("evaluated", "hits", "hit_rate")} == {
+        "evaluated": 2,
+        "hits": 1,
+        "hit_rate": 0.5,
+    }
+    assert out["summary"]["last_signal"] == out["rows"][0]["as_of"]
+
+    only_ggal = signal_history(ledger, symbols=["ggal"], limit=2)
+    assert [r["symbol"] for r in only_ggal["rows"]] == ["GGAL", "GGAL"]
+    assert only_ggal["summary"]["evaluated"] == 0
+    assert only_ggal["summary"]["hit_rate"] is None
+
+
+def test_build_summary_separates_versions_and_horizons():
+    base = {"symbol": "GGAL", "model": "xgboost", "signal": "alza", "last_close": 100.0}
+    resolved = [
+        {**base, "model_version": "xgb-v1", "horizon_days": 5, "predicted_close": 101.0,
+         "realized_close": 102.0, "as_of": "2026-09-01",
+         "predicted_log_return": 0.01, "realized_log_return": 0.02},
+        {**base, "model_version": "xgb-v2", "horizon_days": 20, "predicted_close": 103.0,
+         "realized_close": 99.0, "as_of": "2026-10-01",
+         "predicted_log_return": 0.03, "realized_log_return": -0.01},
+    ]  # fmt: skip
+    summary = build_summary(resolved)
+    assert set(summary["xgboost"]["by_version"]) == {"xgb-v1 · 5r", "xgb-v2 · 20r"}
+
+
+def test_main_fails_clearly_when_no_prices_can_be_fetched(tmp_path, monkeypatch) -> None:
+    """Sin precios de ningun ticker el job tiene que fallar (exit != 0), no
+    terminar "sin cambios", y no pisar el snapshot del comparador."""
+    import sys
+
+    import pytest
+
+    import src.paper_trading as paper_trading
+    from src.errors import DataUnavailableError
+
+    registry = _registry_with("lstm", _FakeService(_PREDICTION))
+
+    def _no_prices(symbol, **_kwargs):
+        raise DataUnavailableError(f"{symbol}: Yahoo no respondio")
+
+    registry.compare = _no_prices
+    registry.load_all = lambda: None
+    monkeypatch.setattr(paper_trading, "build_registry", lambda _days: registry)
+    snapshot = tmp_path / "snapshot.json"
+    ledger = tmp_path / "ledger.json"
+    monkeypatch.setattr(
+        sys,
+        "argv",
+        [
+            "paper_trading",
+            "--tickers",
+            "GGAL",
+            "--ledger",
+            str(ledger),
+            "--snapshot",
+            str(snapshot),
+        ],
+    )
+
+    with pytest.raises(SystemExit, match="No se pudo bajar el historico"):
+        paper_trading.main()
+
+    assert ledger.exists()
+    assert not snapshot.exists()

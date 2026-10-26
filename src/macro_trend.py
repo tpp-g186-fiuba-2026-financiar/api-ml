@@ -19,7 +19,7 @@ from src.data_quality import drop_stale, is_stale
 from src.errors import NotEnoughDataError, StaleArtifactError
 from src.indicators import macd_histogram, rsi_series
 from src.macro_data import todays_macro_frame
-from src.trend_common import derive_trend_output
+from src.trend_common import derive_trend_output, weak_signal_sides
 
 HORIZON = 20
 MIN_ROWS = 260
@@ -263,6 +263,16 @@ class MacroTrendModel:
             raise NotEnoughDataError("no hay historia suficiente para medir fuera de muestra")
         return pd.concat(parts)
 
+    def _apply_signal_edge(self) -> None:
+        """Apaga el lado (alza/baja) cuya ventaja fuera de muestra es chica."""
+        alza_weak, baja_weak = weak_signal_sides(self.metrics)
+        if alza_weak:
+            self.alza_threshold = float("-inf")
+            self.metrics["alza_disabled"] = 1.0
+        if baja_weak:
+            self.baja_threshold = float("inf")
+            self.metrics["baja_disabled"] = 1.0
+
     def fit_panel(self, panel: pd.DataFrame) -> dict[str, float]:
         """Calibra umbrales fuera de muestra y entrena el modelo final."""
         cfg = self.config
@@ -287,6 +297,7 @@ class MacroTrendModel:
             "oos_alza_samples": float(is_alza.sum()),
             "oos_alza_hit_rate": round(alza_hits, 4),
         }
+        self._apply_signal_edge()
         self._models = _fit_models(panel[FEATURES].to_numpy(), panel["down"].to_numpy(), cfg.seed)
         self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
         return self.metrics
@@ -368,6 +379,7 @@ class MacroTrendModel:
                 baja_move=blob["baja_move"],
             )
             model._models = blob["models"]
+            model._apply_signal_edge()
         except (TypeError, KeyError) as exc:
             raise StaleArtifactError(
                 f"el artefacto 'macro' tiene un formato desactualizado ({exc!r}): "
