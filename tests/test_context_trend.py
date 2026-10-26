@@ -5,7 +5,7 @@ import numpy as np
 import pandas as pd
 import pytest
 
-from src import context_trend, train_context
+from src import context_trend, train_context, xgb_trend
 from src.context_trend import (
     CONTEXT_FEATURES,
     FEATURES,
@@ -52,10 +52,15 @@ def market(histories) -> pd.DataFrame:
 
 
 @pytest.fixture(scope="module")
-def trained(histories, market) -> ContextTrendModel:
+def universe(histories):
+    return xgb_trend.build_universe(histories)
+
+
+@pytest.fixture(scope="module")
+def trained(histories, universe) -> ContextTrendModel:
     model = ContextTrendModel(config=ContextConfig(oos_folds=2))
     model.fit(histories)
-    model.market_provider = lambda: market
+    model.universe_provider = lambda: universe
     return model
 
 
@@ -128,17 +133,17 @@ def test_prediction_uses_market_as_of_the_last_date(trained, histories) -> None:
     """Predecir con el historico cortado no usa datos de mercado posteriores al corte."""
     df = histories["BBAR"].iloc[:500]
     seen = {}
-    original = context_trend.build_features
+    original = xgb_trend.build_features
 
     def spy(frame, mkt):
         seen["last"] = mkt.index[-1]
         return original(frame, mkt)
 
-    context_trend.build_features, backup = spy, context_trend.build_features
+    xgb_trend.build_features, backup = spy, xgb_trend.build_features
     try:
         trained.probability_down(df)
     finally:
-        context_trend.build_features = backup
+        xgb_trend.build_features = backup
     assert seen["last"] <= df.index[-1]
 
 
@@ -164,11 +169,11 @@ def test_fit_rejects_too_little_data() -> None:
         ContextTrendModel().fit(few)
 
 
-def test_save_and_load_roundtrip(trained, histories, market, tmp_path) -> None:
+def test_save_and_load_roundtrip(trained, histories, universe, tmp_path) -> None:
     path = tmp_path / "contexto.pkl"
     trained.save(path)
     loaded = ContextTrendModel.load(path)
-    loaded.market_provider = lambda: market
+    loaded.universe_provider = lambda: universe
     assert loaded.version == trained.version
     df = histories["CRES"]
     assert loaded.probability_down(df) == pytest.approx(trained.probability_down(df))
@@ -178,7 +183,7 @@ def test_load_refuses_artifacts_with_other_features(trained, tmp_path) -> None:
     path = tmp_path / "old.pkl"
     trained.save(path)
     blob = joblib.load(path)
-    blob["feature_names"] = FEATURES[:-1]
+    blob["feature_names"] = xgb_trend.ALL_FEATURES[:-1]
     joblib.dump(blob, path)
     with pytest.raises(StaleArtifactError):
         ContextTrendModel.load(path)
@@ -254,3 +259,9 @@ def test_a_side_without_edge_out_of_sample_is_never_emitted(histories) -> None:
     metrics = model.fit_panel(panel)
     assert metrics["baja_disabled"] == 1.0
     assert model.baja_threshold == float("inf")
+
+
+def test_uses_the_same_variables_as_xgboost_including_trend_and_ranks(trained) -> None:
+    """Contexto entrena con las variables de XGBoost: tendencia y puesto vs pares."""
+    assert trained._models[0].n_features_in_ == len(xgb_trend.ALL_FEATURES)
+    assert "r_tz252" in xgb_trend.ALL_FEATURES

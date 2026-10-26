@@ -26,7 +26,7 @@ from typing import TYPE_CHECKING, Protocol, runtime_checkable
 import numpy as np
 import pandas as pd
 
-from src.compare_snapshot import is_fresh, load_snapshot
+from src.compare_snapshot import fetch_remote_json, is_fresh, load_snapshot, parse_snapshot
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.data_quality import is_stale
 from src.errors import (
@@ -396,9 +396,15 @@ def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str 
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
-    def __init__(self, history_days: int, snapshot_path: str | Path | None = None):
+    def __init__(
+        self,
+        history_days: int,
+        snapshot_path: str | Path | None = None,
+        snapshot_url: str | None = None,
+    ):
         self._history_days = history_days
         self._snapshot_path = snapshot_path
+        self._snapshot_url = snapshot_url
         self._services: dict[
             str,
             TrendService
@@ -540,9 +546,9 @@ class TrendRegistry:
         return list(self._services)
 
     def _from_snapshot(self, symbol_key: str) -> dict | None:
-        if not self._snapshot_path:
-            return None
-        snapshot = load_snapshot(self._snapshot_path)
+        snapshot = load_snapshot(self._snapshot_path) if self._snapshot_path else None
+        if (snapshot is None or not is_fresh(snapshot["generated_at"])) and self._snapshot_url:
+            snapshot = parse_snapshot(fetch_remote_json(self._snapshot_url))
         if snapshot is None or not is_fresh(snapshot["generated_at"]):
             return None
         entry = snapshot["symbols"].get(symbol_key)
@@ -649,7 +655,11 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
-    registry = TrendRegistry(history_days, snapshot_path=settings.compare_snapshot_path)
+    registry = TrendRegistry(
+        history_days,
+        snapshot_path=settings.compare_snapshot_path,
+        snapshot_url=settings.compare_snapshot_url,
+    )
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):

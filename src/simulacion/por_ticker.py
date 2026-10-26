@@ -24,7 +24,7 @@ from src.context_trend import ContextConfig, ContextTrendModel
 from src.errors import ApiMlError
 from src.lstm import TrainConfig, TrendModel
 from src.macro_trend import MacroConfig, MacroTrendModel
-from src.simulacion.entrenamiento import historias_contexto, historias_macro, mercado_al
+from src.simulacion.entrenamiento import historias_contexto, historias_macro, universo_al
 from src.simulacion.snapshot import Snapshot
 from src.xgb_trend import XGBConfig, XGBTrendModel
 
@@ -83,7 +83,7 @@ class MacroPorTicker(PorTicker):
 
 
 class ContextoPorTicker(PorTicker):
-    """``contexto``: entrena con el universo hasta el corte; predice con el mercado del dia."""
+    """``contexto``: entrena con el universo hasta el corte; predice con el universo del dia."""
 
     def __init__(self, modelo: ContextTrendModel, snapshot: Snapshot) -> None:
         super().__init__(modelo)
@@ -93,8 +93,8 @@ class ContextoPorTicker(PorTicker):
         return self.modelo.fit(historias_contexto(self.snapshot, _corte(histories)))
 
     def preparar_dia(self, dia: pd.Timestamp) -> None:
-        mercado = mercado_al(self.snapshot, dia)
-        self.modelo.market_provider = lambda: mercado
+        universo = universo_al(self.snapshot, dia)
+        self.modelo.universe_provider = lambda: universo
 
 
 def _snapshot(snapshot: Snapshot | None, modelo: str) -> Snapshot:

@@ -11,7 +11,7 @@ from src.lstm import TrendModel
 from src.macro_trend import MacroTrendModel
 from src.simulacion import por_ticker
 from src.simulacion.busqueda import MODELOS
-from src.simulacion.entrenamiento import historias_contexto, historias_macro, mercado_al
+from src.simulacion.entrenamiento import historias_contexto, historias_macro, universo_al
 from src.xgb_trend import XGBTrendModel
 from tests.simulacion.conftest import TICKER_CORTO, TICKERS, FakeTrend
 
@@ -30,7 +30,7 @@ class FakeConProveedor(FakeTrend):
     def __init__(self):
         super().__init__()
         self.macro_provider = None
-        self.market_provider = None
+        self.universe_provider = None
         self.fit_args: tuple = ()
         self.vistos: list = []
 
@@ -39,7 +39,7 @@ class FakeConProveedor(FakeTrend):
         return {"oos_auc": 0.6}
 
     def predict_df(self, df: pd.DataFrame) -> dict:
-        proveedor = self.macro_provider or self.market_provider
+        proveedor = self.macro_provider or self.universe_provider
         self.vistos.append(proveedor())
         return super().predict_df(df)
 
@@ -103,8 +103,8 @@ def test_contexto_entrena_con_el_universo_y_predice_con_el_mercado_del_dia(snaps
     assert max(df.index[-1] for df in historias.values()) == CORTE
 
     modelo.predict_panel(_dfs(snapshot, DIA))
-    pd.testing.assert_frame_equal(fake.vistos[0], mercado_al(snapshot, DIA))
-    assert fake.vistos[0].index.max() <= DIA
+    pd.testing.assert_frame_equal(fake.vistos[0].market, universo_al(snapshot, DIA).market)
+    assert fake.vistos[0].market.index.max() <= DIA
 
 
 def test_constructores_de_busqueda(snapshot) -> None:

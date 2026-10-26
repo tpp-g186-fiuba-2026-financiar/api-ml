@@ -407,6 +407,35 @@ class XGBTrendModel:
             return "baja"
         return "neutral"
 
+    def rank_universe(self) -> list[dict]:
+        """P(sube) de todas las acciones del universo del dia, de mayor a menor,
+        con un puntaje de 1 a 10 segun su puesto en ese ranking."""
+        if self._models is None:
+            raise NotEnoughDataError("el modelo no esta entrenado")
+        universe = (self.universe_provider or todays_universe)()
+        filas = []
+        for symbol, frame in universe.features.items():
+            own = frame.iloc[[-1]]
+            try:
+                row = own.join(rank_against_peers(own, universe))[ALL_FEATURES]
+            except NotEnoughDataError:
+                continue
+            p_up = float(_score(self._models, row.to_numpy())[0])
+            filas.append(
+                {
+                    "symbol": symbol,
+                    "as_of": own.index[-1].strftime("%Y-%m-%d"),
+                    "probability_up": round(p_up, 4),
+                    "signal": self.signal_for(p_up),
+                }
+            )
+        filas.sort(key=lambda f: f["probability_up"], reverse=True)
+        n = len(filas)
+        for k, f in enumerate(filas):
+            f["puesto"] = k + 1
+            f["puntaje"] = int(np.ceil(10 * (n - k) / n)) if n else None
+        return filas
+
     def predict_df(self, df: pd.DataFrame) -> dict:
         p_up = self.probability_up(df)
         signal = self.signal_for(p_up)

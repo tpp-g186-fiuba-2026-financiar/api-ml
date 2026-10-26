@@ -47,15 +47,16 @@ class GarchVolatilityModel:
         forecast = result.forecast(horizon=horizon or self.horizon)
         return forecast.variance.to_numpy()[-1]
 
-    def predict_df(self, df: pd.DataFrame) -> dict:
+    def predict_df(self, df: pd.DataFrame, horizon: int | None = None) -> dict:
         close = df["close"].to_numpy(dtype=np.float64)
-        variance_pct2 = self._forecast_variance_pct2(close)
+        horizon = horizon or self.horizon
+        variance_pct2 = self._forecast_variance_pct2(close, horizon)
         daily_volatility_pct = np.sqrt(variance_pct2)
         # Volatilidad acumulada asumiendo retornos diarios independientes.
         cumulative_volatility_pct = float(np.sqrt(variance_pct2.sum()))
 
         return {
-            "horizon_days": self.horizon,
+            "horizon_days": horizon,
             "daily_volatility_pct": [round(float(v), 4) for v in daily_volatility_pct],
             "cumulative_volatility_pct": round(cumulative_volatility_pct, 4),
             "last_close": round(float(close[-1]), 4),

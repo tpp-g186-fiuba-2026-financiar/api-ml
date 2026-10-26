@@ -318,3 +318,13 @@ def test_every_feature_has_a_plain_explanation() -> None:
     assert feature_unit("r_t_ret20") == "rank"
     assert feature_unit("t_death_cross") == "flag"
     assert feature_unit("m_beta60") == "num"
+
+
+def test_rank_universe_orders_every_stock_with_a_score(trained, universe) -> None:
+    filas = trained.rank_universe()
+    assert {f["symbol"] for f in filas} <= set(universe.features)
+    probs = [f["probability_up"] for f in filas]
+    assert probs == sorted(probs, reverse=True)
+    assert [f["puesto"] for f in filas] == list(range(1, len(filas) + 1))
+    assert filas[0]["puntaje"] == 10 and filas[-1]["puntaje"] >= 1
+    assert all(f["signal"] in {"alza", "baja", "neutral"} for f in filas)

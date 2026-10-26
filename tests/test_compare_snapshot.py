@@ -93,3 +93,43 @@ def test_compare_goes_live_when_snapshot_is_stale_or_skipped(tmp_path, monkeypat
         registry.compare("GGAL", use_snapshot=False)
 
     assert fetched == ["GGAL", "GGAL"]
+
+
+def test_compare_reads_github_copy_when_local_is_stale(tmp_path, monkeypatch) -> None:
+    path = tmp_path / "snap.json"
+    save_snapshot(path, {"GGAL": {"symbol": "GGAL", "predictions": {}}}, now=_at(1, 21))
+    remote = {
+        "generated_at": dt.datetime.now(UTC).strftime("%Y-%m-%dT%H:%M:%SZ"),
+        "symbols": {"GGAL": {"symbol": "GGAL", "predictions": {"lstm": {"signal": "baja"}}}},
+    }
+    urls = []
+    monkeypatch.setattr("src.registry.fetch_remote_json", lambda url: urls.append(url) or remote)
+    monkeypatch.setattr(
+        "src.registry._fetch_history_with_macro",
+        lambda *_a: (_ for _ in ()).throw(AssertionError("no deberia ir en vivo")),
+    )
+    registry = TrendRegistry(history_days=750, snapshot_path=path, snapshot_url="https://x/snap")
+
+    result = registry.compare("GGAL")
+
+    assert result["source"] == "snapshot"
+    assert result["predictions"] == {"lstm": {"signal": "baja"}}
+    assert urls == ["https://x/snap"]
+
+
+def test_fetch_remote_json_caches_failures(monkeypatch) -> None:
+    import requests
+
+    from src import compare_snapshot
+
+    calls = []
+
+    def _get(url, timeout):
+        calls.append(url)
+        raise requests.ConnectionError("sin red")
+
+    monkeypatch.setattr(requests, "get", _get)
+
+    assert compare_snapshot.fetch_remote_json("https://x/a") is None
+    assert compare_snapshot.fetch_remote_json("https://x/a") is None
+    assert calls == ["https://x/a"]

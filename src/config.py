@@ -20,6 +20,17 @@ class Settings(BaseSettings):
     # Comparacion de modelos de cada accion que deja el paper trading diario
     # (src/compare_snapshot.py). Vacio = siempre calcular en vivo.
     compare_snapshot_path: str | None = "models/compare_snapshot.json"
+    # Copias en GitHub de lo que deja el job diario (rama main). El dyno de
+    # Render puede no redeployarse con los commits del bot ([skip ci]): si la
+    # copia local esta vencida, se lee de aca. Vacio = solo la copia local.
+    compare_snapshot_url: str | None = (
+        "https://raw.githubusercontent.com/tpp-g186-fiuba-2026-financiar/api-ml/main/"
+        "models/compare_snapshot.json"
+    )
+    ledger_url: str | None = (
+        "https://raw.githubusercontent.com/tpp-g186-fiuba-2026-financiar/api-ml/main/"
+        "models/paper_trading_ledger.json"
+    )
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si
