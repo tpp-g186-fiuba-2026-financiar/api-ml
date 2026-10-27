@@ -52,12 +52,24 @@ class Settings(BaseSettings):
     # Ninguno configurado por default: hay que pegar la URL de `modal deploy`
     # (no la de `modal serve`, que es efimera). Si no estan seteadas, esas
     # alternativas simplemente no aparecen en el registro.
-    modal_lstm_url: str | None = None
-    modal_xgboost_url: str | None = None
-    modal_transformer_url: str | None = None
-    modal_arima_url: str | None = None
-    modal_svm_url: str | None = None
-    modal_garch_url: str | None = None
+    # TEMPORAL (demo): con los modelos locales desactivados (ver build_registry)
+    # se usan por default las URLs del workspace historico de Modal (el mismo
+    # default que usa el back en src/modal.rs). Las variables de entorno siguen
+    # teniendo prioridad. Para volver atras, restaurar los `= None`.
+    # modal_lstm_url: str | None = None
+    # modal_xgboost_url: str | None = None
+    # modal_transformer_url: str | None = None
+    # modal_arima_url: str | None = None
+    # modal_svm_url: str | None = None
+    # modal_garch_url: str | None = None
+    modal_lstm_url: str | None = "https://matimorales01--lstm-trend-model-main.modal.run"
+    modal_xgboost_url: str | None = "https://matimorales01--xgboost-trend-model-main.modal.run"
+    modal_transformer_url: str | None = (
+        "https://matimorales01--transformer-trend-model-main.modal.run"
+    )
+    modal_arima_url: str | None = "https://matimorales01--arima-model-main.modal.run"
+    modal_svm_url: str | None = "https://matimorales01--svm-model-main.modal.run"
+    modal_garch_url: str | None = "https://matimorales01--garch-model-main.modal.run"
 
     model_config = SettingsConfigDict(
         env_file=".env",

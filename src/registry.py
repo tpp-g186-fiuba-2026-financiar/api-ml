@@ -639,34 +639,41 @@ def build_registry(history_days: int) -> TrendRegistry:
     >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` aca. <<<
     """
     from src.arima_trend import HORIZON as ARIMA_HORIZON
-    from src.arima_trend import ArimaTrendModel, translate_modal_arima_response
+    from src.arima_trend import translate_modal_arima_response
     from src.config import settings
-    from src.context_trend import ContextTrendModel
-    from src.lstm import TrendModel
-    from src.macro_trend import MacroTrendModel
-    from src.panel.train_transformer_v2 import proveedor_collector
-    from src.panel.transformer_v2 import TransformerV2Model
-    from src.transformer import TransformerTrendModel
-    from src.xgb_trend import XGBTrendModel
+
+    # TEMPORAL (demo): los modelos locales quedan desactivados y api-ml solo
+    # usa los de Modal (mas abajo). Para volver a activarlos, descomentar los
+    # imports y los `register` de este bloque (y ArimaTrendModel arriba).
+    # from src.arima_trend import ArimaTrendModel
+    # from src.context_trend import ContextTrendModel
+    # from src.lstm import TrendModel
+    # from src.macro_trend import MacroTrendModel
+    # from src.panel.train_transformer_v2 import proveedor_collector
+    # from src.panel.transformer_v2 import TransformerV2Model
+    # from src.transformer import TransformerTrendModel
+    # from src.xgb_trend import XGBTrendModel
 
     registry = TrendRegistry(history_days, snapshot_path=settings.compare_snapshot_path)
-    registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
-    registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
-    # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
-    # predice las acciones del panel lider ordenandolas entre si. El original queda
-    # como "transformer-v1" y responde por los tickers de fuera del panel.
-    registry.register("transformer-v1", settings.transformer_model_path, TransformerTrendModel.load)
-    registry.register_panel(
-        "transformer",
-        settings.transformer_v2_model_path,
-        TransformerV2Model.load,
-        respaldo="transformer-v1",
-        proveedor_factory=proveedor_collector,
-    )
-    registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
-    registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
-    # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
-    registry.register_on_demand("arima", ArimaTrendModel())
+    # registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
+    # registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
+    # # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
+    # # predice las acciones del panel lider ordenandolas entre si. El original queda
+    # # como "transformer-v1" y responde por los tickers de fuera del panel.
+    # registry.register(
+    #     "transformer-v1", settings.transformer_model_path, TransformerTrendModel.load
+    # )
+    # registry.register_panel(
+    #     "transformer",
+    #     settings.transformer_v2_model_path,
+    #     TransformerV2Model.load,
+    #     respaldo="transformer-v1",
+    #     proveedor_factory=proveedor_collector,
+    # )
+    # registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
+    # registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
+    # # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
+    # registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
 
     # Ensamble numerico (issue #163, "probar" un promedio pesado entre LSTM/
@@ -701,7 +708,9 @@ def build_registry(history_days: int) -> TrendRegistry:
             "arima-modal",
             settings.modal_arima_url,
             translator=translate_modal_arima_response,
-            extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
+            # TEMPORAL (demo): Modal hoy solo tiene artefactos para media_movil=20.
+            # extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
+            extra_params={"predictions": ARIMA_HORIZON, "media_movil": 20},
         )
     if settings.modal_svm_url:
         # svm_model.py (repo `models`, issue #159) es un clasificador binario
