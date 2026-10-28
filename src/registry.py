@@ -633,48 +633,57 @@ class TrendRegistry:
         }
 
 
-def build_registry(history_days: int) -> TrendRegistry:
-    """Arma el registro con todos los modelos disponibles.
+def _register_local_models(registry: TrendRegistry) -> None:
+    """Modelos que corren en este proceso con los artefactos de models/.
 
-    >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` aca. <<<
+    Los imports van aca adentro: con TREND_MODELS=modal no se carga ningun artefacto.
+    """
+    from src.arima_trend import ArimaTrendModel
+    from src.config import settings
+    from src.context_trend import ContextTrendModel
+    from src.lstm import TrendModel
+    from src.macro_trend import MacroTrendModel
+    from src.panel.train_transformer_v2 import proveedor_collector
+    from src.panel.transformer_v2 import TransformerV2Model
+    from src.transformer import TransformerTrendModel
+    from src.xgb_trend import XGBTrendModel
+
+    registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
+    registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
+    # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
+    # predice las acciones del panel lider ordenandolas entre si. El original queda
+    # como "transformer-v1" y responde por los tickers de fuera del panel.
+    registry.register("transformer-v1", settings.transformer_model_path, TransformerTrendModel.load)
+    registry.register_panel(
+        "transformer",
+        settings.transformer_v2_model_path,
+        TransformerV2Model.load,
+        respaldo="transformer-v1",
+        proveedor_factory=proveedor_collector,
+    )
+    registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
+    registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
+    # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
+    registry.register_on_demand("arima", ArimaTrendModel())
+    # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
+
+
+def build_registry(history_days: int) -> TrendRegistry:
+    """Arma el registro con los modelos que pide ``settings.trend_models``
+    ("local", "modal" o "ambos").
+
+    >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` en
+    `_register_local_models` (o un `register_remote` aca, si corre en Modal). <<<
     """
     from src.arima_trend import HORIZON as ARIMA_HORIZON
     from src.arima_trend import translate_modal_arima_response
     from src.config import settings
 
-    # TEMPORAL (demo): los modelos locales quedan desactivados y api-ml solo
-    # usa los de Modal (mas abajo). Para volver a activarlos, descomentar los
-    # imports y los `register` de este bloque (y ArimaTrendModel arriba).
-    # from src.arima_trend import ArimaTrendModel
-    # from src.context_trend import ContextTrendModel
-    # from src.lstm import TrendModel
-    # from src.macro_trend import MacroTrendModel
-    # from src.panel.train_transformer_v2 import proveedor_collector
-    # from src.panel.transformer_v2 import TransformerV2Model
-    # from src.transformer import TransformerTrendModel
-    # from src.xgb_trend import XGBTrendModel
-
     registry = TrendRegistry(history_days, snapshot_path=settings.compare_snapshot_path)
-    # registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
-    # registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
-    # # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
-    # # predice las acciones del panel lider ordenandolas entre si. El original queda
-    # # como "transformer-v1" y responde por los tickers de fuera del panel.
-    # registry.register(
-    #     "transformer-v1", settings.transformer_model_path, TransformerTrendModel.load
-    # )
-    # registry.register_panel(
-    #     "transformer",
-    #     settings.transformer_v2_model_path,
-    #     TransformerV2Model.load,
-    #     respaldo="transformer-v1",
-    #     proveedor_factory=proveedor_collector,
-    # )
-    # registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
-    # registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
-    # # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
-    # registry.register_on_demand("arima", ArimaTrendModel())
-    # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
+    if settings.trend_models in ("local", "ambos"):
+        _register_local_models(registry)
+    if settings.trend_models == "local":
+        return registry
 
     # Ensamble numerico (issue #163, "probar" un promedio pesado entre LSTM/
     # XGBoost/Transformer): se probo con `register_ensemble` (ver clase
@@ -693,8 +702,8 @@ def build_registry(history_days: int) -> TrendRegistry:
     # es default a proposito: se reentrena solo en cada request (no depende
     # de que alguien corra `make train` y suba el artefacto a mano), asi que
     # mientras Modal responda, la prediccion "principal" nunca queda vieja.
-    # Si Modal no esta configurado, este `if` ni se ejecuta y el default
-    # sigue siendo el `lstm` local de arriba -- sin riesgo de romper nada.
+    # Si su URL esta vacia, este `if` ni se ejecuta y el default sigue
+    # siendo el `lstm` local -- sin riesgo de romper nada.
     if settings.modal_lstm_url:
         registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
     if settings.modal_xgboost_url:
@@ -708,8 +717,7 @@ def build_registry(history_days: int) -> TrendRegistry:
             "arima-modal",
             settings.modal_arima_url,
             translator=translate_modal_arima_response,
-            # TEMPORAL (demo): Modal hoy solo tiene artefactos para media_movil=20.
-            # extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
+            # Modal solo tiene artefactos preentrenados para media_movil=20.
             extra_params={"predictions": ARIMA_HORIZON, "media_movil": 20},
         )
     if settings.modal_svm_url:

@@ -14,3 +14,9 @@ tests/
 .vscode/
 .DS_Store
 README.md
+
+# Resultados de la simulacion historica (gitignoreados, cientos de MB) y
+# notebooks de analisis: no hacen falta para servir la API. Van anclados a la
+# raiz para no excluir el codigo de src/simulacion/.
+/simulacion/
+/notebooks/
