@@ -1,6 +1,6 @@
 {
   "metrica": "walk_forward",
-  "val_acierto_balanceado": 0.5292,
-  "val_ic": 0.0393,
-  "observations": 5992
+  "val_acierto_balanceado": 0.525,
+  "val_ic": 0.0186,
+  "observations": 5993
 }

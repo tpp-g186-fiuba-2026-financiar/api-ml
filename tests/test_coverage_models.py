@@ -242,7 +242,7 @@ def test_retrain_guard_scores_and_promotes(monkeypatch, tmp_path):
 
 
 def test_transformer_building_blocks_and_guards(tmp_path):
-    positional = transformer._LearnedPositionalEncoding(max_len=4, d_model=4)
+    positional = transformer._SinusoidalPositionalEncoding(max_len=4, d_model=4)
     assert positional(torch.zeros(2, 3, 4)).shape == (2, 3, 4)
 
     network = transformer._TransformerRegressor(

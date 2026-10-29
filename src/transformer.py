@@ -15,7 +15,7 @@ from torch import nn
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
 from src.data import COMMODITY_YAHOO_SYMBOLS
-from src.errors import DataUnavailableError, NotEnoughDataError
+from src.errors import DataUnavailableError, NotEnoughDataError, StaleArtifactError
 
 # Reutilizamos el feature engineering del modelo LSTM tal cual: la parte de
 # "convertir OHLCV en features estacionarias" no cambia por usar otra
@@ -41,16 +41,30 @@ __all__ = ["TransformerTrainConfig", "TransformerTrendModel"]
 # --------------------------------------------------------------------------- #
 # Red neuronal
 # --------------------------------------------------------------------------- #
-class _LearnedPositionalEncoding(nn.Module):
-    """Embedding posicional aprendido para secuencias de largo fijo."""
+class _SinusoidalPositionalEncoding(nn.Module):
+    """Encoding posicional fijo de "Attention is all you need".
+
+    ``PE(p, 2i) = sin(p / 10000^(2i/d))`` y ``PE(p, 2i+1) = cos(p / 10000^(2i/d))``:
+    cada par de dimensiones es una onda de otra frecuencia, asi que la posicion
+    de cada dia de la ventana queda codificada sin entrenar nada, y la distancia
+    entre dos dias es una rotacion fija (la atencion puede usar "hace k dias").
+    La posicion 0 es el token [CLS]; las siguientes, los dias de la ventana del
+    mas viejo al mas reciente. No es un parametro: no se guarda en el artefacto.
+    """
 
     def __init__(self, max_len: int, d_model: int):
         super().__init__()
-        self.pos_embedding = nn.Parameter(torch.zeros(1, max_len, d_model))
-        nn.init.trunc_normal_(self.pos_embedding, std=0.02)
+        posicion = torch.arange(max_len, dtype=torch.float32)[:, None]
+        frecuencia = torch.exp(
+            torch.arange(0, d_model, 2, dtype=torch.float32) * (-math.log(10000.0) / d_model)
+        )
+        pe = torch.zeros(1, max_len, d_model)
+        pe[0, :, 0::2] = torch.sin(posicion * frecuencia)
+        pe[0, :, 1::2] = torch.cos(posicion * frecuencia)[:, : d_model // 2]
+        self.register_buffer("pe", pe, persistent=False)
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
-        return x + self.pos_embedding[:, : x.size(1), :]
+        return x + self.pe[:, : x.size(1), :]
 
 
 class _TransformerRegressor(nn.Module):
@@ -71,7 +85,7 @@ class _TransformerRegressor(nn.Module):
         self.cls_token = nn.Parameter(torch.zeros(1, 1, d_model))
         nn.init.trunc_normal_(self.cls_token, std=0.02)
         # +1 por el token [CLS] que se antepone a la secuencia.
-        self.pos_encoding = _LearnedPositionalEncoding(window + 1, d_model)
+        self.pos_encoding = _SinusoidalPositionalEncoding(window + 1, d_model)
 
         encoder_layer = nn.TransformerEncoderLayer(
             d_model=d_model,
@@ -291,6 +305,8 @@ _FEATURES_PANEL = ["ret5_rel", "ret20_rel", "rank5", "vol20_rel", "mkt_ret5", "m
 _RUEDAS_VOL = 20
 _MINIMO_PANEL = 5  # tickers del panel con dato para que la mediana represente al mercado
 _FEATURE_RIESGO_PAIS = "riesgo_pais_chg5"
+# Clave del encoding posicional aprendido de las redes anteriores al sinusoidal.
+_POSICIONAL_APRENDIDO = "pos_encoding.pos_embedding"
 _COLUMNA_RIESGO_PAIS = "riesgo_pais"  # columna que ``_preparar`` agrega al OHLCV
 
 
@@ -950,6 +966,11 @@ class TransformerTrendModel:
     def load(cls, path: str | Path, proveedor: Proveedor | None = None) -> TransformerTrendModel:
         blob = torch.load(Path(path), map_location="cpu", weights_only=False)
         check_feature_compatibility(blob.get("feature_names"))
+        estados = blob.get("state_dicts") or [blob["state_dict"]]
+        if any(_POSICIONAL_APRENDIDO in estado for estado in estados):
+            raise StaleArtifactError(
+                "el artefacto usa el encoding posicional aprendido; hay que reentrenarlo"
+            )
         # Las opciones que no estan en el artefacto son de antes de existir:
         # las del modelo original.
         cfg = TransformerTrainConfig(**(CONFIG_ORIGINAL | blob["config"]))
@@ -965,7 +986,7 @@ class TransformerTrendModel:
             mercado=blob.get("mercado"),
             proveedor=proveedor,
         )
-        for state in blob.get("state_dicts") or [blob["state_dict"]]:
+        for state in estados:
             net = _TransformerRegressor(
                 input_size=n_features(cfg),
                 window=cfg.window,

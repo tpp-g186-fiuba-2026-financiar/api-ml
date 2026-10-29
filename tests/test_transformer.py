@@ -517,3 +517,34 @@ def test_en_dolares_excluye_commodities_y_especies_d() -> None:
 
     ventanas = transformer._ventanas_con_fecha(histories["OIL"], model.config)
     assert (pd.DatetimeIndex(ventanas[2]) == pd.DatetimeIndex(ventanas[2]).normalize()).all()
+
+
+def test_encoding_posicional_sinusoidal_fijo() -> None:
+    """sin / cos de "Attention is all you need": sin parametros ni lugar en el artefacto."""
+    pe = transformer._SinusoidalPositionalEncoding(max_len=21, d_model=16)
+    assert list(pe.parameters()) == [] and pe.state_dict() == {}
+    valores = pe(torch.zeros(1, 21, 16))[0]
+    assert torch.allclose(valores[0, 0::2], torch.zeros(8))  # sin(0)
+    assert torch.allclose(valores[0, 1::2], torch.ones(8))  # cos(0)
+    # La primera dimension oscila con periodo 2*pi: posicion 1 => sin(1).
+    assert valores[1, 0].item() == pytest.approx(np.sin(1.0), abs=1e-6)
+    # Posiciones distintas, vectores distintos.
+    assert torch.cdist(valores, valores).fill_diagonal_(1.0).min() > 0.1
+    impar = transformer._SinusoidalPositionalEncoding(max_len=5, d_model=5)
+    assert impar(torch.zeros(1, 5, 5)).shape == (1, 5, 5)
+
+
+def test_artefacto_con_encoding_aprendido_pide_reentrenar(tmp_path) -> None:
+    from src.errors import StaleArtifactError
+
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(2)}
+    model = TransformerTrendModel(config=_small_config())
+    model.fit(histories)
+    path = tmp_path / "viejo.pt"
+    model.save(path)
+    blob = torch.load(path, weights_only=False)
+    for estado in blob["state_dicts"]:
+        estado["pos_encoding.pos_embedding"] = torch.zeros(1, 11, 4)
+    torch.save(blob, path)
+    with pytest.raises(StaleArtifactError, match="posicional"):
+        TransformerTrendModel.load(path)
