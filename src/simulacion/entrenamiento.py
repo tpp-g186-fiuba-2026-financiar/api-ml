@@ -18,6 +18,7 @@ Los artefactos van a un directorio propio de la corrida, nunca a ``models/``.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -101,12 +102,24 @@ class ModeloDiario:
         return {"model": self.name, "promoted": promoted, **score}
 
 
+def proveedor_snapshot(snapshot: Snapshot):
+    """CCL del dia y tabla macro (con retrasos) conocidos a cada fecha del snapshot."""
+
+    def proveedor(hasta: pd.Timestamp):
+        macro = snapshot.macro_frame(hasta) if snapshot.macro_raw else None
+        return snapshot.ccl_hasta(hasta), macro
+
+    return proveedor
+
+
 def build_modelos_diarios(
-    artifacts_dir: Path, transformer: dict | None = None
+    artifacts_dir: Path, transformer: dict | None = None, proveedor=None
 ) -> list[ModeloDiario]:
     """Modelos con reentreno diario/semanal. ``transformer`` cambia campos de
     ``TransformerTrainConfig`` para probar una variante (vacio = produccion).
-    Con target relativo el gate del Transformer compara IC en vez de accuracy."""
+    El gate del Transformer usa su walk-forward (con target relativo, IC).
+    ``proveedor`` da el CCL y el riesgo pais al Transformer (ver
+    ``proveedor_snapshot``); sin el, los pide al data-colector."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     cambios = transformer or {}
     return [
@@ -114,10 +127,12 @@ def build_modelos_diarios(
         ModeloDiario("xgboost", XGBTrendModel, XGBTrendModel.load, artifacts_dir / "xgb.pkl"),
         ModeloDiario(
             "transformer",
-            lambda: TransformerTrendModel(config=TransformerTrainConfig(**cambios)),
-            TransformerTrendModel.load,
+            lambda: TransformerTrendModel(
+                config=TransformerTrainConfig(**cambios), proveedor=proveedor
+            ),
+            functools.partial(TransformerTrendModel.load, proveedor=proveedor),
             artifacts_dir / "transformer.pt",
-            metrica="ic" if cambios.get("target") == "relativo" else "accuracy",
+            metrica="ic" if cambios.get("target") == "relativo" else "walk_forward",
         ),
     ]
 

@@ -104,3 +104,39 @@ def test_promote_if_better_por_ic_sin_vigente(tmp_path) -> None:
     )
     assert promovido and score["incumbent_ic"] is None
     assert Path(path).exists()
+
+
+class _ConMetricas:
+    """Modelo con las metricas fuera de muestra que deja el walk-forward."""
+
+    def __init__(self, acierto, ic):
+        self.metrics = {"val_acierto_balanceado": acierto, "val_ic": ic, "val_samples": 100.0}
+        self.guardado = None
+
+    def save(self, path):
+        self.guardado = path
+        Path(path).write_text("modelo")
+
+
+def test_gate_walk_forward_pide_acierto_balanceado_e_ic_positivos(tmp_path) -> None:
+    path = str(tmp_path / "transformer.pt")
+    for acierto, ic in ((0.50, 0.05), (0.56, 0.0), (None, 0.05), (0.56, None)):
+        promovido, _ = promote_if_better(
+            _ConMetricas(acierto, ic), path, None, {}, 5, "walk_forward"
+        )
+        assert not promovido
+    assert not Path(path).exists()
+
+    bueno = _ConMetricas(0.56, 0.03)
+    promovido, score = promote_if_better(bueno, path, None, {}, 5, "walk_forward")
+    assert promovido and bueno.guardado == path
+    sidecar = json.loads(Path(path + ".score.json").read_text())
+    assert sidecar == score
+    assert sidecar["metrica"] == "walk_forward" and sidecar["observations"] == 100
+
+
+def test_force_promote_walk_forward_guarda_sin_piso(tmp_path) -> None:
+    path = str(tmp_path / "transformer.pt")
+    score = force_promote(_ConMetricas(0.45, -0.1), path, {}, 5, "walk_forward")
+    assert score["val_acierto_balanceado"] == 0.45
+    assert Path(path).exists()

@@ -14,60 +14,34 @@ train: ## Entrena el LSTM de tendencia (models/lstm.pt, con gate de promocion)
 	python -m src.train
 train-xgb: ## Entrena el XGBoost de tendencia (models/xgb.pkl, con gate de promocion)
 	python -m src.train_xgb
-train-transformer: ## Entrena el Transformer original (models/transformer.pt, con gate de promocion)
-	python -m src.train_transformer
-train-transformer-v2: ## Entrena el Transformer V2, el "transformer" de la API (collector, gate por IC; ARGS="--force" lo salta)
-	python -m src.panel.train_transformer_v2 $(ARGS)
-# Transformer V2: snapshot con datos del collector local, busqueda de variantes
-# (retomable: lo ya corrido no se repite) y acierto de la direccion en dolares.
-V2_SNAPSHOT ?= simulacion/snapshot-collector
-V2_BUSQUEDA ?= v2-direccion-2
-# Ruedas por ticker del snapshot: todo lo que tiene el collector (~10 anios),
-# para poder entrenar con mas historia (variantes "historia" de la busqueda).
-V2_DIAS ?= 2600
-snapshot-collector: ## Baja el snapshot de la simulacion desde el collector local (V2_SNAPSHOT)
+train-transformer: ## Entrena el Transformer (models/transformer.pt, en dolares, gate por walk-forward; ARGS="--force" lo salta)
+	python -m src.train_transformer $(ARGS)
+# Snapshot de la simulacion con datos del collector local: todo lo que tiene
+# (~10 anios por ticker), para entrenar con mas historia.
+SNAPSHOT_COLLECTOR ?= simulacion/snapshot-collector
+DIAS_COLLECTOR ?= 2600
+snapshot-collector: ## Baja el snapshot de la simulacion desde el collector local (SNAPSHOT_COLLECTOR)
 	DATA_SOURCE=collector DATA_COLLECTOR_URL=$${DATA_COLLECTOR_URL:-http://localhost:3000} \
-		python -m src.simulacion.snapshot --dir $(V2_SNAPSHOT) --days $(V2_DIAS)
-buscar-transformer-v2: ## Compara 11 variantes del V2 con el original en 7 periodos 2022-2025 (GPU, ~4-5 h, retomable)
-	python -m src.simulacion.busqueda --nombre $(V2_BUSQUEDA) --plan v2 --semillas 5 \
-		--baselines --snapshot $(V2_SNAPSHOT) --limpiar --dispositivo cuda --procesos 3 $(ARGS)
-direccion-transformer-v2: ## Tabla de acierto de la direccion en dolares de la busqueda del V2
-	python -m src.simulacion.direccion --nombre $(V2_BUSQUEDA) --snapshot $(V2_SNAPSHOT) \
-		--limpiar $(ARGS)
-V2_RAPIDA ?= v2-vs-original
-probar-transformer-v2: ## Prueba rapida de ajustes e hiperparametros del V2 (1 semilla, ~15 min) y tabla de direccion
-	python -m src.simulacion.busqueda --nombre $(V2_RAPIDA) --plan rapido --semillas 1 \
-		--snapshot $(V2_SNAPSHOT) --limpiar --dispositivo cuda --procesos 3 $(ARGS)
-	python -m src.simulacion.direccion --nombre $(V2_RAPIDA) --snapshot $(V2_SNAPSHOT) --limpiar
+		python -m src.simulacion.snapshot --dir $(SNAPSHOT_COLLECTOR) --days $(DIAS_COLLECTOR)
+# Busqueda de hiperparametros del Transformer: Optuna en paralelo (~1 h) y confirmacion de los
+# mejores con varias semillas y cortes. ARGS='--trials 4 --top 2 --semillas 2' para probar.
+OPTUNA_NOMBRE ?= transformer
+optuna-transformer: ## Busqueda de hiperparametros del Transformer con Optuna (SNAPSHOT_COLLECTOR, retomable)
+	python -m src.simulacion.optuna_transformer --nombre $(OPTUNA_NOMBRE) \
+		--snapshot $(SNAPSHOT_COLLECTOR) $(ARGS)
 # Ronda 2 del plan de mejora: filtro con modelos baratos (CPU) e intervalos de cada grupo.
 R2_FILTRO ?= r2-filtro
 filtro-r2: ## Ronda 2: cabezas relativa / mercado, meta-labeling y dos cabezas con modelos baratos (CPU, ~10 min)
 	python -m src.simulacion.busqueda --nombre $(R2_FILTRO) --plan r2 --semillas 1 \
-		--snapshot $(V2_SNAPSHOT) --limpiar $(ARGS)
-	python -m src.simulacion.significancia --nombre $(R2_FILTRO) --snapshot $(V2_SNAPSHOT) \
+		--snapshot $(SNAPSHOT_COLLECTOR) --limpiar $(ARGS)
+	python -m src.simulacion.significancia --nombre $(R2_FILTRO) --snapshot $(SNAPSHOT_COLLECTOR) \
 		--limpiar --contra ens
-R2_TRANSFORMER ?= r2-transformer
-transformer-r2: ## Ronda 2: V2 como cabeza relativa vs ensamble, 3 semillas (GPU, ~30-40 min, retomable)
-	python -m src.simulacion.busqueda --nombre $(R2_TRANSFORMER) --plan r2-transformer --semillas 3 \
-		--snapshot $(V2_SNAPSHOT) --limpiar --dispositivo cuda --procesos 3 $(ARGS)
-	python -m src.simulacion.significancia --nombre $(R2_TRANSFORMER) --snapshot $(V2_SNAPSHOT) \
-		--limpiar --contra ens_h1500
-# Simulacion rapida de un solo modelo (por default el V2): entrena con datos
-# anteriores a SIM_DESDE, predice cada rueda, mide la direccion en dolares con
-# intervalos y arma carteras simples, sin Black-Litterman ni consenso.
-SIM_NOMBRE ?= v2-rapida
-SIM_DESDE ?= 2025-01-02
-# JSON con campos de la config del modelo (p. ej. SIM_CONFIG='{"n_semillas": 1}').
-SIM_CONFIG ?= {}
-simular-v2: ## Simulacion rapida de un solo modelo: metricas de direccion y carteras sin Black-Litterman (GPU)
-	python -m src.simulacion.un_modelo --nombre $(SIM_NOMBRE) --desde $(SIM_DESDE) \
-		--config '$(SIM_CONFIG)' --snapshot $(V2_SNAPSHOT) --dispositivo cuda $(ARGS)
 # Simulacion con chequeo previo de requisitos (scripts/check_simulacion.sh) y el
-# reporte en LaTeX / PDF al final (imprime las rutas). Con el snapshot V2_SNAPSHOT:
+# reporte en LaTeX / PDF al final (imprime las rutas). Con el snapshot SNAPSHOT_COLLECTOR:
 #   make simular MODELO=lstm NOMBRE=lstm-2026 DESDE=2026-01-02
 #   make simulacion NOMBRE=completa-2026 DESDE=2026-06-01 REENTRENO=semanal
 PYTHON ?= python
-MODELO ?= transformer_v2
+MODELO ?= ensamble_panel
 NOMBRE ?=
 DESDE ?=
 HASTA ?=
@@ -75,7 +49,7 @@ HASTA ?=
 REENTRENO ?=
 # JSON con campos de la config del modelo (p. ej. CONFIG='{"epochs": 20}').
 CONFIG ?= {}
-SNAPSHOT ?= $(V2_SNAPSHOT)
+SNAPSHOT ?= $(SNAPSHOT_COLLECTOR)
 DISPOSITIVO ?= $(shell $(PYTHON) -c "import torch; print('cuda' if torch.cuda.is_available() else 'cpu')" 2>/dev/null || echo cpu)
 CHECK = PYTHON=$(PYTHON) scripts/check_simulacion.sh
 USO = MODELO=<modelo> NOMBRE=<corrida> DESDE=YYYY-MM-DD [HASTA=YYYY-MM-DD] [REENTRENO=...]
@@ -86,7 +60,7 @@ define chequear
 endef
 # PHONY: hay una carpeta simulacion/ y make daria el target por hecho.
 .PHONY: simular simulacion simulacion-reporte simulacion-check
-simular: ## Simulacion de un solo modelo, cualquiera (MODELO=lstm|xgboost|arima|macro|contexto|transformer_v2|...): direccion y carteras sin Black-Litterman, con reporte en PDF
+simular: ## Simulacion de un solo modelo, cualquiera (MODELO=lstm|xgboost|arima|macro|contexto|ensamble_panel|...): direccion y carteras sin Black-Litterman, con reporte en PDF
 	$(chequear)
 	$(PYTHON) -m src.simulacion.un_modelo --nombre $(NOMBRE) --modelo $(MODELO) --desde $(DESDE) \
 		$(if $(HASTA),--hasta $(HASTA)) $(if $(REENTRENO),--reentreno $(REENTRENO)) \

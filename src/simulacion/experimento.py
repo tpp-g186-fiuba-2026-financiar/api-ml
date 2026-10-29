@@ -51,7 +51,7 @@ from src.lstm import TrendModel
 from src.simulacion.entrenamiento import histories_at
 from src.simulacion.limpieza import limpiar
 from src.simulacion.snapshot import DEFAULT_DIR, Snapshot
-from src.transformer import TransformerTrainConfig, TransformerTrendModel
+from src.transformer import CONFIG_ORIGINAL, TransformerTrainConfig, TransformerTrendModel
 from src.trend_common import centrar_predicciones, derive_trend_output
 from src.xgb_trend import XGBTrendModel
 
@@ -99,7 +99,9 @@ class ReversionPanelModel(ReversionModel):
 
 
 def _transformer(**cambios) -> Callable[[], object]:
-    return lambda: TransformerTrendModel(config=TransformerTrainConfig(**cambios))
+    # Variantes del Transformer original, comparables con corridas viejas.
+    config = CONFIG_ORIGINAL | cambios
+    return lambda: TransformerTrendModel(config=TransformerTrainConfig(**config))
 
 
 # Variantes disponibles: nombre -> fabrica de un modelo sin entrenar.

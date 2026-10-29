@@ -52,7 +52,7 @@ class FakeArima(FakeTrend):
         return super().predict_df(df)
 
 
-def _modelos(artefactos, transformer=None):
+def _modelos(artefactos, transformer=None, proveedor=None):
     artefactos.mkdir(parents=True, exist_ok=True)
     return [
         ModeloDiario("lstm", FakeTrend, FakeTrend.load, artefactos / "lstm.pkl"),

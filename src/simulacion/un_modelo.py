@@ -33,12 +33,12 @@ config (como las variantes de la busqueda: ``"modelo"`` e ``"historia"``
 tambien se aceptan dentro del JSON).
 
 Uso:
-    python -m src.simulacion.un_modelo --nombre v2-2025 --desde 2025-01-02 --hasta 2025-12-30 \\
-        --snapshot simulacion/snapshot-collector --dispositivo cuda
-    python -m src.simulacion.un_modelo --nombre v2-bce --desde 2025-01-02 \\
-        --config '{"perdida": "bce", "n_semillas": 3}' --reentreno nunca --dispositivo cuda
+    python -m src.simulacion.un_modelo --nombre ens-2025 --desde 2025-01-02 --hasta 2025-12-30 \\
+        --snapshot simulacion/snapshot-collector
+    python -m src.simulacion.un_modelo --nombre pt-2025 --modelo panel_transformer \\
+        --desde 2025-01-02 --config '{"n_semillas": 3}' --reentreno nunca --dispositivo cuda
     python -m src.simulacion.un_modelo --nombre lstm-2026 --modelo lstm --desde 2026-01-02
-    python -m src.simulacion.un_modelo --nombre v2-2025 --solo-analisis --comision 0.01
+    python -m src.simulacion.un_modelo --nombre ens-2025 --solo-analisis --comision 0.01
 """
 
 from __future__ import annotations
@@ -53,7 +53,6 @@ import numpy as np
 import pandas as pd
 
 from src.config import settings
-from src.panel.transformer_v2 import HISTORIA_V2
 from src.simulacion.busqueda import MODELOS
 from src.simulacion.cartera import CAPITAL_INICIAL_DEFAULT, COMISION_DEFAULT
 from src.simulacion.direccion import REFERENCIA_REVERSION, referencias, retornos_usd
@@ -74,7 +73,7 @@ from src.simulacion.simulador import (
 from src.simulacion.snapshot import DEFAULT_DIR as SNAPSHOT_DIR
 from src.simulacion.snapshot import Snapshot
 
-MODELO_DEFAULT = "transformer_v2"
+MODELO_DEFAULT = "ensamble_panel"
 REENTRENO_DEFAULT = "mensual"
 ARCHIVOS_CARTERAS = ("valores", "pesos", "operaciones", "errores", "elecciones")
 
@@ -87,8 +86,7 @@ class ConfigUnModelo:
     modelo: str = MODELO_DEFAULT
     # Campos de la config del modelo a cambiar (vacio = la default del modelo).
     config: dict = field(default_factory=dict)
-    # Ruedas de historia para entrenar; None = ``HISTORIA_V2`` para el V2 y las de
-    # produccion para el resto.
+    # Ruedas de historia para entrenar; None = las de produccion.
     historia: int | None = None
     reentreno: str = REENTRENO_DEFAULT
     # Senal por cuantil del dia (``senal_por_cuantil``); None = la del modelo.
@@ -104,7 +102,7 @@ class ConfigUnModelo:
         self.modelo = config.pop("modelo", self.modelo)
         historia = config.pop("historia", self.historia)
         if historia is None:
-            historia = HISTORIA_V2 if self.modelo == "transformer_v2" else settings.history_days
+            historia = settings.history_days
         self.historia = int(historia)
         self.config = config
         if self.modelo not in MODELOS:

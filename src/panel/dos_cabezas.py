@@ -10,7 +10,7 @@ Por eso se modelan por separado:
 - **Cabeza de mercado**: cualquier modelo de panel que devuelva el mismo
   retorno para todas las acciones del dia (``src.panel.mercado``).
 - **Cabeza relativa**: cualquier modelo de panel entrenado con un target sin la
-  media del dia (``ensamble_panel``, ``panel_gbm``, ``transformer_v2`` con
+  media del dia (``ensamble_panel``, ``panel_gbm``, ``panel_transformer`` con
   ``target="sin_media"``); se le resta igual su promedio del dia, para que no
   meta una opinion sobre el mercado.
 

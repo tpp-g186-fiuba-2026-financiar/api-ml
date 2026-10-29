@@ -15,9 +15,6 @@ class Settings(BaseSettings):
     # miran el precio (LSTM: 47,9% de acierto de direccion en vivo).
     xgb5_model_path: str = "models/xgb5.pkl"
     transformer_model_path: str = "models/transformer.pt"
-    # Artefacto del Transformer V2 (src/panel/transformer_v2.py), que la API sirve como
-    # "transformer" (el original, transformer_model_path, queda como "transformer-v1").
-    transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"
     # Comparacion de modelos de cada accion que deja el paper trading diario

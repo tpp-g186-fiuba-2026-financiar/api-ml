@@ -53,7 +53,7 @@ def test_build_modelos_diarios(tmp_path) -> None:
     assert modelos[2].factory().config.target == "absoluto"
     variante = build_modelos_diarios(tmp_path / "artefactos", {"target": "relativo"})
     assert variante[2].factory().config.target == "relativo"
-    assert (modelos[2].metrica, variante[2].metrica) == ("accuracy", "ic")
+    assert (modelos[2].metrica, variante[2].metrica) == ("walk_forward", "ic")
 
 
 class _MacroOk(FakeMacro):

@@ -48,7 +48,7 @@ HISTORY_TTL = 30 * 60
 # pero que no son acciones de BYMA -- no llevan sufijo `.BA`, van directo a su
 # futuro de Yahoo. Mismo mapeo que usa el scrapper de commodities del repo
 # `data-colector` (`commodities_persist_historical_price.rs::COMMODITIES`).
-_COMMODITY_YAHOO_SYMBOLS = {
+COMMODITY_YAHOO_SYMBOLS = {
     "GOLD": "GC=F",
     "OIL": "CL=F",
 }
@@ -64,8 +64,8 @@ def to_yahoo_symbol(symbol: str) -> str:
     respondia 404 para ``GOLD.BA``/``OIL.BA``, que no existen).
     """
     symbol = symbol.strip().upper()
-    if symbol in _COMMODITY_YAHOO_SYMBOLS:
-        return _COMMODITY_YAHOO_SYMBOLS[symbol]
+    if symbol in COMMODITY_YAHOO_SYMBOLS:
+        return COMMODITY_YAHOO_SYMBOLS[symbol]
     if "." in symbol or "=" in symbol:
         return symbol
     if not settings.market_suffix:

@@ -5,8 +5,14 @@ import pandas as pd
 import pytest
 import torch
 
-from src.errors import NotEnoughDataError
-from src.transformer import TransformerTrainConfig, TransformerTrendModel
+from src import transformer
+from src.errors import DataUnavailableError, NotEnoughDataError
+from src.transformer import (
+    CONFIG_ORIGINAL,
+    TransformerTrainConfig,
+    TransformerTrendModel,
+    _bloques_walk_forward,
+)
 
 
 def _synthetic_ohlcv(n: int = 200, seed: int = 0) -> pd.DataFrame:
@@ -36,6 +42,10 @@ def _small_config(**overrides) -> TransformerTrainConfig:
         batch_size=16,
         patience=1,
         warmup_epochs=1,
+        # En pesos y sin riesgo pais, para no depender del data-colector; los
+        # tests de dolares / riesgo pais pasan un proveedor falso.
+        moneda="ars",
+        riesgo_pais=False,
     )
     base.update(overrides)
     return TransformerTrainConfig(**base)
@@ -97,6 +107,7 @@ def test_variantes_relativo_panel_huber_ic_ensamble(tmp_path) -> None:
     histories = {t: _synthetic_ohlcv(seed=i) for i, t in enumerate(panel)}
     histories["FUERA"] = _synthetic_ohlcv(seed=9)
     config = _small_config(
+        **CONFIG_ORIGINAL,
         target="relativo",
         universo="panel",
         loss="huber",
@@ -133,18 +144,20 @@ def test_load_de_artefacto_de_una_sola_red(tmp_path) -> None:
     import torch
 
     histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(2)}
-    model = TransformerTrendModel(config=_small_config())
+    model = TransformerTrendModel(config=_small_config(**CONFIG_ORIGINAL))
     model.fit(histories)
     path = tmp_path / "viejo.pt"
     model.save(path)
     blob = torch.load(path, weights_only=False)
     del blob["state_dicts"]
-    for clave in ("target", "universo", "loss", "clip_target", "seleccion", "gap", "n_semillas"):
+    claves = ("target", "universo", "loss", "clip_target", "seleccion", "gap", "n_semillas")
+    for clave in (*claves, *CONFIG_ORIGINAL):
         del blob["config"][clave]
     torch.save(blob, path)
 
     reloaded = TransformerTrendModel.load(path)
     assert reloaded.config.target == "absoluto"
+    assert reloaded.config.objetivo == "regresion"
     assert reloaded._net is not None
     assert reloaded.predict_df(histories["SYN0"])["predicted_close"] == pytest.approx(
         model.predict_df(histories["SYN0"])["predicted_close"], rel=1e-4
@@ -261,3 +274,277 @@ def test_columnas_elige_las_features_de_la_red() -> None:
         TransformerTrainConfig(columnas=["ret5_rel"])  # sin features_panel no existe
     with pytest.raises(ValueError, match="columnas"):
         TransformerTrainConfig(columnas=[])
+
+
+def test_bloques_walk_forward_comunes_a_todos_los_tickers() -> None:
+    """Tickers con historias de distinto largo comparten los bloques, con gap."""
+    fechas = pd.date_range("2024-01-01", periods=100, freq="B").to_numpy()
+    vacio = np.zeros(0)
+    por_ticker = {"LARGO": (vacio, vacio, fechas), "CORTO": (vacio, vacio, fechas[60:])}
+    bloques = _bloques_walk_forward(por_ticker, val_fraction=0.3, folds=3, gap=5)
+
+    assert [(b[0], b[1]) for b in bloques] == [
+        (fechas[65], fechas[70]),
+        (fechas[75], fechas[80]),
+        (fechas[85], fechas[90]),
+    ]
+    # Bloques consecutivos que cubren hasta la ultima fecha.
+    assert bloques[0][2] == bloques[1][1] and bloques[1][2] == bloques[2][1]
+    assert bloques[-1][2] > fechas[-1]
+
+
+def test_bloques_walk_forward_sin_validacion_y_sin_datos() -> None:
+    fechas = pd.date_range("2024-01-01", periods=20, freq="B").to_numpy()
+    vacio = np.zeros(0)
+    assert _bloques_walk_forward({"A": (vacio, vacio, fechas)}, 0.0, folds=3, gap=5) == []
+    # Menos fechas de validacion que bloques: un bloque por fecha.
+    assert len(_bloques_walk_forward({"A": (vacio, vacio, fechas)}, 0.1, folds=3, gap=5)) == 2
+    with pytest.raises(NotEnoughDataError):
+        _bloques_walk_forward({"A": (vacio, vacio, fechas)}, 0.5, folds=1, gap=10)
+
+
+def test_gap_por_defecto_es_el_horizonte_y_no_acepta_negativos() -> None:
+    assert TransformerTrainConfig().gap is None
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(gap=-1)
+
+
+def test_clasificacion_por_defecto_retorno_acotado_por_el_movimiento_tipico(tmp_path) -> None:
+    """La red da el logit de "sube"; el retorno esperado es (2p - 1) * movimiento tipico."""
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(3)}
+    model = TransformerTrendModel(config=_small_config())
+    assert model.config.objetivo == "clasificacion"
+    metrics = model.fit(histories)
+    assert "val_acierto_balanceado" in metrics
+    assert model.target_mean == 0.0
+    assert model.target_std > 0
+
+    x = torch.randn(8, model.config.window, len(model.feature_mean))
+    retornos = model._salida(x)
+    assert np.all(np.abs(retornos) <= model.target_std)
+
+    result = model.predict_df(histories["SYN0"])
+    path = tmp_path / "clasificacion.pt"
+    model.save(path)
+    reloaded = TransformerTrendModel.load(path)
+    assert reloaded.config.objetivo == "clasificacion"
+    assert reloaded.predict_df(histories["SYN0"])["predicted_close"] == pytest.approx(
+        result["predicted_close"], rel=1e-4
+    )
+
+
+def test_clasificacion_con_probabilidad_media_es_neutral() -> None:
+    """Logit 0 (p = 0.5) => retorno esperado 0."""
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(2)}
+    model = TransformerTrendModel(config=_small_config())
+    model.fit(histories)
+    model._forward = lambda x: np.zeros(len(x), dtype=np.float32)
+    assert model.predict_df(histories["SYN0"])["signal"] == "neutral"
+
+
+def test_clasificacion_rechaza_opciones_de_regresion() -> None:
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(loss="huber")
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(clip_target=3.0)
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(objetivo="otro")
+    assert TransformerTrainConfig(objetivo="regresion", loss="huber").loss == "huber"
+
+
+def test_walk_forward_entrena_un_bloque_por_fold_y_al_final_con_todo(monkeypatch) -> None:
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(3)}
+    llamadas = []
+    original = TransformerTrendModel._entrenar_ensamble
+
+    def espia(self, X, y, Xva=None, yva=None, fva=None, epocas=None):
+        llamadas.append((len(X), epocas))
+        return original(self, X, y, Xva, yva, fva, epocas)
+
+    monkeypatch.setattr(TransformerTrendModel, "_entrenar_ensamble", espia)
+    model = TransformerTrendModel(config=_small_config(folds=3))
+    metrics = model.fit(histories)
+
+    assert metrics["folds"] == 3
+    assert len(llamadas) == 4
+    # Cada bloque entrena con mas fechas que el anterior; el final, con todas.
+    tamanios = [n for n, _ in llamadas]
+    assert tamanios == sorted(tamanios) and tamanios[-1] > tamanios[-2]
+    assert llamadas[-1][1] == metrics["epocas"]
+    assert all(e is None for _, e in llamadas[:-1])
+
+    llamadas.clear()
+    TransformerTrendModel(config=_small_config(folds=2, reentrenar_completo=False)).fit(histories)
+    assert len(llamadas) == 2
+
+
+def _ccl(n: int = 200, seed: int = 0) -> pd.Series:
+    """CCL que sube ~0,3% por rueda (devaluacion)."""
+    index = pd.date_range("2023-01-01", periods=n, freq="B")
+    return pd.Series(1000 * np.exp(0.003 * np.arange(n)), index=index)
+
+
+def _proveedor_falso(ccl: pd.Series | None, riesgo_pais: bool = True):
+    llamadas = []
+
+    def proveedor(hasta):
+        llamadas.append(hasta)
+        macro = None
+        if riesgo_pais:
+            dias = pd.date_range("2022-12-01", hasta, freq="D")
+            macro = pd.DataFrame({"riesgo_pais": np.linspace(2000, 800, len(dias))}, index=dias)
+        return (None if ccl is None else ccl[ccl.index <= hasta]), macro
+
+    proveedor.llamadas = llamadas
+    return proveedor
+
+
+def test_dolares_y_riesgo_pais_con_proveedor(tmp_path) -> None:
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(3)}
+    proveedor = _proveedor_falso(_ccl())
+    config = _small_config(moneda="usd", riesgo_pais=True)
+    model = TransformerTrendModel(config=config, proveedor=proveedor)
+    model.fit(histories)
+    assert model._net.input_proj.in_features == len(transformer.FEATURE_NAMES) + 1
+
+    preparado = model._preparar(histories["SYN0"])
+    esperado = histories["SYN0"]["close"] / _ccl()
+    assert preparado["close"].to_numpy() == pytest.approx(esperado.to_numpy())
+    assert preparado["riesgo_pais"].notna().all()
+
+    # El precio proyectado sigue en pesos (a CCL constante).
+    result = model.predict_df(histories["SYN0"])
+    last = float(histories["SYN0"]["close"].iloc[-1])
+    assert result["last_close"] == pytest.approx(last, rel=1e-4)
+    assert 0.5 * last < result["predicted_close"] < 1.5 * last
+
+    path = tmp_path / "usd.pt"
+    model.save(path)
+    reloaded = TransformerTrendModel.load(path, proveedor=proveedor)
+    assert reloaded.config.moneda == "usd"
+    assert reloaded.predict_df(histories["SYN0"])["predicted_close"] == pytest.approx(
+        result["predicted_close"], rel=1e-4
+    )
+
+
+def test_dolares_sin_ccl_no_entrena() -> None:
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(2)}
+    config = _small_config(moneda="usd")
+    model = TransformerTrendModel(config=config, proveedor=_proveedor_falso(None, False))
+    with pytest.raises(DataUnavailableError):
+        model.fit(histories)
+
+
+def test_riesgo_pais_sin_dato_queda_en_cero() -> None:
+    df = _synthetic_ohlcv()
+    model = TransformerTrendModel(
+        config=_small_config(riesgo_pais=True), proveedor=_proveedor_falso(None, False)
+    )
+    assert model._preparar(df)["riesgo_pais"].isna().all()
+    feats, _, _ = transformer._features(model._preparar(df), model.config)
+    assert np.all(feats[:, -1] == 0)
+
+
+def test_limpieza_ajusta_un_split_al_entrenar_y_al_predecir(tmp_path) -> None:
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(3)}
+    con_split = histories["SYN0"].copy()
+    fecha = con_split.index[150]
+    for col in ("open", "high", "low", "close"):
+        con_split.loc[con_split.index >= fecha, col] /= 10
+    con_split.iloc[10, con_split.columns.get_loc("close")] = 0.0  # precio invalido
+    histories["SYN0"] = con_split
+
+    model = TransformerTrendModel(config=_small_config())
+    model.fit(histories)
+    limpio = model._preparar(con_split)
+    retornos = np.log(limpio["close"]).diff()
+    assert abs(retornos.loc[fecha]) < 0.1
+    assert len(limpio) == len(con_split) - 1
+    assert model.mercado is not None
+
+    path = tmp_path / "limpio.pt"
+    model.save(path)
+    assert TransformerTrendModel.load(path).mercado is not None
+
+    sin_limpiar = TransformerTrendModel(config=_small_config(limpiar=False))
+    assert sin_limpiar._preparar(con_split) is con_split
+
+
+def test_proveedor_collector_baja_las_series_una_vez_por_dia(monkeypatch) -> None:
+    pedidas = []
+    index = pd.date_range("2024-01-01", periods=30, freq="D")
+
+    def fetch(ruta, serie):
+        pedidas.append(serie)
+        return pd.Series(np.arange(1.0, 31.0), index=index)
+
+    monkeypatch.setattr(transformer, "fetch_collector_series", fetch)
+    monkeypatch.setattr(transformer, "_proveedor_del_dia", None)
+    proveedor = transformer.proveedor_collector()
+    assert transformer.proveedor_collector() is proveedor
+    assert pedidas == ["CCL", "RIESGO_PAIS"]
+
+    ccl, macro = proveedor(index[9])
+    assert ccl.index[-1] == index[9]
+    # El riesgo pais tiene 2 dias de retraso de publicacion.
+    assert macro["riesgo_pais"].iloc[-1] == 8.0
+
+
+def test_config_rechaza_folds_y_moneda_invalidos() -> None:
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(folds=0)
+    with pytest.raises(ValueError):
+        TransformerTrainConfig(moneda="eur")
+    assert TransformerTrainConfig().necesita_proveedor
+    assert not TransformerTrainConfig(**CONFIG_ORIGINAL).necesita_proveedor
+
+
+def test_en_dolares_excluye_commodities_y_especies_d() -> None:
+    assert transformer.cotiza_en_dolares("GOLD") and transformer.cotiza_en_dolares("aluad")
+    assert not transformer.cotiza_en_dolares("YPFD") and not transformer.cotiza_en_dolares("GGAL")
+
+    histories = {s: _synthetic_ohlcv(seed=i) for i, s in enumerate(["GGAL", "BMA", "OIL", "ALUAD"])}
+    # Los futuros vienen con otra hora: las fechas se comparan por dia.
+    histories["OIL"].index = histories["OIL"].index + pd.Timedelta(hours=4)
+    histories["GGAL"].index = histories["GGAL"].index + pd.Timedelta(hours=14)
+    model = TransformerTrendModel(
+        config=_small_config(moneda="usd"), proveedor=_proveedor_falso(_ccl(), False)
+    )
+    model.fit(histories)
+    assert sorted(model.tickers) == ["BMA", "GGAL"]
+    assert not model.acepta("OIL") and model.acepta("GGAL")
+    assert TransformerTrendModel(config=_small_config()).acepta("OIL")  # en pesos, todos
+
+    ventanas = transformer._ventanas_con_fecha(histories["OIL"], model.config)
+    assert (pd.DatetimeIndex(ventanas[2]) == pd.DatetimeIndex(ventanas[2]).normalize()).all()
+
+
+def test_encoding_posicional_sinusoidal_fijo() -> None:
+    """sin / cos de "Attention is all you need": sin parametros ni lugar en el artefacto."""
+    pe = transformer._SinusoidalPositionalEncoding(max_len=21, d_model=16)
+    assert list(pe.parameters()) == [] and pe.state_dict() == {}
+    valores = pe(torch.zeros(1, 21, 16))[0]
+    assert torch.allclose(valores[0, 0::2], torch.zeros(8))  # sin(0)
+    assert torch.allclose(valores[0, 1::2], torch.ones(8))  # cos(0)
+    # La primera dimension oscila con periodo 2*pi: posicion 1 => sin(1).
+    assert valores[1, 0].item() == pytest.approx(np.sin(1.0), abs=1e-6)
+    # Posiciones distintas, vectores distintos.
+    assert torch.cdist(valores, valores).fill_diagonal_(1.0).min() > 0.1
+    impar = transformer._SinusoidalPositionalEncoding(max_len=5, d_model=5)
+    assert impar(torch.zeros(1, 5, 5)).shape == (1, 5, 5)
+
+
+def test_artefacto_con_encoding_aprendido_pide_reentrenar(tmp_path) -> None:
+    from src.errors import StaleArtifactError
+
+    histories = {f"SYN{i}": _synthetic_ohlcv(seed=i) for i in range(2)}
+    model = TransformerTrendModel(config=_small_config())
+    model.fit(histories)
+    path = tmp_path / "viejo.pt"
+    model.save(path)
+    blob = torch.load(path, weights_only=False)
+    for estado in blob["state_dicts"]:
+        estado["pos_encoding.pos_embedding"] = torch.zeros(1, 11, 4)
+    torch.save(blob, path)
+    with pytest.raises(StaleArtifactError, match="posicional"):
+        TransformerTrendModel.load(path)
