@@ -297,6 +297,7 @@ def test_predict_volatility_success(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(main, "fetch_history", MagicMock(return_value=MagicMock()))
     fake_garch = MagicMock()
     fake_garch.predict_df.return_value = make_volatility_result()
+    fake_garch.contexto.return_value = {"regime": {"level": "alta"}, "backtest": None}
     fake_garch.version = "garch-v3"
     monkeypatch.setattr(main, "garch_volatility_model", fake_garch)
 
@@ -308,6 +309,7 @@ def test_predict_volatility_success(client: TestClient, monkeypatch) -> None:
     assert body["model"] == "garch"
     assert body["model_version"] == "garch-v3"
     assert len(body["daily_volatility_pct"]) == 5
+    assert body["regime"] == {"level": "alta"}
     fake_garch.predict_df.assert_called_with(fake_garch.predict_df.call_args.args[0], None)
 
     client.get("/predict/volatility/GGAL", params={"horizon": 20})
@@ -775,3 +777,17 @@ def test_predict_ranking_sin_modelo_es_503(client: TestClient, monkeypatch) -> N
     fake_registry.resolve.return_value = MagicMock(is_loaded=False, model=None)
     monkeypatch.setattr(main, "trend_registry", fake_registry)
     assert client.get("/predict/ranking").status_code == 503
+
+
+def test_predict_volatility_sin_contexto_igual_responde(client: TestClient, monkeypatch) -> None:
+    """Si el regimen/backtest falla, el pronostico se devuelve igual."""
+    monkeypatch.setattr(main, "fetch_history", MagicMock(return_value=MagicMock()))
+    fake_garch = MagicMock()
+    fake_garch.predict_df.return_value = make_volatility_result()
+    fake_garch.contexto.side_effect = NotEnoughDataError("pocas ruedas")
+    fake_garch.version = "garch-v3"
+    monkeypatch.setattr(main, "garch_volatility_model", fake_garch)
+
+    body = client.get("/predict/volatility/GGAL").json()
+    assert body["regime"] is None and body["backtest"] is None
+    assert body["cumulative_volatility_pct"] > 0

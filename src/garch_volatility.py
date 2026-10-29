@@ -25,6 +25,10 @@ from src.errors import NotEnoughDataError
 
 HORIZON = 5
 MIN_ROWS = 60
+# Ventanas del backtest por accion (no se solapan: cada una dura `horizon`
+# ruedas) y ruedas con las que se compara el regimen de hoy.
+BACKTEST_WINDOWS = 24
+REGIME_DAYS = 504
 
 
 @dataclass
@@ -70,3 +74,96 @@ class GarchVolatilityModel:
         close = df["close"].to_numpy(dtype=np.float64)
         variance_pct2 = self._forecast_variance_pct2(close, horizonte)
         return float(variance_pct2.sum()) / (100.0**2)
+
+    def contexto(self, df: pd.DataFrame, horizon: int | None = None) -> dict:
+        """Regimen de hoy y backtest de GARCH sobre esta accion.
+
+        - ``regime``: la volatilidad diaria pronosticada para manana, ubicada
+          como percentil entre las volatilidades realizadas a 20 ruedas de los
+          ultimos ``REGIME_DAYS`` dias; mas la de largo plazo del modelo
+          (``sqrt(omega / (1 - alpha - beta))``).
+        - ``backtest``: ``BACKTEST_WINDOWS`` ventanas de ``horizon`` ruedas
+          que no se solapan. En cada una se ajusta GARCH solo con los datos
+          anteriores y se compara su pronostico con lo que paso: si el retorno
+          quedo dentro de +-1 y +-1,96 desvios, y la correlacion con la
+          volatilidad realizada, contra el pronostico ingenuo (volatilidad de
+          las 20 ruedas previas).
+        """
+        horizon = horizon or self.horizon
+        close = df["close"].to_numpy(dtype=np.float64)
+        if len(close) < MIN_ROWS + horizon * 2:
+            raise NotEnoughDataError(f"pocas ruedas para el contexto de volatilidad ({len(close)})")
+        returns = np.diff(np.log(close))
+        return {
+            "regime": self._regime(returns),
+            "backtest": self._backtest(df, returns, horizon),
+        }
+
+    def _regime(self, returns: np.ndarray) -> dict:
+        fit = arch_model(returns * 100.0, vol="Garch", p=1, q=1).fit(update_freq=0, disp="off")
+        today = float(np.sqrt(fit.forecast(horizon=1).variance.to_numpy()[-1][0])) / 100.0
+        omega, alpha, beta = (float(fit.params[k]) for k in ("omega", "alpha[1]", "beta[1]"))
+        persistence = alpha + beta
+        long_run = float(np.sqrt(omega / (1 - persistence))) / 100.0 if persistence < 1 else None
+        realized = pd.Series(returns[-REGIME_DAYS:]).rolling(20).std().dropna().to_numpy()
+        percentile = float((realized < today).mean() * 100) if len(realized) else None
+        if percentile is None:
+            level = None
+        elif percentile >= 75:
+            level = "alta"
+        elif percentile <= 25:
+            level = "baja"
+        else:
+            level = "normal"
+        return {
+            "daily_pct": round(today * 100, 4),
+            "long_run_daily_pct": round(long_run * 100, 4) if long_run is not None else None,
+            "percentile": round(percentile, 1) if percentile is not None else None,
+            "level": level,
+            "persistence": round(persistence, 4),
+        }
+
+    def _backtest(self, df: pd.DataFrame, returns: np.ndarray, horizon: int) -> dict | None:
+        n = len(returns)
+        windows = []
+        for k in range(BACKTEST_WINDOWS, 0, -1):
+            cut = n - k * horizon  # se ajusta con returns[:cut], se mide returns[cut:cut+h]
+            if cut < MIN_ROWS + 20:
+                continue
+            past, future = returns[:cut], returns[cut : cut + horizon]
+            fit = arch_model(past * 100.0, vol="Garch", p=1, q=1).fit(update_freq=0, disp="off")
+            variance = fit.forecast(horizon=horizon).variance.to_numpy()[-1]
+            sigma = float(np.sqrt(variance.sum())) / 100
+            naive = float(past[-20:].std() * np.sqrt(horizon))
+            windows.append(
+                {
+                    "as_of": df.index[cut].strftime("%Y-%m-%d"),
+                    "forecast_pct": round(sigma * 100, 3),
+                    "naive_pct": round(naive * 100, 3),
+                    "realized_pct": round(float(future.std() * np.sqrt(horizon)) * 100, 3),
+                    "return_pct": round(float(future.sum()) * 100, 3),
+                }
+            )
+        if len(windows) < 6:
+            return None
+        w = pd.DataFrame(windows)
+        inside = (w.return_pct.abs() <= w.forecast_pct).mean()
+        inside95 = (w.return_pct.abs() <= 1.96 * w.forecast_pct).mean()
+
+        def corr(col: str) -> float | None:
+            c = w[col].corr(w.realized_pct)
+            return round(float(c), 3) if pd.notna(c) else None
+
+        def mae(col: str) -> float:
+            return round(float((w[col] - w.realized_pct).abs().mean()), 3)
+
+        return {
+            "windows": windows,
+            "horizon_days": horizon,
+            "inside_68_pct": round(float(inside) * 100, 1),
+            "inside_95_pct": round(float(inside95) * 100, 1),
+            "corr_garch": corr("forecast_pct"),
+            "corr_naive": corr("naive_pct"),
+            "mae_garch_pct": mae("forecast_pct"),
+            "mae_naive_pct": mae("naive_pct"),
+        }

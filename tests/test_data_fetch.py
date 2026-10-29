@@ -10,6 +10,7 @@ from src.data import (
     fetch_available_tickers,
     fetch_history,
     fetch_history_collector,
+    fetch_history_collector_or_yahoo,
     fetch_history_yahoo,
 )
 from src.errors import DataUnavailableError
@@ -159,6 +160,45 @@ def test_fetch_history_dispatches_to_collector() -> None:
         with patch("src.data.fetch_history_collector", return_value=pd.DataFrame()) as mocked:
             fetch_history("GGAL", 10)
     mocked.assert_called_once_with("GGAL", 10)
+
+
+def test_collector_caido_usa_yahoo_y_no_reintenta_en_cada_ticker() -> None:
+    """Con el colector colgado, el primer ticker paga el timeout y el resto
+    sale de Yahoo sin volver a esperarlo."""
+    with patch("src.config.settings.data_collector_url", "https://collector.test"):
+        with (
+            patch("src.data.requests.post", side_effect=requests.Timeout("colgado")) as post,
+            patch("src.data.requests.get", return_value=_mock_response(_yahoo_payload())),
+        ):
+            for symbol in ("GGAL", "YPFD", "PAMP"):
+                df = fetch_history_collector_or_yahoo(symbol, 100)
+                assert len(df) == 5
+    assert post.call_count == 1
+
+
+def test_un_404_del_colector_no_lo_marca_caido() -> None:
+    error = requests.HTTPError("404")
+    error.response = Mock(status_code=404)
+    not_found = _mock_response({})
+    not_found.raise_for_status = Mock(side_effect=error)
+    with patch("src.config.settings.data_collector_url", "https://collector.test"):
+        with (
+            patch("src.data.requests.post", return_value=not_found) as post,
+            patch("src.data.requests.get", return_value=_mock_response(_yahoo_payload())),
+        ):
+            fetch_history_collector_or_yahoo("GGAL", 100)
+            fetch_history_collector_or_yahoo("YPFD", 100)
+    assert post.call_count == 2
+
+
+def test_fetch_history_cachea_el_historico() -> None:
+    with patch("src.config.settings.data_source", "yahoo"):
+        with patch("src.data.requests.get", return_value=_mock_response(_yahoo_payload())) as get:
+            first = fetch_history("GGAL", 100)
+            first.loc[first.index[0], "close"] = -1.0  # quien lo usa no ensucia la cache
+            second = fetch_history("ggal", 100)
+    assert get.call_count == 1
+    assert second["close"].iloc[0] == 100.0
 
 
 def test_fetch_history_dispatches_to_yahoo_by_default() -> None:

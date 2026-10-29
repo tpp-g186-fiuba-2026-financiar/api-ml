@@ -15,7 +15,9 @@ tendencia (ver ``FEATURE_NAMES`` en ``src.lstm``).
 
 from __future__ import annotations
 
+import threading
 import time
+from collections.abc import Callable
 
 import certifi
 import numpy as np
@@ -29,6 +31,18 @@ _YF_CHART_URL = "https://query1.finance.yahoo.com/v8/finance/chart/{symbol}"
 _OHLCV_COLUMNS = ["open", "high", "low", "close", "volume"]
 _REQUEST_TIMEOUT = 20
 _AVAILABLE_TICKERS_ATTEMPTS = 3
+# (conexion, lectura) contra el data-colector. Si responde, contesta en 1-3 s;
+# esperar mas solo alarga la caida.
+COLLECTOR_TIMEOUT = (5, 15)
+# Despues de un timeout / 5xx del data-colector no se le vuelve a pegar por
+# este tiempo: cada pedido falla en el acto (y el historico sale de Yahoo) en
+# vez de esperar el timeout por cada ticker. XGBoost, Contexto y el
+# Transformer de panel bajan ~20 acciones cada uno; con el colector colgado
+# eso eran minutos por pedido.
+COLLECTOR_RETRY_AFTER = 5 * 60
+# Las velas son diarias: un historico bajado sirve por este tiempo. Sin cache,
+# cada modelo (y cada pedido) volvia a bajar las mismas series.
+HISTORY_TTL = 30 * 60
 
 # Commodities que `data-colector` expone como tickers (`available-tickers`),
 # pero que no son acciones de BYMA -- no llevan sufijo `.BA`, van directo a su
@@ -138,6 +152,59 @@ def _adjust_for_corporate_actions(frame: pd.DataFrame, node: dict) -> pd.DataFra
     return out
 
 
+_collector_down: dict[str, float] = {}
+_history_cache: dict[tuple, tuple[float, pd.DataFrame]] = {}
+_macro_cache: dict[int, tuple[float, pd.Series | None]] = {}
+_cache_lock = threading.Lock()
+
+
+def reset_caches() -> None:
+    """Olvida historicos cacheados y caidas del colector (tests)."""
+    with _cache_lock:
+        _collector_down.clear()
+        _history_cache.clear()
+        _macro_cache.clear()
+
+
+def collector_post(url: str, timeout: float | tuple[float, float] = COLLECTOR_TIMEOUT) -> dict:
+    """POST al data-colector que corta en el acto si hace poco no respondio.
+
+    Solo un timeout, un error de conexion o un 5xx marcan al colector como
+    caido; un 404 o un ticker sin datos no (el colector anda, falta el dato).
+    """
+    host = url.split("/", 3)[2] if "://" in url else url
+    down_since = _collector_down.get(host)
+    if down_since is not None and time.monotonic() - down_since < COLLECTOR_RETRY_AFTER:
+        raise DataUnavailableError(
+            f"data-colector sin respuesta hace poco, no se reintenta ({url})"
+        )
+    try:
+        resp = requests.post(url, timeout=timeout)
+        resp.raise_for_status()
+        payload = resp.json()
+    except (requests.ConnectionError, requests.Timeout) as exc:
+        _collector_down[host] = time.monotonic()
+        raise DataUnavailableError(f"data-colector no responde ({url}): {exc}") from exc
+    except requests.HTTPError as exc:
+        if exc.response is not None and exc.response.status_code >= 500:
+            _collector_down[host] = time.monotonic()
+        raise DataUnavailableError(f"data-colector respondio con error ({url}): {exc}") from exc
+    except (requests.RequestException, ValueError) as exc:  # ValueError = JSON invalido
+        raise DataUnavailableError(f"respuesta invalida del data-colector ({url}): {exc}") from exc
+    _collector_down.pop(host, None)
+    return payload
+
+
+def _cached_history(key: tuple, loader: Callable[[], pd.DataFrame]) -> pd.DataFrame:
+    hit = _history_cache.get(key)
+    if hit is not None and time.monotonic() - hit[0] < HISTORY_TTL:
+        return hit[1].copy()
+    frame = loader()
+    with _cache_lock:
+        _history_cache[key] = (time.monotonic(), frame)
+    return frame.copy()
+
+
 def fetch_history_collector(symbol: str, days: int | None = None) -> pd.DataFrame:
     """Descarga el historico desde el servicio ``data-colector``."""
     days = days or settings.history_days
@@ -147,10 +214,8 @@ def fetch_history_collector(symbol: str, days: int | None = None) -> pd.DataFram
 
     url = f"{base.rstrip('/')}/historical-data/{symbol.strip().upper()}"
     try:
-        resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        payload = resp.json()
-    except (requests.RequestException, ValueError) as exc:
+        payload = collector_post(url)
+    except DataUnavailableError as exc:
         raise DataUnavailableError(
             f"no se pudo obtener data del collector para {symbol}: {exc}"
         ) from exc
@@ -172,11 +237,28 @@ def fetch_history_collector(symbol: str, days: int | None = None) -> pd.DataFram
     return _clean(frame, days)
 
 
+def fetch_history_collector_or_yahoo(symbol: str, days: int | None = None) -> pd.DataFrame:
+    """Historico del data-colector; si no responde, el de Yahoo (cacheado)."""
+    days = days or settings.history_days
+    symbol = symbol.strip().upper()
+
+    def load() -> pd.DataFrame:
+        try:
+            return fetch_history_collector(symbol, days)
+        except DataUnavailableError as exc:
+            print(f"  [warn] {exc}; se usa Yahoo")
+            return fetch_history_yahoo(symbol, days)
+
+    return _cached_history(("collector", symbol, days), load)
+
+
 def fetch_history(symbol: str, days: int | None = None) -> pd.DataFrame:
     """Despacha al backend configurado en ``settings.data_source``."""
     if settings.data_source == "collector":
-        return fetch_history_collector(symbol, days)
-    return fetch_history_yahoo(symbol, days)
+        return fetch_history_collector_or_yahoo(symbol, days)
+    days = days or settings.history_days
+    symbol = symbol.strip().upper()
+    return _cached_history(("yahoo", symbol, days), lambda: fetch_history_yahoo(symbol, days))
 
 
 def fetch_available_tickers() -> list[str]:
@@ -237,10 +319,8 @@ def fetch_interest_rate(source: str, series: str, days: int | None = None) -> pd
 
     url = f"{base.rstrip('/')}/interest-rate/{source}/{series}"
     try:
-        resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        payload = resp.json()
-    except (requests.RequestException, ValueError) as exc:
+        payload = collector_post(url)
+    except DataUnavailableError as exc:
         raise DataUnavailableError(f"no se pudo obtener la tasa {source}/{series}: {exc}") from exc
 
     if payload.get("status") != 200:
@@ -270,14 +350,23 @@ def fetch_macro_series(days: int | None = None) -> pd.Series | None:
     BCRA), se loguea y se sigue sin esta feature en vez de romper el
     entrenamiento/prediccion de todos los tickers por una serie opcional.
     """
+    days = days or settings.history_days
+    hit = _macro_cache.get(days)
+    if hit is not None and time.monotonic() - hit[0] < HISTORY_TTL:
+        return hit[1]
     try:
-        return fetch_interest_rate(settings.macro_rate_source, settings.macro_rate_series, days)
+        values = fetch_interest_rate(settings.macro_rate_source, settings.macro_rate_series, days)
     except ApiMlError as exc:
         print(
             f"  [warn] no se pudo obtener la serie macro "
             f"({settings.macro_rate_source}/{settings.macro_rate_series}): {exc}"
         )
-        return None
+        values = None
+    # Tambien se cachea la falla: la serie es opcional y no vale esperar al
+    # colector en cada prediccion.
+    with _cache_lock:
+        _macro_cache[days] = (time.monotonic(), values)
+    return values
 
 
 def attach_macro_feature(df: pd.DataFrame, column: str, macro: pd.Series | None) -> pd.DataFrame:

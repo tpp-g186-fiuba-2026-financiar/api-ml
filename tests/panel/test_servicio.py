@@ -170,10 +170,10 @@ def test_panel_vacio_o_sin_historicos(tmp_path) -> None:
     def falla(symbol, days):
         raise DataUnavailableError("collector caido")
 
+    # Sin datos del panel (data-colector caido) responde el respaldo
     otro, _ = _servicio(tmp_path)
     otro._fetch_hist = falla
-    with pytest.raises(DataUnavailableError, match="ningun historico"):
-        otro.predict("GGAL")
+    assert otro.predict("GGAL")["model_version"] == "respaldo:transformer-v1-abc"
 
 
 def test_pedidos_en_paralelo_predicen_el_panel_una_vez(tmp_path) -> None:

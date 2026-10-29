@@ -6,6 +6,7 @@ from datetime import date
 from pathlib import Path
 from typing import Annotated
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 
 from src.black_litterman.black_litterman import MAX_ACCIONES_NUEVAS, recomendacion_detallada
@@ -375,6 +376,10 @@ def predict_volatility(
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except NotEnoughDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        result.update(garch_volatility_model.contexto(df, horizon))
+    except (ApiMlError, ValueError, np.linalg.LinAlgError) as exc:  # best-effort
+        print(f"  [warn] volatilidad {symbol}: sin regimen/backtest: {exc}")
 
     result["symbol"] = symbol.strip().upper()
     result["model"] = "garch"
