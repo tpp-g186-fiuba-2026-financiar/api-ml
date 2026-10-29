@@ -83,10 +83,11 @@ make simular MODELO=contexto NOMBRE=contexto-2026 DESDE=2026-01-02
 ```
 
 ```bash
-make simular MODELO=transformer_v2 NOMBRE=transformer-v2-2026 DESDE=2026-01-02
+make simular MODELO=ensamble_panel NOMBRE=ensamble-2026 DESDE=2026-01-02
 ```
 
-`transformer_v2` es el "transformer" que sirve hoy la API; `transformer` es el original. Tambien
+`transformer_actual` es el Transformer que sirve la API (dolares, clasificacion, walk-forward; toma
+el CCL y el riesgo pais del snapshot); `transformer` es el original (`CONFIG_ORIGINAL`). Tambien
 estan los modelos de panel de la busqueda: `panel_gbm`, `ensamble_panel`, `panel_transformer`,
 `reversion_panel`, `mercado`, `meta_reversion`, `dos_cabezas`.
 
@@ -118,7 +119,7 @@ Se agregan al final del comando, p. ej.
 
 | Variable | Que hace | Default |
 |---|---|---|
-| `MODELO` | Modelo a simular (solo `simular`) | `transformer_v2` |
+| `MODELO` | Modelo a simular (solo `simular`) | `ensamble_panel` |
 | `NOMBRE` | Carpeta de la corrida en `simulacion/resultados/`. En `simular` tiene que ser nueva; en `simulacion`, si ya existe, retoma esa corrida | obligatorio |
 | `DESDE` | Primera rueda simulada (`YYYY-MM-DD`); entrena con los datos anteriores | obligatorio |
 | `HASTA` | Ultima rueda simulada | la ultima del snapshot |
@@ -166,7 +167,7 @@ docker run --rm -u "$(id -u):$(id -g)" -e HOME=/tmp -e MPLCONFIGDIR=/tmp -v "$PW
 
 ## Simulacion rapida de un solo modelo
 
-Para probar un modelo (o una variante, p. ej. del Transformer V2) sin esperar al simulador
+Para probar un modelo (o una variante de la busqueda) sin esperar al simulador
 completo: entrena solo ese modelo con datos anteriores a `--desde` (reentreno
 `mensual` por default, o `semanal` / `diario` / `nunca`), predice cada rueda, mide la direccion
 en dolares con intervalos contra la reversion y las referencias (`significancia`) y arma carteras
@@ -179,15 +180,15 @@ que predicen ticker por ticker (`lstm`, `xgboost`, `arima`, `macro`, `contexto`)
 el mercado del dia simulado, pero sin el piso de AUC: cada reentreno reemplaza al anterior.
 
 ```bash
-make simular-v2 SIM_NOMBRE=v2-2025 SIM_DESDE=2025-01-02 ARGS='--hasta 2025-12-30'
-make simular-v2 SIM_NOMBRE=v2-bce SIM_CONFIG='{"perdida": "bce", "n_semillas": 1}' ARGS='--reentreno nunca'
+make simular MODELO=ensamble_panel NOMBRE=ens-2025 DESDE=2025-01-02 HASTA=2025-12-30
+make simular MODELO=panel_transformer NOMBRE=pt-2025 DESDE=2025-01-02 CONFIG='{"n_semillas": 1}' REENTRENO=nunca
 make simular MODELO=xgboost NOMBRE=xgb-2026 DESDE=2026-01-02
 # Otra comision / rebalanceo sin volver a entrenar
-python -m src.simulacion.un_modelo --nombre v2-2025 --solo-analisis --comision 0.01
+python -m src.simulacion.un_modelo --nombre ens-2025 --solo-analisis --comision 0.01
 ```
 
 Deja en `simulacion/resultados/<nombre>/` `resumen.md` (entrenamientos, direccion y carteras),
-`entrenamientos.jsonl` (lo que devolvio cada `fit`: las metricas de validacion del V2),
+`entrenamientos.jsonl` (lo que devolvio cada `fit`: sus metricas de validacion),
 `predicciones.jsonl`, `direccion.csv`, `carteras.csv`, los `.jsonl` de carteras y
 `reporte/reporte.tex` (y `reporte.pdf` si hay `pdflatex`). `--config` acepta tambien `"modelo"` e
 `"historia"`, asi que se puede pegar una variante de los planes de la busqueda.

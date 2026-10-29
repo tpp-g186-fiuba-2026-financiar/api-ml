@@ -69,6 +69,7 @@ def ajustar_salto(df: pd.DataFrame, fecha: pd.Timestamp, factor: float) -> pd.Da
     columnas = [c for c in _PRECIOS if c in df.columns]
     df.loc[antes, columnas] = df.loc[antes, columnas] * factor
     if "volume" in df.columns:
+        df["volume"] = df["volume"].astype(float)
         df.loc[antes, "volume"] = df.loc[antes, "volume"] / factor
     return df
 

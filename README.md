@@ -179,29 +179,36 @@ Por defecto `DATA_SOURCE=yahoo` (consulta directa a Yahoo Finance, los tickers
 BYMA se mapean agregando `.BA`). Para usar el `data-colector` interno, setear
 `DATA_SOURCE=collector` y `DATA_COLLECTOR_URL`.
 
-## Transformer V2 (el modelo `transformer`)
+## Modelo Transformer de tendencia
 
-`transformer` es el **Transformer V2** (`src/panel/transformer_v2.py`), un modelo de
-panel: entrena y predice las acciones del panel líder juntas, en dólares CCL, y lo que
-aprende es **el orden relativo** de las acciones (cuál va a andar mejor que el resto a 5
-ruedas), no si el mercado sube. La API lo sirve con `src/panel/servicio.py`:
+`transformer` (`src/transformer.py`) es un Transformer de solo encoder que mira los
+últimos 20 días de cada acción (las mismas 8 features que el LSTM, más el cambio a 5
+ruedas del riesgo país) y clasifica si la acción **sube o baja en dólares CCL** en 5
+ruedas:
 
-- **Señal relativa**: `alza` = el 15% del panel con mejor predicción del día, `baja` =
-  el 15% peor, `neutral` el resto. "Alza" no quiere decir "va a subir".
-- **`predicted_close` en pesos**: al retorno relativo se le suma la tendencia del
-  panel (retorno medio del último año, sobre todo inflación y dólar), para que quede
-  en la escala de los demás modelos. Esa parte no la predice el modelo.
-- **Fuera del panel** (o si el artefacto no carga) responde el Transformer original,
-  registrado como `transformer-v1`; `model_version` dice `respaldo:<versión>`.
-- Datos: históricos y CCL del data-colector (`DATA_COLLECTOR_URL`), como al entrenar.
+- **Dólares**: los precios se dividen por el CCL del día antes de calcular features y
+  target; en pesos, "sube" acertaría solo por la inflación. `predicted_close` se informa
+  en pesos, a CCL constante. No predice lo que ya cotiza en dólares (GOLD, OIL y las
+  especies `D`, salvo YPFD): la API responde que no predice ese activo.
+- **Clasificación balanceada**: BCE con `pos_weight` = bajas / subas. El retorno
+  esperado es `(2p − 1) ×` el movimiento típico de train; con `p` cerca de 0,5 la señal
+  es `neutral` (banda de ±1%).
+- **Datos limpios**: splits y canjes sin ajustar y precios <= 0 se corrigen como en la
+  simulación (`src/simulacion/limpieza.py`), al entrenar y al predecir.
+- **Walk-forward**: el último 15% de las fechas se parte en 3 bloques; cada uno se
+  predice con una red entrenada solo con lo anterior (cortando por fecha para todos los
+  tickers, con un gap de 5 ruedas). De ahí salen las métricas `val_*` y la cantidad de
+  épocas; al final se entrena con todas las fechas.
+- CCL y riesgo país vienen del data-colector (`DATA_COLLECTOR_URL`), una vez por día.
+- Hiperparámetros (red chica, learning rate bajo, paciencia 3) de la búsqueda con Optuna
+  (`make optuna-transformer`, `src/simulacion/optuna_transformer.py`).
 
-Se reentrena el 1 de cada mes (`.github/workflows/retrain-transformer-v2.yml`) con un
-**gate por IC fuera de muestra** (`src/panel/gate.py`): entrena sin las últimas 60
-ruedas, mide el IC ahí y solo si es positivo reentrena con todo y commitea
-`models/transformer_v2.pt` (+ `.score.json`). A mano: `make train-transformer-v2`
-(con el collector local: `ARGS="--collector-url http://localhost:3000 --dispositivo cuda"`;
-`--force` salta el gate). Los hiperparámetros salen de la búsqueda con Optuna
-(`src/simulacion/optuna_v2.py`).
+Se reentrena de lunes a viernes (`.github/workflows/retrain.yml`) con un **gate por el
+walk-forward** (`metrica="walk_forward"` en `src/retrain_guard.py`): se guarda si el
+acierto balanceado fuera de muestra supera 0,5 y el IC es positivo. A mano:
+`make train-transformer` (`ARGS="--force"` salta el gate, `--folds 1` lo hace más
+rápido). Los artefactos anteriores (en pesos, regresión) cargan con `CONFIG_ORIGINAL`,
+que también usan las variantes del Transformer original en las simulaciones.
 
 ## Modelo "contexto" de tendencia
 

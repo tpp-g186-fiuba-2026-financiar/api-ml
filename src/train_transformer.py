@@ -29,6 +29,18 @@ def main() -> None:
     parser.add_argument("--dropout", type=float, default=TransformerTrainConfig.dropout)
     parser.add_argument("--warmup-epochs", type=int, default=TransformerTrainConfig.warmup_epochs)
     parser.add_argument(
+        "--objetivo",
+        choices=["clasificacion", "regresion"],
+        default=TransformerTrainConfig.objetivo,
+        help="clasificacion (sube / baja, BCE balanceada) o regresion (retorno, MSE).",
+    )
+    parser.add_argument(
+        "--folds",
+        type=int,
+        default=TransformerTrainConfig.folds,
+        help="Bloques del walk-forward (cada uno entrena una red; 1 = un solo holdout).",
+    )
+    parser.add_argument(
         "--out", default=settings.transformer_model_path, help="Ruta del artefacto .pt"
     )
     parser.add_argument(
@@ -57,6 +69,8 @@ def main() -> None:
         batch_size=args.batch_size,
         learning_rate=args.learning_rate,
         warmup_epochs=args.warmup_epochs,
+        objetivo=args.objetivo,
+        folds=args.folds,
     )
     model = TransformerTrendModel(config=config)
 
@@ -66,17 +80,19 @@ def main() -> None:
     for key, value in metrics.items():
         print(f"  {key}: {value}")
 
-    print("\nBacktesteando el candidato (walk-forward, pooled sobre todos los tickers)...")
+    # Gate por el walk-forward del entrenamiento (ver retrain_guard): el modelo
+    # final ve todas las fechas, asi que un backtest reciente seria dentro de muestra.
+    print("\nGate: metricas fuera de muestra del walk-forward...")
     if args.force:
-        score = force_promote(model, args.out, histories, config.horizon)
+        score = force_promote(model, args.out, histories, config.horizon, "walk_forward")
         print(f"  candidato: {score}  (--force: se guardo sin comparar)")
     else:
         promoted, score = promote_if_better(
-            model, args.out, TransformerTrendModel.load, histories, config.horizon
+            model, args.out, TransformerTrendModel.load, histories, config.horizon, "walk_forward"
         )
         print(f"  candidato: {score}")
         if not promoted:
-            print("\nEl candidato no supera al vigente -- no se promueve, no se toca el artefacto.")
+            print("\nEl candidato no pasa el piso del gate -- no se toca el artefacto.")
             return
 
     print(f"\nModelo guardado en: {args.out}")

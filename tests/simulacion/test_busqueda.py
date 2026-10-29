@@ -8,9 +8,6 @@ import src.simulacion.busqueda as busqueda
 from src.simulacion.busqueda import (
     PLAN_ABLACION,
     PLAN_R2,
-    PLAN_R2_TRANSFORMER,
-    PLAN_V2,
-    PLAN_V2_RAPIDO,
     REFERENCIAS,
     correr,
     ejecutar,
@@ -19,35 +16,26 @@ from src.simulacion.busqueda import (
     trabajos,
 )
 from src.simulacion.experimento import ReversionPanelModel
-from src.transformer import TransformerTrainConfig, TransformerTrendModel
+from src.transformer import CONFIG_ORIGINAL, TransformerTrainConfig, TransformerTrendModel
 from tests.simulacion.conftest import FakeTrend
 
 PERIODOS = [("2026-05-04", "2026-05-29"), ("2026-06-01", "2026-06-19")]
 
 
 def test_plan_ablacion_y_muestreo_dan_configs_validas() -> None:
+    # La busqueda corre el Transformer original (``_transformer`` agrega CONFIG_ORIGINAL).
+    regresion = CONFIG_ORIGINAL
     for config in PLAN_ABLACION.values():
-        TransformerTrainConfig(**config)
+        TransformerTrainConfig(**(regresion | config))
     planes = muestrear_hiper(10, {"target": "relativo"}, seed=3)
     assert len(planes) == 11 and planes["hiper_base"] == {"target": "relativo"}
     for config in planes.values():
-        assert TransformerTrainConfig(**config).target == "relativo"
+        assert TransformerTrainConfig(**(regresion | config)).target == "relativo"
     assert muestrear_hiper(10, {"target": "relativo"}, seed=3) == planes
 
 
-def test_plan_v2_da_configs_validas() -> None:
-    from src.panel.transformer_v2 import TransformerV2Config
-
-    for nombre, config in (PLAN_V2 | PLAN_V2_RAPIDO).items():
-        config = dict(config)
-        config.pop("historia", None)
-        if config.pop("modelo") == "transformer_v2":
-            assert TransformerV2Config(**config).n_semillas == 1, nombre
-    assert PLAN_V2["original"] == {"modelo": "transformer"}
-
-
 def test_planes_r2_dan_configs_validas(snapshot) -> None:
-    for nombre, config in (PLAN_R2 | PLAN_R2_TRANSFORMER).items():
+    for nombre, config in PLAN_R2.items():
         modelo = busqueda._fabrica({"variante": nombre, "config": config, "semilla": 0}, snapshot)()
         assert hasattr(modelo, "predict_panel"), nombre
 
@@ -169,6 +157,14 @@ def test_fabrica_panel_transformer(snapshot) -> None:
     assert modelo.proveedor is not None and modelo.dispositivo == "cpu"
 
 
+def test_fabrica_transformer_actual_con_proveedor_del_snapshot(snapshot) -> None:
+    config = {"modelo": "transformer_actual", "folds": 1}
+    modelo = busqueda._fabrica({"variante": "t", "config": config, "semilla": 1}, snapshot)()
+    assert isinstance(modelo, TransformerTrendModel)
+    assert modelo.config.moneda == "usd" and modelo.config.folds == 1
+    assert modelo.proveedor is not None
+
+
 def test_trabajos_rechaza_modelo_desconocido() -> None:
     with pytest.raises(ValueError, match="nada"):
         trabajos({"x": {"modelo": "nada"}}, 1, PERIODOS)
@@ -272,7 +268,6 @@ def test_resumen_sin_ensamble(snapshot_dir, tmp_path, monkeypatch) -> None:
         ("hiper", ["--n", "1", "--base", '{"target": "relativo"}']),
         ("config", ["--configs", '{"x": {}}', "--baselines"]),
         ("r2", []),
-        ("r2-transformer", []),
     ],
 )
 def test_main(snapshot_dir, tmp_path, monkeypatch, capsys, plan, extra) -> None:

@@ -31,9 +31,12 @@ import pandas as pd
 from src.errors import ApiMlError
 from src.trend_common import BACKTEST_DAYS, backtest_predict_df, ic_por_fecha
 
-# Metricas del gate: "accuracy" (produccion) o "ic", para modelos con target
-# relativo (ver `pooled_ic`).
-METRICAS = ("accuracy", "ic")
+# Metricas del gate: "accuracy" (LSTM), "ic", para modelos con target relativo
+# (ver `pooled_ic`), o "walk_forward" (Transformer, ver `_promote_by_walk_forward`).
+METRICAS = ("accuracy", "ic", "walk_forward")
+# Piso del gate "walk_forward": acierto balanceado fuera de muestra (decir
+# siempre lo mismo da 0.5) e IC por encima de 0.
+MIN_ACIERTO_WALK_FORWARD = 0.5
 
 
 def _score_path(model_path: str) -> Path:
@@ -167,6 +170,38 @@ def _promote_by_ic(
     return should_promote, candidate
 
 
+def _score_walk_forward(model) -> dict:
+    """Metricas fuera de muestra del walk-forward que ``fit`` deja en ``model.metrics``."""
+    metrics = getattr(model, "metrics", None) or {}
+    return {
+        "metrica": "walk_forward",
+        "val_acierto_balanceado": metrics.get("val_acierto_balanceado"),
+        "val_ic": metrics.get("val_ic"),
+        "observations": int(metrics.get("val_samples", 0)),
+    }
+
+
+def _promote_by_walk_forward(model, model_path: str) -> tuple[bool, dict]:
+    """Gate por las metricas del walk-forward del propio entrenamiento.
+
+    El backtest de las ultimas ruedas no sirve para un modelo que al final se
+    reentrena con todas las fechas: esas ruedas estan dentro del entrenamiento.
+    Tampoco se compara contra el vigente: su walk-forward es de otra ventana
+    (un dia antes, casi la misma) y la diferencia entre dos reentrenos seguidos
+    es ruido. Se promueve si el candidato pasa el piso: acierto balanceado mayor
+    a ``MIN_ACIERTO_WALK_FORWARD`` e IC positivo.
+    """
+    score = _score_walk_forward(model)
+    acierto, ic = score["val_acierto_balanceado"], score["val_ic"]
+    should_promote = (
+        acierto is not None and acierto > MIN_ACIERTO_WALK_FORWARD and ic is not None and ic > 0
+    )
+    if should_promote:
+        model.save(model_path)
+        _save_score(model_path, score)
+    return should_promote, score
+
+
 def promote_if_better(
     model,
     model_path: str,
@@ -184,6 +219,8 @@ def promote_if_better(
     """
     if metrica == "ic":
         return _promote_by_ic(model, model_path, loader, histories, horizon)
+    if metrica == "walk_forward":
+        return _promote_by_walk_forward(model, model_path)
     candidate = pooled_directional_accuracy(model, histories, horizon)
     incumbent = incumbent_score(model_path, loader, histories, horizon)
     accuracy = candidate["directional_accuracy"]
@@ -203,6 +240,11 @@ def force_promote(
     metrica: str = "accuracy",
 ) -> dict:
     """Guarda `model` sin comparar contra el vigente (uso manual, `--force`)."""
+    if metrica == "walk_forward":
+        model.save(model_path)
+        score = _score_walk_forward(model)
+        _save_score(model_path, score)
+        return score
     if metrica == "ic":
         score = pooled_ic(model, histories, horizon)
     else:

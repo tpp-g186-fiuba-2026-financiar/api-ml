@@ -1,7 +1,10 @@
 from __future__ import annotations
 
 import datetime as dt
+import functools
 import math
+import threading
+from collections.abc import Callable
 from dataclasses import dataclass, field
 from pathlib import Path
 
@@ -11,17 +14,26 @@ import torch
 from torch import nn
 
 from src.black_litterman.black_litterman import PANEL_LIDER_TICKERS
-from src.errors import NotEnoughDataError
+from src.data import COMMODITY_YAHOO_SYMBOLS
+from src.errors import DataUnavailableError, NotEnoughDataError
 
 # Reutilizamos el feature engineering del modelo LSTM tal cual: la parte de
 # "convertir OHLCV en features estacionarias" no cambia por usar otra
 # arquitectura.
 from src.lstm import FEATURE_NAMES, build_features, check_feature_compatibility, make_windows
+from src.macro_data import SERIES, build_macro_frame, fetch_collector_series
+from src.panel.datos import en_dolares
+from src.simulacion.limpieza import (
+    ajustar_salto,
+    detectar_saltos,
+    retorno_mercado,
+    sin_precios_no_positivos,
+)
 
 # Mismo post-procesamiento (senal / RSI / condicion / confianza) que usan el
 # resto de los modelos del registro (ver XGBTrendModel), para que las salidas
 # sean directamente comparables entre modelos.
-from src.trend_common import derive_trend_output, ic_por_fecha
+from src.trend_common import acierto_balanceado, derive_trend_output, ic_por_fecha
 
 __all__ = ["TransformerTrainConfig", "TransformerTrendModel"]
 
@@ -86,23 +98,53 @@ class _TransformerRegressor(nn.Module):
 
 @dataclass
 class TransformerTrainConfig:
-    window: int = 30
+    # Red y entrenamiento: los de la busqueda con Optuna (``src.simulacion.
+    # optuna_transformer``, corrida ``transformer``, trial 17): learning rate mas
+    # bajo y red mas chica. En la confirmacion (5 semillas x 2 cortes) le gano a
+    # la config anterior (``CONFIG_ORIGINAL``) por +0,021 de acierto balanceado
+    # y +0,053 de IC, en 7 y 8 de 10 pares; IC positivo en los dos cortes.
+    window: int = 20
     horizon: int = 5  # dias hacia adelante para definir la tendencia a predecir
-    d_model: int = 32
+    d_model: int = 16
     nhead: int = 4
     num_layers: int = 2
-    dim_feedforward: int = 64
-    dropout: float = 0.1
+    dim_feedforward: int = 32
+    dropout: float = 0.3593
     epochs: int = 40
-    batch_size: int = 64
-    learning_rate: float = 1e-3
-    weight_decay: float = 1e-4  # regularizacion L2 contra el overfitting
-    patience: int = 8  # early stopping: epocas sin mejora en validacion
+    batch_size: int = 128
+    learning_rate: float = 1.783e-4
+    weight_decay: float = 2.083e-3  # regularizacion L2 contra el overfitting
+    patience: int = 3  # early stopping: la mejor epoca sale entre la 1 y la 4
     val_fraction: float = 0.15
     neutral_band: float = 0.01  # |retorno esperado| por debajo => "neutral"
     warmup_epochs: int = 3  # calentamiento de learning rate, tipico en Transformers
     seed: int = 42
-    # --- Variantes en evaluacion (los defaults reproducen el modelo original) ---
+    # "clasificacion": la red da el logit de "sube" (target > 0) y se entrena
+    # con BCE balanceada (pos_weight = bajas / subas de train), asi no aprende
+    # "siempre alza" por la deriva en pesos. "regresion": el retorno con MSE /
+    # Huber (el modelo original). Ver ``_salida`` para el retorno esperado.
+    objetivo: str = "clasificacion"
+    # "usd": precios pasados a dolares con el CCL del dia antes de calcular
+    # features y target (en pesos, "sube" acierta solo por la inflacion y la
+    # devaluacion). ``predicted_close`` se informa en pesos, a CCL constante.
+    moneda: str = "usd"
+    # Saltos sin ajustar (splits, canjes) y precios <= 0 corregidos como en la
+    # simulacion (``src.simulacion.limpieza``), al entrenar y al predecir.
+    limpiar: bool = True
+    # Feature extra: cambio log a 5 ruedas del riesgo pais (con su retraso de
+    # publicacion, ``src.macro_data.SERIES``), igual para todas las acciones.
+    riesgo_pais: bool = True
+    # Walk-forward: la ultima ``val_fraction`` de las fechas se parte en
+    # ``folds`` bloques consecutivos; cada bloque se valida con una red
+    # entrenada solo con lo anterior (menos ``gap``). Las metricas ``val_*``
+    # salen de esas predicciones fuera de muestra y la cantidad de epocas, de
+    # la mediana de las mejores de cada bloque.
+    folds: int = 3
+    # Al final se entrena con todas las fechas (incluida la validacion, la
+    # parte mas reciente) por esa cantidad de epocas. Sin esto, el modelo final
+    # es el del ultimo bloque y nunca ve la ultima ``val_fraction / folds``.
+    reentrenar_completo: bool = True
+    # --- Variantes en evaluacion (``CONFIG_ORIGINAL`` reproduce el modelo original) ---
     # "absoluto": retorno log a `horizon` ruedas. "relativo": exceso sobre el
     # promedio de los tickers de entrenamiento ese mismo dia; saca la deriva en
     # pesos (inflacion / devaluacion) que sesga el modelo absoluto hacia "alza".
@@ -117,10 +159,10 @@ class TransformerTrainConfig:
     # entre prediccion y retorno real en validacion; premia ordenar bien los
     # tickers en vez de acercarse a la media).
     seleccion: str = "mse"
-    # Ventanas descartadas entre train y validacion: con target a `horizon`
+    # Fechas descartadas entre train y validacion: con target a `horizon`
     # ruedas, las ultimas ventanas de train comparten futuro con las primeras
-    # de validacion. Con gap=horizon no hay solapamiento.
-    gap: int = 0
+    # de validacion. None = `horizon` (sin solapamiento).
+    gap: int | None = None
     n_semillas: int = 1  # ensamble: promedio de redes entrenadas con semillas distintas
     # Si se define, al terminar `fit` se reemplaza `neutral_band` por este
     # cuantil de |retorno predicho| en validacion (0.5 = la mitad de los casos
@@ -135,7 +177,7 @@ class TransformerTrainConfig:
     # Target y retornos en unidades de volatilidad (20 ruedas) del ticker: un
     # -5% de una accion tranquila pesa mas que el de una volatil, y los saltos
     # de las acciones volatiles dejan de dominar la loss.
-    escala_vol: bool = False
+    escala_vol: bool = True
     # Subconjunto de features que ve la red, por nombre (``FEATURE_NAMES`` y,
     # con ``features_panel``, ``_FEATURES_PANEL``). None = todas. Con una
     # senal tan debil, cada input de mas es ruido que la red puede ajustar.
@@ -151,12 +193,20 @@ class TransformerTrainConfig:
             "universo": ("todos", "panel"),
             "loss": ("mse", "huber"),
             "seleccion": ("mse", "ic"),
+            "objetivo": ("clasificacion", "regresion"),
+            "moneda": ("usd", "ars"),
         }
         for nombre, validos in opciones.items():
             if getattr(self, nombre) not in validos:
                 raise ValueError(f"{nombre} debe ser uno de {validos}")
+        if self.objetivo == "clasificacion" and (self.loss != "mse" or self.clip_target):
+            raise ValueError("loss y clip_target solo aplican con objetivo='regresion'")
         if self.n_semillas < 1:
             raise ValueError("n_semillas debe ser al menos 1")
+        if self.gap is not None and self.gap < 0:
+            raise ValueError("gap no puede ser negativo")
+        if self.folds < 1:
+            raise ValueError("folds debe ser al menos 1")
         if self.banda_cuantil is not None and not 0 < self.banda_cuantil < 1:
             raise ValueError("banda_cuantil debe estar entre 0 y 1")
         if self.columnas is not None:
@@ -168,6 +218,70 @@ class TransformerTrainConfig:
             # La banda se calibraria en unidades de volatilidad, no de retorno.
             raise ValueError("banda_cuantil no se puede combinar con escala_vol")
 
+    @property
+    def necesita_proveedor(self) -> bool:
+        """Si hace falta el CCL o el riesgo pais (``Proveedor``) para entrenar y predecir."""
+        return self.moneda == "usd" or self.riesgo_pais
+
+
+# Opciones que reproducen el Transformer original (hiperparametros de antes de
+# Optuna, pesos, regresion, sin limpieza, un solo holdout). Las usan las
+# variantes de la simulacion, para compararse con corridas viejas, y ``load``
+# para los artefactos anteriores.
+CONFIG_ORIGINAL: dict = {
+    "window": 30,
+    "d_model": 32,
+    "dim_feedforward": 64,
+    "dropout": 0.1,
+    "batch_size": 64,
+    "learning_rate": 1e-3,
+    "weight_decay": 1e-4,
+    "patience": 8,
+    "objetivo": "regresion",
+    "moneda": "ars",
+    "limpiar": False,
+    "riesgo_pais": False,
+    "escala_vol": False,
+    "folds": 1,
+    "reentrenar_completo": False,
+}
+
+# ``proveedor(hasta) -> (ccl, macro)``: CCL y tabla macro (con la columna
+# ``riesgo_pais``) con datos hasta ``hasta``, la misma firma que los modelos de
+# panel (``src.panel``).
+Proveedor = Callable[[pd.Timestamp], tuple[pd.Series | None, pd.DataFrame | None]]
+_SERIES_PROVEEDOR = ("ccl", "riesgo_pais")
+_proveedor_del_dia: tuple[dt.date, Proveedor] | None = None
+_proveedor_lock = threading.Lock()
+
+
+def proveedor_collector() -> Proveedor:
+    """CCL y riesgo pais del data-colector, bajados una vez por dia (la API
+    corre dias seguidos con el mismo proceso)."""
+    global _proveedor_del_dia
+    with _proveedor_lock:
+        hoy = dt.date.today()
+        if _proveedor_del_dia is None or _proveedor_del_dia[0] != hoy:
+            crudas = {n: fetch_collector_series(*SERIES[n][:2]) for n in _SERIES_PROVEEDOR}
+
+            @functools.lru_cache(maxsize=1024)
+            def proveedor(hasta: pd.Timestamp):
+                cortas = {n: s[s.index <= hasta] for n, s in crudas.items()}
+                macro = build_macro_frame({"riesgo_pais": cortas["riesgo_pais"]}, end=hasta)
+                return cortas["ccl"], macro
+
+            _proveedor_del_dia = (hoy, proveedor)
+        return _proveedor_del_dia[1]
+
+
+def cotiza_en_dolares(symbol: str) -> bool:
+    """Commodities (futuros de Yahoo) y especies en dolares de BYMA (sufijo
+    ``D``: ALUAD, A3D, ...). YPFD es la excepcion: cotiza en pesos."""
+    symbol = symbol.strip().upper()
+    if symbol in COMMODITY_YAHOO_SYMBOLS:
+        return True
+    return symbol.endswith("D") and symbol not in PANEL_LIDER_TICKERS
+
 
 # --------------------------------------------------------------------------- #
 # Armado de datos
@@ -176,11 +290,17 @@ _Ventanas = tuple[np.ndarray, np.ndarray, np.ndarray]
 _FEATURES_PANEL = ["ret5_rel", "ret20_rel", "rank5", "vol20_rel", "mkt_ret5", "mkt_ret20"]
 _RUEDAS_VOL = 20
 _MINIMO_PANEL = 5  # tickers del panel con dato para que la mediana represente al mercado
+_FEATURE_RIESGO_PAIS = "riesgo_pais_chg5"
+_COLUMNA_RIESGO_PAIS = "riesgo_pais"  # columna que ``_preparar`` agrega al OHLCV
 
 
 def nombres_features(cfg: TransformerTrainConfig, todas: bool = False) -> list[str]:
     """Features que ve la red (``todas``: antes de aplicar ``columnas``)."""
-    nombres = FEATURE_NAMES + (_FEATURES_PANEL if cfg.features_panel else [])
+    nombres = (
+        FEATURE_NAMES
+        + (_FEATURES_PANEL if cfg.features_panel else [])
+        + ([_FEATURE_RIESGO_PAIS] if cfg.riesgo_pais else [])
+    )
     return nombres if todas or cfg.columnas is None else list(cfg.columnas)
 
 
@@ -239,6 +359,11 @@ def _features(
             raise NotEnoughDataError("features_panel necesita el panel del dia (predict_panel)")
         extra = _features_panel(log_close, vol, contexto)[1:]
         feats = np.column_stack([feats, extra])
+    if cfg.riesgo_pais:
+        # Sin la columna (o antes del primer dato) queda NaN y se limpia a 0.
+        rp = df.get(_COLUMNA_RIESGO_PAIS, pd.Series(np.nan, index=df.index)).astype(float)
+        rp_chg5 = np.log(rp.where(rp > 0)).diff(5).to_numpy(dtype=np.float64)[1:]
+        feats = np.column_stack([feats, rp_chg5])
     escala = np.ones(len(feats))
     if cfg.escala_vol:
         escala = vol.to_numpy(dtype=np.float64)[1:]
@@ -271,7 +396,9 @@ def _ventanas_con_fecha(
     validas = [
         i for i in range(len(feats) - cfg.window) if not np.isnan(target[i + cfg.window - 1])
     ]
-    fechas = df.index[[i + cfg.window for i in validas]].to_numpy()
+    # Solo el dia: Yahoo manda las acciones a las 14:00 y los futuros a las
+    # 04:00, y el corte por fecha y el IC agrupan tickers del mismo dia.
+    fechas = df.index.normalize()[[i + cfg.window for i in validas]].to_numpy()
     return X, y, fechas
 
 
@@ -300,6 +427,44 @@ def _a_exceso(por_ticker: dict[str, _Ventanas]) -> dict[str, _Ventanas]:
     return salida
 
 
+def _bloques_walk_forward(
+    por_ticker: dict[str, _Ventanas], val_fraction: float, folds: int, gap: int
+) -> list[tuple[np.datetime64, np.datetime64, np.datetime64]]:
+    """Bloques ``(fin_train, inicio, fin)`` del walk-forward, comunes a todos los tickers.
+
+    La ultima ``val_fraction`` de las fechas (de todos los tickers juntos) se
+    parte en ``folds`` bloques consecutivos ``[inicio, fin)``; cada uno se
+    entrena con las fechas anteriores a ``fin_train``, con ``gap`` fechas
+    descartadas en el medio. Cortar por fecha y no por ticker evita que las
+    fechas de validacion de un ticker sean de train para otro: las acciones se
+    mueven juntas y el movimiento del mercado de esos dias se filtraria.
+    """
+    fechas = np.unique(np.concatenate([f for _, _, f in por_ticker.values()]))
+    n = len(fechas)
+    n_val = int(round(n * val_fraction))
+    if n_val == 0:
+        return []
+    folds = min(folds, n_val)
+    inicios = [n - n_val + k * n_val // folds for k in range(folds)]
+    if inicios[0] - gap <= 0:
+        raise NotEnoughDataError(f"muy pocas fechas ({n}) para validar {n_val} con gap {gap}")
+    finales = [fechas[i] for i in inicios[1:]] + [fechas[-1] + np.timedelta64(1, "D")]
+    return [(fechas[i - gap], fechas[i], f) for i, f in zip(inicios, finales, strict=True)]
+
+
+def _juntar(por_ticker: dict[str, _Ventanas], desde, hasta) -> _Ventanas:
+    """Ventanas de todos los tickers con fecha en ``[desde, hasta)`` (None = sin limite)."""
+    partes = []
+    for X, y, fechas in por_ticker.values():
+        m = np.ones(len(fechas), dtype=bool)
+        if desde is not None:
+            m &= fechas >= desde
+        if hasta is not None:
+            m &= fechas < hasta
+        partes.append((X[m], y[m], fechas[m]))
+    return tuple(np.concatenate(cols) for cols in zip(*partes, strict=True))
+
+
 # --------------------------------------------------------------------------- #
 # Wrapper de alto nivel: entrenamiento, inferencia, persistencia
 # --------------------------------------------------------------------------- #
@@ -317,6 +482,12 @@ class TransformerTrendModel:
     # Dispositivo de entrenamiento ("cpu" o "cuda"). No se guarda en el
     # artefacto: las redes vuelven a CPU al terminar de entrenar.
     dispositivo: str = "cpu"
+    # Retorno diario del mercado (mediana del panel lider) visto al entrenar:
+    # al predecir una sola accion, separa un salto propio de un derrumbe
+    # general (``src.simulacion.limpieza``). Se guarda en el artefacto.
+    mercado: pd.Series | None = None
+    # CCL y riesgo pais (``Proveedor``). No se guarda: None = data-colector.
+    proveedor: Proveedor | None = field(default=None, repr=False)
 
     @property
     def version(self) -> str:
@@ -338,13 +509,21 @@ class TransformerTrendModel:
         ticker y se poolean en un unico set de entrenamiento/validacion.
         """
         np.random.seed(self.config.seed)
-        cfg = self.config
+        return self.fit_ventanas(self.ventanas(histories))
 
+    def ventanas(self, histories: dict[str, pd.DataFrame]) -> dict[str, _Ventanas]:
+        """Ventanas ``(X, y, fechas)`` de cada ticker que entra al entrenamiento:
+        limpias, en la moneda del modelo y con sus features. Dependen solo de la
+        parte de datos de la config (``window``, ``horizon``, ``moneda``, ...):
+        una busqueda de hiperparametros de la red las arma una vez."""
+        cfg = self.config
+        if cfg.universo == "panel":
+            histories = {s: df for s, df in histories.items() if s in PANEL_LIDER_TICKERS}
+        histories = {s: df for s, df in histories.items() if self.acepta(s)}
+        histories = self._preparar_todos(histories)
         contexto = contexto_panel(histories) if cfg.features_panel else None
         if cfg.features_panel and contexto is None:
             raise NotEnoughDataError("features_panel necesita al menos 5 tickers del panel")
-        if cfg.universo == "panel":
-            histories = {s: df for s, df in histories.items() if s in PANEL_LIDER_TICKERS}
 
         por_ticker: dict[str, _Ventanas] = {}
         for symbol, df in histories.items():
@@ -357,57 +536,110 @@ class TransformerTrendModel:
 
         if not por_ticker:
             raise NotEnoughDataError("no hay suficientes datos para entrenar")
+        return por_ticker
 
-        train_X, train_y, val_X, val_y, val_f = [], [], [], [], []
-        for X, y, fechas in por_ticker.values():
-            split = int(len(X) * (1 - cfg.val_fraction))
-            fin_train = max(split - cfg.gap, 0) if split < len(X) else split
-            train_X.append(X[:fin_train])
-            train_y.append(y[:fin_train])
-            val_X.append(X[split:])
-            val_y.append(y[split:])
-            val_f.append(fechas[split:])
+    def fit_ventanas(
+        self,
+        por_ticker: dict[str, _Ventanas],
+        al_terminar_bloque: Callable[[int, dict[str, float]], None] | None = None,
+    ) -> dict[str, float]:
+        """Walk-forward y entrenamiento final sobre ventanas ya armadas (``ventanas``).
 
-        Xtr = np.concatenate(train_X)
-        ytr = np.concatenate(train_y)
-        Xva = np.concatenate(val_X)
-        yva = np.concatenate(val_y)
-        fva = np.concatenate(val_f)
+        ``al_terminar_bloque(k, metricas)`` se llama despues de cada bloque con
+        las metricas fuera de muestra acumuladas hasta ahi (una busqueda puede
+        cortar ahi un candidato malo).
+        """
+        cfg = self.config
+        gap = cfg.horizon if cfg.gap is None else cfg.gap
+        bloques = _bloques_walk_forward(por_ticker, cfg.val_fraction, cfg.folds, gap)
         self.tickers = list(por_ticker)
 
+        # Walk-forward: una red (o un ensamble) por bloque, que predice su bloque
+        # sin haberlo visto. De ahi salen las metricas y las epocas.
+        preds, reales, fechas_oos, epocas = [], [], [], []
+        for k, (fin_train, inicio, fin) in enumerate(bloques):
+            if len(bloques) > 1:
+                print(f"  bloque {k + 1}/{len(bloques)} (valida desde {str(inicio)[:10]})")
+            Xtr, ytr, _ = _juntar(por_ticker, None, fin_train)
+            Xva, yva, fva = _juntar(por_ticker, inicio, fin)
+            nets, mejores = self._entrenar_ensamble(Xtr, ytr, Xva, yva, fva)
+            epocas += mejores
+            self._nets = nets
+            preds.append(self._salida(self._to_tensor(self._scale_features(Xva))))
+            reales.append(yva)
+            fechas_oos.append(fva)
+            if al_terminar_bloque is not None:
+                al_terminar_bloque(
+                    k,
+                    self._metricas(
+                        np.concatenate(preds), np.concatenate(reales), np.concatenate(fechas_oos)
+                    ),
+                )
+
+        n_epocas = max(1, int(np.median(epocas))) if epocas else cfg.epochs
+        if not bloques or cfg.reentrenar_completo:
+            X, y, _ = _juntar(por_ticker, None, None)
+            self._nets, _ = self._entrenar_ensamble(X, y, epocas=n_epocas)
+
+        self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
+        self.metrics = {}
+        if preds:
+            pred = np.concatenate(preds)
+            self.metrics = self._metricas(pred, np.concatenate(reales), np.concatenate(fechas_oos))
+            self.metrics["folds"] = len(bloques)
+            self.metrics["epocas"] = n_epocas
+            if cfg.banda_cuantil is not None:
+                cfg.neutral_band = float(np.quantile(np.abs(np.expm1(pred)), cfg.banda_cuantil))
+                self.metrics["neutral_band"] = round(cfg.neutral_band, 6)
+        return self.metrics
+
+    def _entrenar_ensamble(
+        self,
+        X: np.ndarray,
+        y: np.ndarray,
+        Xva: np.ndarray | None = None,
+        yva: np.ndarray | None = None,
+        fva: np.ndarray | None = None,
+        epocas: int | None = None,
+    ) -> tuple[list[_TransformerRegressor], list[int]]:
+        """Ajusta las escalas con ``X``/``y`` y entrena ``n_semillas`` redes (con
+        early stopping si hay validacion, si no ``epocas``). Devuelve las redes y
+        la mejor epoca de cada una."""
+        cfg = self.config
         # Normalizacion calculada solo con el set de entrenamiento.
-        flat = Xtr.reshape(-1, Xtr.shape[-1])
+        flat = X.reshape(-1, X.shape[-1])
         self.feature_mean = flat.mean(axis=0)
         self.feature_std = flat.std(axis=0) + 1e-8
-        self.target_mean = float(ytr.mean())
-        self.target_std = float(ytr.std() + 1e-8)
-
-        ytr_scaled = (ytr - self.target_mean) / self.target_std
-        if cfg.clip_target is not None:
-            ytr_scaled = np.clip(ytr_scaled, -cfg.clip_target, cfg.clip_target)
+        has_val = Xva is not None and len(Xva) > 0
+        if cfg.objetivo == "clasificacion":
+            # target_std guarda el movimiento tipico (|retorno| medio) para pasar
+            # la probabilidad a un retorno esperado (ver ``_salida``).
+            self.target_mean = 0.0
+            self.target_std = float(np.mean(np.abs(y)) + 1e-8)
+            y_scaled = (y > 0).astype(np.float32)
+            yva_scaled = (yva > 0).astype(np.float32) if has_val else None
+        else:
+            self.target_mean = float(y.mean())
+            self.target_std = float(y.std() + 1e-8)
+            y_scaled = (y - self.target_mean) / self.target_std
+            if cfg.clip_target is not None:
+                y_scaled = np.clip(y_scaled, -cfg.clip_target, cfg.clip_target)
+            yva_scaled = (yva - self.target_mean) / self.target_std if has_val else None
         disp = torch.device(self.dispositivo)
-        Xtr_t = self._to_tensor(self._scale_features(Xtr)).to(disp)
-        ytr_t = torch.tensor(ytr_scaled, dtype=torch.float32, device=disp)
-
-        has_val = len(Xva) > 0
+        X_t = self._to_tensor(self._scale_features(X)).to(disp)
+        y_t = torch.tensor(y_scaled, dtype=torch.float32, device=disp)
         Xva_t = self._to_tensor(self._scale_features(Xva)) if has_val else None
-        yva_scaled = (yva - self.target_mean) / self.target_std if has_val else None
 
-        self._nets = []
+        nets, mejores = [], []
         for k in range(cfg.n_semillas):
             if cfg.n_semillas > 1:
                 print(f"  semilla {k + 1}/{cfg.n_semillas}")
-            self._nets.append(
-                self._entrenar_red(cfg.seed + k, Xtr_t, ytr_t, Xva_t, yva_scaled, fva)
+            net, mejor = self._entrenar_red(
+                cfg.seed + k, X_t, y_t, Xva_t, yva_scaled, fva, epocas=epocas
             )
-
-        self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
-        self.metrics = self._evaluate(Xva, yva, fva)
-        if cfg.banda_cuantil is not None and has_val:
-            pred = self._forward(Xva_t) * self.target_std + self.target_mean
-            cfg.neutral_band = float(np.quantile(np.abs(np.expm1(pred)), cfg.banda_cuantil))
-            self.metrics["neutral_band"] = round(cfg.neutral_band, 6)
-        return self.metrics
+            nets.append(net)
+            mejores.append(mejor)
+        return nets, mejores
 
     def _entrenar_red(
         self,
@@ -416,8 +648,11 @@ class TransformerTrendModel:
         ytr_t: torch.Tensor,
         Xva_t: torch.Tensor | None,
         yva_scaled: np.ndarray | None,
-        fva: np.ndarray,
-    ) -> _TransformerRegressor:
+        fva: np.ndarray | None,
+        epocas: int | None = None,
+    ) -> tuple[_TransformerRegressor, int]:
+        """Entrena una red y devuelve la mejor epoca (1-based). Con validacion,
+        early stopping; sin validacion, ``epocas`` (default ``cfg.epochs``)."""
         cfg = self.config
         torch.manual_seed(seed)
         net = _TransformerRegressor(
@@ -445,16 +680,27 @@ class TransformerTrendModel:
             return 0.5 * (1 + math.cos(math.pi * min(progress, 1.0)))
 
         scheduler = torch.optim.lr_scheduler.LambdaLR(optimizer, lr_lambda)
-        loss_fn: nn.Module = nn.HuberLoss(delta=1.0) if cfg.loss == "huber" else nn.MSELoss()
-        mse = nn.MSELoss()
+        loss_fn: nn.Module
+        if cfg.objetivo == "clasificacion":
+            subas = float(ytr_t.sum().item())
+            bajas = float(len(ytr_t)) - subas
+            peso = torch.tensor(bajas / max(subas, 1.0), device=Xtr_t.device)
+            loss_fn = nn.BCEWithLogitsLoss(pos_weight=peso)
+        elif cfg.loss == "huber":
+            loss_fn = nn.HuberLoss(delta=1.0)
+        else:
+            loss_fn = nn.MSELoss()
+        # En validacion, la perdida del objetivo sin recortes (MSE en regresion).
+        val_fn: nn.Module = loss_fn if cfg.objetivo == "clasificacion" else nn.MSELoss()
 
         has_val = Xva_t is not None
         best_val = float("inf")
         best_state = None
+        best_epoch = epocas or cfg.epochs
         epochs_no_improve = 0
 
         n = len(Xtr_t)
-        for epoch in range(cfg.epochs):
+        for epoch in range(epocas or cfg.epochs):
             net.train()
             perm = torch.randperm(n).to(Xtr_t.device)
             epoch_loss = 0.0
@@ -476,7 +722,7 @@ class TransformerTrendModel:
                 net.eval()
                 with torch.no_grad():
                     val_pred = net(Xva_t)
-                val_loss = float(mse(val_pred, yva_t).item())
+                val_loss = float(val_fn(val_pred, yva_t).item())
                 if cfg.seleccion == "ic":
                     val_score = -ic_por_fecha(val_pred.cpu().numpy(), yva_scaled, fva)
                 else:
@@ -484,6 +730,7 @@ class TransformerTrendModel:
                 if val_score < best_val - 1e-5:
                     best_val = val_score
                     best_state = {k: v.clone() for k, v in net.state_dict().items()}
+                    best_epoch = epoch + 1
                     epochs_no_improve = 0
                 else:
                     epochs_no_improve += 1
@@ -493,7 +740,7 @@ class TransformerTrendModel:
             if (epoch + 1) % 10 == 0 or epoch == 0:
                 print(
                     f"  epoch {epoch + 1:>3}/{cfg.epochs}  "
-                    f"train_loss={epoch_loss / n:.5f}  val_mse={val_loss:.5f}  "
+                    f"train_loss={epoch_loss / n:.5f}  val_loss={val_loss:.5f}  "
                     f"lr={scheduler.get_last_lr()[0]:.2e}"
                 )
 
@@ -504,9 +751,66 @@ class TransformerTrendModel:
         if best_state is not None:
             net.load_state_dict(best_state)
         net.eval()
-        return net.cpu()
+        return net.cpu(), best_epoch
 
     # ------------------------------------------------------------------ #
+    def _preparar_todos(self, histories: dict[str, pd.DataFrame]) -> dict[str, pd.DataFrame]:
+        """Historicos para entrenar: limpios (y guarda el mercado con el que se
+        detectaron los saltos), en la moneda del modelo y con el riesgo pais."""
+        cfg = self.config
+        if cfg.limpiar:
+            positivos = {s: sin_precios_no_positivos(df) for s, df in histories.items()}
+            self.mercado = retorno_mercado(positivos)
+            histories = {s: self._limpiar(df) for s, df in positivos.items()}
+        if not cfg.necesita_proveedor or not histories:
+            return histories
+        hasta = max(df.index[-1] for df in histories.values() if not df.empty)
+        ccl, macro = self._proveedor()(hasta)
+        return {s: self._en_moneda(df, ccl, macro) for s, df in histories.items()}
+
+    def _preparar(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Lo mismo que ``_preparar_todos`` para un solo historico (al predecir)."""
+        cfg = self.config
+        if cfg.limpiar:
+            df = self._limpiar(sin_precios_no_positivos(df))
+        if not cfg.necesita_proveedor or df.empty:
+            return df
+        ccl, macro = self._proveedor()(df.index[-1])
+        return self._en_moneda(df, ccl, macro)
+
+    def _limpiar(self, df: pd.DataFrame) -> pd.DataFrame:
+        """Ajusta los saltos de ``df`` que el mercado no acompano (sin mercado
+        conocido para esa fecha, se compara contra 0)."""
+        mercado = self.mercado if self.mercado is not None else pd.Series(dtype=float)
+        for fecha, factor in detectar_saltos(df, mercado):
+            df = ajustar_salto(df, fecha, factor)
+        return df
+
+    def _en_moneda(
+        self, df: pd.DataFrame, ccl: pd.Series | None, macro: pd.DataFrame | None
+    ) -> pd.DataFrame:
+        cfg = self.config
+        if cfg.moneda == "usd":
+            if ccl is None or ccl.dropna().empty:
+                raise DataUnavailableError("sin CCL para pasar los precios a dolares")
+            # Antes del primer CCL conocido no hay precio en dolares.
+            df = en_dolares(df, ccl).dropna(subset=["close"])
+        if cfg.riesgo_pais:
+            df = df.copy()
+            rp = None if macro is None else macro.get(_COLUMNA_RIESGO_PAIS)
+            df[_COLUMNA_RIESGO_PAIS] = (
+                np.nan if rp is None else rp.reindex(df.index.normalize()).to_numpy()
+            )
+        return df
+
+    def acepta(self, symbol: str) -> bool:
+        """Si el modelo puede predecir ``symbol``: en dolares, no los que ya
+        cotizan en dolares (dividirlos por el CCL no tiene sentido)."""
+        return self.config.moneda != "usd" or not cotiza_en_dolares(symbol)
+
+    def _proveedor(self) -> Proveedor:
+        return self.proveedor if self.proveedor is not None else proveedor_collector()
+
     def predict_df(self, df: pd.DataFrame) -> dict:
         """Predice la tendencia del proximo dia a partir de un OHLCV.
 
@@ -518,7 +822,7 @@ class TransformerTrendModel:
         """
         if not self._nets:
             raise NotEnoughDataError("el modelo no esta entrenado")
-        ventana, escala = self._ventana_prediccion(df, None)
+        ventana, escala = self._ventana_prediccion(self._preparar(df), None)
         log_return = float(self._log_returns(ventana[None], np.array([escala]))[0])
         return derive_trend_output(df, log_return, self.config.horizon, self.config.neutral_band)
 
@@ -528,9 +832,10 @@ class TransformerTrendModel:
         tickers sin datos suficientes se omiten."""
         if not self._nets:
             raise NotEnoughDataError("el modelo no esta entrenado")
-        contexto = contexto_panel(dfs) if self.config.features_panel else None
+        preparados = {s: self._preparar(df) for s, df in dfs.items()}
+        contexto = contexto_panel(preparados) if self.config.features_panel else None
         ventanas, escalas, symbols = [], [], []
-        for symbol, df in dfs.items():
+        for symbol, df in preparados.items():
             try:
                 ventana, escala = self._ventana_prediccion(df, contexto)
             except NotEnoughDataError:
@@ -563,22 +868,36 @@ class TransformerTrendModel:
 
     def _log_returns(self, ventanas: np.ndarray, escalas: np.ndarray) -> np.ndarray:
         """Retorno log predicho para un batch de ventanas."""
-        scaled = self._forward(self._to_tensor(self._scale_features(ventanas)))
-        return (scaled * self.target_std + self.target_mean) * escalas
+        return self._salida(self._to_tensor(self._scale_features(ventanas))) * escalas
+
+    def _salida(self, x: torch.Tensor) -> np.ndarray:
+        """Retorno esperado en unidades del target.
+
+        En regresion es la prediccion desescalada. En clasificacion, con ``p``
+        la probabilidad (balanceada) de que suba y ``m`` el movimiento tipico de
+        train, es ``p * m - (1 - p) * m = (2p - 1) * m``: el signo es el de
+        ``p - 0.5`` y el tamano crece con la conviccion. Con ``p`` cerca de 0.5
+        el retorno queda dentro de ``neutral_band`` y la senal es "neutral".
+        """
+        scaled = self._forward(x)
+        if self.config.objetivo == "clasificacion":
+            return np.tanh(scaled / 2) * self.target_std  # tanh(z / 2) = 2 * sigmoid(z) - 1
+        return scaled * self.target_std + self.target_mean
 
     def _forward(self, x: torch.Tensor) -> np.ndarray:
-        """Prediccion escalada: promedio de las redes del ensamble."""
+        """Salida cruda (logit o prediccion escalada): promedio de las redes del ensamble."""
         with torch.no_grad():
             return np.mean([net(x).numpy() for net in self._nets], axis=0)
 
     # ------------------------------------------------------------------ #
-    def _evaluate(
-        self, X: np.ndarray, y: np.ndarray, fechas: np.ndarray | None = None
+    @staticmethod
+    def _metricas(
+        pred: np.ndarray, y: np.ndarray, fechas: np.ndarray | None = None
     ) -> dict[str, float]:
-        if len(X) == 0 or not self._nets:
+        """Metricas de ``pred`` contra ``y`` (en unidades del target: con
+        ``escala_vol``, retornos sobre volatilidad)."""
+        if len(y) == 0:
             return {}
-        scaled = self._forward(self._to_tensor(self._scale_features(X)))
-        pred = scaled * self.target_std + self.target_mean
         mae = float(np.mean(np.abs(pred - y)))
         # Acierto direccional: que el signo del retorno coincida.
         directional = float(np.mean(np.sign(pred) == np.sign(y)))
@@ -586,6 +905,8 @@ class TransformerTrendModel:
             "val_samples": float(len(y)),
             "val_mae_logret": round(mae, 6),
             "val_directional_accuracy": round(directional, 4),
+            # Sin inflarse en periodos alcistas: decir siempre lo mismo da 0.5.
+            "val_acierto_balanceado": round(acierto_balanceado(pred, y), 4),
         }
         if fechas is not None:
             metrics["val_ic"] = round(ic_por_fecha(pred, y, fechas), 4)
@@ -618,6 +939,7 @@ class TransformerTrendModel:
                 "tickers": self.tickers,
                 "trained_at": self.trained_at,
                 "metrics": self.metrics,
+                "mercado": self.mercado,
                 "feature_names": FEATURE_NAMES,
                 "architecture": "transformer",
             },
@@ -625,10 +947,12 @@ class TransformerTrendModel:
         )
 
     @classmethod
-    def load(cls, path: str | Path) -> TransformerTrendModel:
+    def load(cls, path: str | Path, proveedor: Proveedor | None = None) -> TransformerTrendModel:
         blob = torch.load(Path(path), map_location="cpu", weights_only=False)
         check_feature_compatibility(blob.get("feature_names"))
-        cfg = TransformerTrainConfig(**blob["config"])
+        # Las opciones que no estan en el artefacto son de antes de existir:
+        # las del modelo original.
+        cfg = TransformerTrainConfig(**(CONFIG_ORIGINAL | blob["config"]))
         model = cls(
             config=cfg,
             feature_mean=np.asarray(blob["feature_mean"]),
@@ -638,6 +962,8 @@ class TransformerTrendModel:
             tickers=blob.get("tickers", []),
             trained_at=blob.get("trained_at"),
             metrics=blob.get("metrics", {}),
+            mercado=blob.get("mercado"),
+            proveedor=proveedor,
         )
         for state in blob.get("state_dicts") or [blob["state_dict"]]:
             net = _TransformerRegressor(

@@ -260,7 +260,7 @@ def test_transformer_building_blocks_and_guards(tmp_path):
 
     model = transformer.TransformerTrendModel()
     assert model.version == "untrained"
-    assert model._evaluate(np.empty((0, 1, 1)), np.empty((0,))) == {}
+    assert model._metricas(np.empty((0,)), np.empty((0,))) == {}
     assert model._to_tensor(np.ones((1, 2))).dtype == torch.float32
     with pytest.raises(NotEnoughDataError):
         model.predict_df(history())
