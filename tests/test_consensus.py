@@ -270,3 +270,23 @@ def test_compute_consensus_exposes_the_terms_of_each_model() -> None:
 def test_compute_consensus_without_usable_models_has_no_components() -> None:
     result = compute_consensus({"lstm": _prediction(available=False)}, PerfilRiesgo.MODERADO)
     assert result["components"] == []
+
+
+def test_read_ledger_prefers_the_newest_copy(tmp_path, monkeypatch) -> None:
+    import json
+
+    from src import consensus
+
+    path = tmp_path / "ledger.json"
+    path.write_text(json.dumps({"updated_at": "2026-10-20T21:00:00Z", "resolved": [1]}))
+    remote = {"updated_at": "2026-10-23T21:00:00Z", "resolved": [1, 2]}
+    monkeypatch.setattr(consensus, "fetch_remote_json", lambda url: remote)
+
+    assert consensus.read_ledger(path, "https://x/ledger")["resolved"] == [1, 2]
+    remote["updated_at"] = "2026-10-01T00:00:00Z"
+    assert consensus.read_ledger(path, "https://x/ledger")["resolved"] == [1]
+    monkeypatch.setattr(consensus, "fetch_remote_json", lambda url: None)
+    assert consensus.read_ledger(tmp_path / "no.json", "https://x/ledger") == {
+        "pending": [],
+        "resolved": [],
+    }

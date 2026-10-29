@@ -43,6 +43,8 @@ from pathlib import Path
 
 import numpy as np
 
+from src.compare_snapshot import fetch_remote_json
+from src.config import settings
 from src.schemas import PerfilRiesgo
 
 # Umbrales de partida (ver decision_maker_playground/index.html). c0 baja de
@@ -257,6 +259,28 @@ def compute_consensus(
 
 
 LEDGER_PATH = Path(__file__).resolve().parent.parent / "models" / "paper_trading_ledger.json"
+
+
+def read_ledger(ledger_path: Path = LEDGER_PATH, url: str | None = None) -> dict:
+    """Ledger de paper trading para servir: el local o la copia de ``url`` (por
+    defecto ``settings.ledger_url``), el de ``updated_at`` mas nuevo. El job
+    diario commitea con [skip ci], asi que el dyno puede tener uno viejo."""
+    if url is None and ledger_path == LEDGER_PATH:
+        url = settings.ledger_url
+    try:
+        local = json.loads(ledger_path.read_text())
+    except (OSError, ValueError):
+        local = None
+    remote = fetch_remote_json(url) if url else None
+    candidates = [d for d in (local, remote) if isinstance(d, dict)]
+    if not candidates:
+        return {"pending": [], "resolved": []}
+    ledger = max(candidates, key=lambda d: str(d.get("updated_at") or ""))
+    ledger.setdefault("pending", [])
+    ledger.setdefault("resolved", [])
+    return ledger
+
+
 # Con menos resueltas que esto el porcentaje es ruido: no se muestra.
 TRACK_RECORD_MIN_RESOLVED = 10
 
@@ -267,10 +291,7 @@ def load_track_record(
     """Historial de aciertos del consenso (``consensus-<perfil>``) segun el
     ledger de paper trading: del ticker si hay suficientes casos resueltos, si
     no el global del perfil. None si todavia no hay datos suficientes."""
-    try:
-        summary = json.loads(ledger_path.read_text()).get("summary", {})
-    except (OSError, ValueError):
-        return None
+    summary = read_ledger(ledger_path).get("summary") or {}
     data = summary.get(f"consensus-{profile.value}")
     if not data:
         return None

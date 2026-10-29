@@ -5,9 +5,9 @@ from __future__ import annotations
 import datetime as dt
 
 import pandas as pd
-import requests
 
 from src.config import settings
+from src.data import collector_post
 from src.errors import DataUnavailableError
 
 _REQUEST_TIMEOUT = 60
@@ -38,10 +38,8 @@ def fetch_collector_series(route: str, series: str) -> pd.Series:
     """Serie diaria del data-colector."""
     url = f"{_base_url()}/{route}/{series}"
     try:
-        resp = requests.post(url, timeout=_REQUEST_TIMEOUT)
-        resp.raise_for_status()
-        payload = resp.json()
-    except (requests.RequestException, ValueError) as exc:
+        payload = collector_post(url, timeout=(5, _REQUEST_TIMEOUT))
+    except DataUnavailableError as exc:
         raise DataUnavailableError(f"no se pudo obtener {route}/{series}: {exc}") from exc
 
     # el data-colector responde 200 y manda el error en el body

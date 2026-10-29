@@ -476,3 +476,75 @@ def main() -> None:
 
 if __name__ == "__main__":
     main()
+
+
+def track_record(ledger: dict, min_casos: int = 20) -> dict:
+    """Que hubiera pasado siguiendo las senales de cada modelo, con todo lo ya
+    resuelto del ledger (todas las acciones, no solo las de un usuario).
+
+    Por modelo y version: cuantas veces dijo alza y baja y cuanto acerto,
+    contra la tasa base de esas mismas fechas; y el retorno promedio de
+    "comprar cuando dice alza" contra "comprar todo lo que el modelo miro"
+    (la vara: sin elegir nada). La curva acumula esos retornos mes a mes.
+    Retornos log en pesos, al horizonte de cada senal.
+    """
+    resueltas = [r for r in ledger.get("resolved", []) if "realized_log_return" in r]
+    grupos: dict[tuple[str, str], list[dict]] = {}
+    for r in resueltas:
+        # Las copias de Modal se reentrenan en cada pedido y cada uno trae
+        # otra version: se miran como una sola.
+        version = "modal" if r["model"].endswith("-modal") else r.get("model_version") or "?"
+        grupos.setdefault((r["model"], version), []).append(r)
+
+    filas = []
+    for (modelo, version), rs in sorted(grupos.items()):
+        if len(rs) < min_casos:
+            continue
+        ret = np.array([r["realized_log_return"] for r in rs], dtype=float)
+        sube = ret > 0
+        alza = np.array([r["signal"] == "alza" for r in rs])
+        baja = np.array([r["signal"] == "baja" for r in rs])
+        meses: dict[str, list[tuple[float, bool]]] = {}
+        for r, x, a in zip(rs, ret, alza, strict=True):
+            meses.setdefault(r["as_of"][:7], []).append((float(x), bool(a)))
+        curva, acum_sigue, acum_todas = [], 0.0, 0.0
+        for mes in sorted(meses):
+            casos = meses[mes]
+            todas = float(np.mean([x for x, _ in casos]))
+            elegidas = [x for x, a in casos if a]
+            # sin senales de alza ese mes, "seguirlas" es quedarse afuera (0)
+            sigue = float(np.mean(elegidas)) if elegidas else 0.0
+            acum_sigue += sigue
+            acum_todas += todas
+            curva.append(
+                {
+                    "mes": mes,
+                    "sigue": round(acum_sigue, 5),
+                    "todas": round(acum_todas, 5),
+                    "senales": len(elegidas),
+                }
+            )
+        filas.append(
+            {
+                "model": modelo,
+                "model_version": version,
+                "horizon_days": int(rs[0].get("horizon_days") or 0),
+                "casos": len(rs),
+                "desde": min(r["as_of"] for r in rs),
+                "hasta": max(r["as_of"] for r in rs),
+                "tasa_suba": float(sube.mean()),
+                "alza": {
+                    "n": int(alza.sum()),
+                    "acierto": float(sube[alza].mean()) if alza.any() else None,
+                    "retorno_medio": float(ret[alza].mean()) if alza.any() else None,
+                },
+                "baja": {
+                    "n": int(baja.sum()),
+                    "acierto": float((~sube[baja]).mean()) if baja.any() else None,
+                },
+                "retorno_medio_todas": float(ret.mean()),
+                "curva": curva,
+            }
+        )
+    filas.sort(key=lambda f: (f["model"], f["hasta"]), reverse=False)
+    return {"updated_at": ledger.get("updated_at"), "modelos": filas}

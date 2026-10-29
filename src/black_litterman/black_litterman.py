@@ -68,6 +68,13 @@ COSTO_OPERACION = 0.006
 # poder predictivo no se justifica. None = todo el panel.
 MAX_ACCIONES_NUEVAS = 2
 
+# Cuanto se supone que se mantiene una cartera despues de rebalancear (3
+# meses). La comision se paga una vez, pero los retornos y el riesgo del
+# objetivo estan medidos al horizonte de las predicciones (5 ruedas): sin
+# repartirla, una comision de 0,6% contra retornos de 0,1% a 5 ruedas no se
+# paga nunca y la recomendacion queda siempre igual a la cartera actual.
+RUEDAS_TENENCIA = 63
+
 # Por debajo de esto un peso se considera 0 (ruido numerico del optimizador).
 PESO_MINIMO_VISIBLE = 0.005
 
@@ -229,14 +236,16 @@ def recomendacion_detallada(
     candidatas = (
         [t for i, t in enumerate(tickers) if permitidos[i] and not tiene[i]] if tiene.any() else []
     )
-    pesos = bl.predecir(pesos_actuales=actuales, costo=costo_operacion, permitidos=permitidos)
+    # Comision llevada a la misma escala que retornos y riesgo (ver RUEDAS_TENENCIA).
+    costo_horizonte = costo_operacion * horizonte / RUEDAS_TENENCIA
+    pesos = bl.predecir(pesos_actuales=actuales, costo=costo_horizonte, permitidos=permitidos)
     # Una accion nueva con un peso testimonial es casi todo comision: si no
     # llega a PESO_MINIMO_NUEVA se saca y se vuelve a optimizar sin ella.
     chicas = [t for t in candidatas if pesos[tickers.index(t)] < PESO_MINIMO_NUEVA]
     if chicas:
         for t in chicas:
             permitidos[tickers.index(t)] = False
-        pesos = bl.predecir(pesos_actuales=actuales, costo=costo_operacion, permitidos=permitidos)
+        pesos = bl.predecir(pesos_actuales=actuales, costo=costo_horizonte, permitidos=permitidos)
     nuevas = [t for t in candidatas if pesos[tickers.index(t)] > PESO_MINIMO_VISIBLE]
     return ResultadoBL(
         tickers=tickers,

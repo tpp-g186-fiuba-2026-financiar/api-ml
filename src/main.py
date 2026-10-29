@@ -6,12 +6,13 @@ from datetime import date
 from pathlib import Path
 from typing import Annotated
 
+import numpy as np
 from fastapi import FastAPI, HTTPException, Query
 
 from src.black_litterman.black_litterman import MAX_ACCIONES_NUEVAS, recomendacion_detallada
 from src.black_litterman.cartera_ancla import TipoCarteraAncla
 from src.config import settings
-from src.consensus import LEDGER_PATH, compute_consensus, load_track_record
+from src.consensus import compute_consensus, load_track_record, read_ledger
 from src.data import fetch_history, fetch_interest_rate
 from src.errors import (
     ApiMlError,
@@ -24,7 +25,7 @@ from src.fair_value import VENTANA_DEFAULT, precio_estimado
 from src.garch_volatility import GarchVolatilityModel
 from src.modal_client import call_modal
 from src.model import PredictionModel
-from src.paper_trading import load_ledger, signal_history
+from src.paper_trading import signal_history, track_record
 from src.registry import _fetch_history_with_macro as fetch_history_with_macro
 from src.registry import build_registry
 from src.schemas import (
@@ -214,6 +215,35 @@ def predict_trend_consensus(
 
 
 @app.get(
+    "/predict/ranking",
+    response_model=dict,
+    tags=["Predicciones"],
+    summary="Ranking del dia (XGBoost)",
+    description=(
+        "Probabilidad de suba a 20 ruedas de cada accion del panel segun "
+        "XGBoost, de mayor a menor, con un puntaje de 1 a 10 por puesto y la "
+        "senal que emitiria. Ordena acciones dentro del dia; no dice si el "
+        "mercado entero va a subir."
+    ),
+)
+def predict_ranking() -> dict:
+    service = trend_registry.resolve("xgboost")
+    if not service.is_loaded or service.model is None:
+        raise HTTPException(status_code=503, detail="xgboost no esta cargado")
+    try:
+        filas = service.model.rank_universe()
+    except DataUnavailableError as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+    except NotEnoughDataError as exc:
+        raise HTTPException(status_code=422, detail=str(exc)) from exc
+    return {
+        "model_version": service.version,
+        "horizon_days": service.model.config.horizon,
+        "acciones": filas,
+    }
+
+
+@app.get(
     "/predict/fair-value/{symbol}",
     response_model=dict,
     tags=["Predicciones"],
@@ -335,14 +365,21 @@ async def predict_direction(symbol: str) -> DirectionResponse:
         "esperado. Se ajusta al vuelo con el historico del ticker pedido."
     ),
 )
-async def predict_volatility(symbol: str) -> VolatilityResponse:
+def predict_volatility(
+    symbol: str,
+    horizon: Annotated[int | None, Query(ge=1, le=60, description="Ruedas a pronosticar")] = None,
+) -> VolatilityResponse:
     try:
         df = fetch_history(symbol, settings.history_days)
-        result = garch_volatility_model.predict_df(df)
+        result = garch_volatility_model.predict_df(df, horizon)
     except DataUnavailableError as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
     except NotEnoughDataError as exc:
         raise HTTPException(status_code=422, detail=str(exc)) from exc
+    try:
+        result.update(garch_volatility_model.contexto(df, horizon))
+    except (ApiMlError, ValueError, np.linalg.LinAlgError) as exc:  # best-effort
+        print(f"  [warn] volatilidad {symbol}: sin regimen/backtest: {exc}")
 
     result["symbol"] = symbol.strip().upper()
     result["model"] = "garch"
@@ -519,6 +556,22 @@ async def portfolio_recomendacion(
 
 
 @app.get(
+    "/signals/track-record",
+    response_model=dict,
+    tags=["Modelos"],
+    summary="Que hubiera pasado siguiendo las senales",
+    description=(
+        "Con todo lo resuelto del paper trading, por modelo y version: aciertos "
+        "de alza y baja contra la tasa base, y retorno de comprar cuando dice "
+        "alza contra comprar todo lo que miro, acumulado mes a mes."
+    ),
+)
+def signals_track_record() -> dict:
+    ledger = read_ledger()
+    return track_record(ledger)
+
+
+@app.get(
     "/signals/history",
     response_model=SignalHistoryResponse,
     tags=["Modelos"],
@@ -537,10 +590,7 @@ async def signals_history(
     limit: Annotated[int, Query(ge=1, le=5000)] = 200,
 ) -> SignalHistoryResponse:
     wanted = [s for s in (symbols or "").split(",") if s.strip()] or None
-    try:
-        ledger = load_ledger(LEDGER_PATH)
-    except (OSError, ValueError):
-        ledger = {"pending": [], "resolved": []}
+    ledger = read_ledger()
     return SignalHistoryResponse(**signal_history(ledger, wanted, limit))
 
 

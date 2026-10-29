@@ -40,17 +40,48 @@ def is_fresh(generated_at: dt.datetime, now: dt.datetime | None = None) -> bool:
     return generated_at >= last_scheduled_run(now - RUN_GRACE)
 
 
-def load_snapshot(path: str | Path) -> dict | None:
-    """``{"generated_at": datetime, "symbols": {...}}`` o None si no hay o esta roto."""
+REMOTE_TTL = dt.timedelta(minutes=10)
+_remote_cache: dict[str, tuple[dt.datetime, dict | None]] = {}
+
+
+def fetch_remote_json(url: str, timeout: float = 10.0) -> dict | None:
+    """JSON de ``url`` guardado en memoria ``REMOTE_TTL`` (tambien si fallo, para
+    no reintentar en cada pedido). None si no se pudo bajar o no es JSON."""
+    import requests
+
+    now = dt.datetime.now(dt.UTC)
+    cached = _remote_cache.get(url)
+    if cached and now - cached[0] < REMOTE_TTL:
+        return cached[1]
     try:
-        raw = json.loads(Path(path).read_text())
+        resp = requests.get(url, timeout=timeout)
+        resp.raise_for_status()
+        data = resp.json()
+    except (requests.RequestException, ValueError):
+        data = None
+    _remote_cache[url] = (now, data if isinstance(data, dict) else None)
+    return _remote_cache[url][1]
+
+
+def parse_snapshot(raw: dict | None) -> dict | None:
+    """``{"generated_at": datetime, "symbols": {...}}`` o None si no es valido."""
+    try:
         generated_at = dt.datetime.strptime(raw["generated_at"], "%Y-%m-%dT%H:%M:%SZ")
-    except (OSError, ValueError, KeyError, TypeError):
+    except (TypeError, ValueError, KeyError):
         return None
     symbols = raw.get("symbols")
     if not isinstance(symbols, dict):
         return None
     return {"generated_at": generated_at.replace(tzinfo=dt.UTC), "symbols": symbols}
+
+
+def load_snapshot(path: str | Path) -> dict | None:
+    """``{"generated_at": datetime, "symbols": {...}}`` o None si no hay o esta roto."""
+    try:
+        raw = json.loads(Path(path).read_text())
+    except (OSError, ValueError):
+        return None
+    return parse_snapshot(raw)
 
 
 def save_snapshot(

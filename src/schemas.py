@@ -75,6 +75,10 @@ class VolatilityResponse(BaseModel):
     as_of: str
     model: str = "garch"
     model_version: str
+    # Regimen de hoy y backtest por accion (GarchVolatilityModel.contexto).
+    # Opcionales: si fallan, el pronostico se devuelve igual.
+    regime: dict | None = None
+    backtest: dict | None = None
 
 
 class PerfilRiesgo(enum.StrEnum):

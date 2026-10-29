@@ -28,7 +28,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 
-from src.data import fetch_history_collector
+from src.data import fetch_history_collector_or_yahoo
 from src.data_quality import is_stale
 from src.errors import ApiMlError, DataUnavailableError, NotEnoughDataError
 from src.panel.gbm import RUEDAS_PREDICCION
@@ -71,7 +71,7 @@ class PanelTrendService:
         loader: Callable[[Path], object],
         respaldo,
         history_days: int,
-        fetch_hist: Callable[[str, int], pd.DataFrame] = fetch_history_collector,
+        fetch_hist: Callable[[str, int], pd.DataFrame] = fetch_history_collector_or_yahoo,
         proveedor_factory: Callable[[], Callable] | None = None,
     ):
         self.name = name
@@ -175,11 +175,20 @@ class PanelTrendService:
         resultado["model_version"] = f"respaldo:{resultado['model_version']}"
         return resultado
 
+    def _panel_o_nada(self, as_of: pd.Timestamp | None) -> dict[str, dict]:
+        """Como ``_panel``, pero sin datos del panel (data-colector caido, sin
+        CCL) devuelve {} y el pedido lo responde el respaldo."""
+        try:
+            return self._panel(as_of)
+        except DataUnavailableError as exc:
+            print(f"  [warn] {self.name}: sin datos del panel, responde el respaldo: {exc}")
+            return {}
+
     def predict(self, symbol: str) -> dict:
         symbol = symbol.strip().upper()
         if not self._en_panel(symbol):
             return self._de_respaldo(self.respaldo.predict(symbol))
-        resultado = self._panel(None).get(symbol)
+        resultado = self._panel_o_nada(None).get(symbol)
         if resultado is None:
             return self._de_respaldo(self.respaldo.predict(symbol))
         if is_stale(self._historias[symbol]):
@@ -199,7 +208,7 @@ class PanelTrendService:
             raise NotEnoughDataError(
                 f"{symbol}: la serie casi no tiene movimiento de precio (datos estancados)"
             )
-        resultado = self._panel(df.index[-1]).get(symbol)
+        resultado = self._panel_o_nada(df.index[-1]).get(symbol)
         if resultado is None:
             return self._de_respaldo(self.respaldo.predict_on(df, symbol))
         return self._etiquetar(resultado, symbol, self._model.version)

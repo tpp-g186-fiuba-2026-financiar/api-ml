@@ -147,7 +147,7 @@ def test_reentreno_due() -> None:
 class _ContextoOk(FakeMacro):
     def __init__(self, config=None):
         super().__init__()
-        self.market_provider = None
+        self.universe_provider = None
 
     def fit(self, histories):
         self.entrenado_con = sorted(histories)
@@ -184,11 +184,11 @@ def test_modelo_contexto(monkeypatch, snapshot, tmp_path) -> None:
     assert fila["model"] == "contexto" and fila["promoted"] and fila["oos_auc"] == 0.6
     # Entrena con el universo del modelo (TICKER_CORTO no esta) hasta el corte.
     assert contexto.vigente.entrenado_con == sorted(TICKERS)
-    # El mercado con el que predice es el de los lideres del snapshot, sin mirar el futuro.
-    mercado = contexto.vigente.market_provider()
-    assert mercado.index[-1] == corte
+    # El universo con el que predice es el del snapshot, sin mirar el futuro.
+    universo = contexto.vigente.universe_provider()
+    assert universo.market.index[-1] == corte
     contexto.set_today(snapshot.trading_days()[-1])
-    assert contexto.vigente.market_provider().index[-1] == snapshot.trading_days()[-1]
+    assert contexto.vigente.universe_provider().market.index[-1] == snapshot.trading_days()[-1]
 
     monkeypatch.setattr(entrenamiento, "ContextTrendModel", _ContextoFalla)
     assert "muy pocas filas" in ModeloContexto(snapshot, path).retrain(corte)["error"]
@@ -205,4 +205,4 @@ def test_modelo_contexto(monkeypatch, snapshot, tmp_path) -> None:
     contexto = ModeloContexto(sin_lideres, path)
     contexto.resume()
     contexto.set_today(corte)
-    assert contexto.vigente.market_provider() is None
+    assert contexto.vigente.universe_provider() is None

@@ -307,3 +307,30 @@ def oos_signal_backtest(metrics: dict, horizon: int) -> dict | None:
         "observations": effective,
         "scope": "oos_global",
     }
+
+
+def fit_probability_calibration(p_up: np.ndarray, up: np.ndarray) -> dict:
+    """Curva que lleva la P(sube) del modelo a "que tan seguido subio de verdad"
+    con esa P(sube), medida fuera de muestra (regresion isotonica).
+
+    El promedio de arboles exagera: medido en 2016-2026, cuando el modelo
+    decia 30% subio el 58% de las veces y cuando decia 85%, el 62%. La curva
+    se guarda como puntos (x, y) para interpolar sin sklearn al predecir.
+    """
+    from sklearn.isotonic import IsotonicRegression
+
+    iso = IsotonicRegression(out_of_bounds="clip", y_min=0.01, y_max=0.99)
+    iso.fit(np.asarray(p_up, dtype=float), np.asarray(up, dtype=float))
+    return {
+        "x": [round(float(v), 6) for v in iso.X_thresholds_],
+        "y": [round(float(v), 6) for v in iso.y_thresholds_],
+        "base_up": round(float(np.mean(up)), 4),
+    }
+
+
+def calibrated_probability(calibration: dict | None, p_up: float) -> float | None:
+    """P(sube) calibrada con la curva de ``fit_probability_calibration``; None
+    si el artefacto es anterior a la calibracion."""
+    if not calibration or not calibration.get("x"):
+        return None
+    return round(float(np.interp(p_up, calibration["x"], calibration["y"])), 4)
