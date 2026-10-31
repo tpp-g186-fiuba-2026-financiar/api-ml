@@ -26,7 +26,12 @@ from src.data import fetch_history
 from src.data_quality import drop_stale, is_stale
 from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
 from src.macro_trend import TECH_FEATURES, UNIVERSE, technical_features
-from src.trend_common import derive_trend_output, weak_signal_sides
+from src.trend_common import (
+    calibrated_probability,
+    derive_trend_output,
+    fit_probability_calibration,
+    weak_signal_sides,
+)
 
 HORIZON = 20
 MIN_ROWS = 260
@@ -110,6 +115,18 @@ class ContextConfig:
     seed: int = 0
 
 
+def _xgb():
+    """``src.xgb_trend`` importa este modulo: se importa recien al usarlo."""
+    from src import xgb_trend
+
+    return xgb_trend
+
+
+def _features() -> list[str]:
+    """Las variables del modelo: las mismas de XGBoost (con sus rangos)."""
+    return _xgb().ALL_FEATURES
+
+
 def _fit_ensemble(x: np.ndarray, y: np.ndarray, weights: np.ndarray, seed: int) -> list:
     models = []
     for k in range(ENSEMBLE_SIZE):
@@ -141,7 +158,11 @@ class ContextTrendModel:
     alza_threshold: float | None = None  # P(baja) <= umbral -> "alza"
     alza_move: float = 0.0  # retorno log tipico cuando la senal de alza acierta
     baja_move: float = 0.0  # retorno log tipico cuando la senal de baja acierta (negativo)
-    market_provider: Callable[[], pd.DataFrame] | None = None
+    # Universo de acciones del dia (ver ``xgb_trend.todays_universe``): de ahi
+    # salen el contexto de mercado y el puesto de la accion frente a sus pares.
+    universe_provider: Callable[[], object] | None = None
+    # P(sube) del modelo -> frecuencia real fuera de muestra (ver fit_probability_calibration).
+    calibration: dict | None = None
     _models: list | None = None
 
     @property
@@ -149,17 +170,16 @@ class ContextTrendModel:
         return "untrained" if self.trained_at is None else f"contexto-{self.trained_at}"
 
     def _panel(self, histories: dict[str, pd.DataFrame], market: pd.DataFrame) -> pd.DataFrame:
-        h = self.config.horizon
-        frames = []
-        for symbol, df in histories.items():
-            f = build_features(df, market)
-            f["fwd"] = df["close"].shift(-h) / df["close"] - 1.0
-            f["ticker"] = symbol
-            frames.append(f)
-        panel = pd.concat(frames)
-        panel = panel[panel["fwd"].notna() & (panel["fwd"] != 0)]
+        # Mismas variables que XGBoost (tecnicas + contexto + distancia a la
+        # tendencia + puesto frente a las otras acciones ese dia): con ellas el
+        # AUC por mes paso de 0,573 a 0,589 en el walk-forward 2016-2026
+        # (diferencia pareada +0,016, IC95 [+0,000; +0,031]). Cambia el algoritmo.
+        xgb_trend = _xgb()
+        panel = xgb_trend.XGBTrendModel(xgb_trend.XGBConfig(horizon=self.config.horizon))._panel(
+            histories, market
+        )
         panel["down"] = (panel["fwd"] < 0).astype(int)
-        return panel.sort_index(kind="stable")
+        return panel
 
     def _oos_scores(self, panel: pd.DataFrame) -> pd.DataFrame:
         """Predicciones fuera de muestra del ultimo tramo, con reentrenos sucesivos."""
@@ -167,7 +187,7 @@ class ContextTrendModel:
         days = np.sort(panel.index.unique())
         first = int(len(days) * (1 - cfg.oos_fraction))
         edges = np.linspace(first, len(days), cfg.oos_folds + 1).astype(int)
-        index, x, y = panel.index.values, panel[FEATURES].to_numpy(), panel["down"].to_numpy()
+        index, x, y = panel.index.values, panel[_features()].to_numpy(), panel["down"].to_numpy()
         parts = []
         for k in range(cfg.oos_folds):
             start = days[edges[k]]
@@ -212,6 +232,7 @@ class ContextTrendModel:
         downs, ups = fwd_log[is_baja & (fwd_log < 0)], fwd_log[is_alza & (fwd_log > 0)]
         self.baja_move = float(np.median(downs)) if len(downs) else 0.0
         self.alza_move = float(np.median(ups)) if len(ups) else 0.0
+        self.calibration = fit_probability_calibration(1 - p, 1 - down)
         baja_hits = float(down[is_baja].mean()) if is_baja.any() else float("nan")
         alza_hits = float(1 - down[is_alza].mean()) if is_alza.any() else float("nan")
         # Un lado solo se emite si fuera de muestra le gano a su tasa base: una
@@ -237,7 +258,7 @@ class ContextTrendModel:
         latest = pd.Timestamp(panel.index.max())
         weights = _decay_weights(panel.index, latest)
         self._models = _fit_ensemble(
-            panel[FEATURES].to_numpy(), panel["down"].to_numpy(), weights, cfg.seed
+            panel[_features()].to_numpy(), panel["down"].to_numpy(), weights, cfg.seed
         )
         self.trained_at = dt.datetime.now(dt.UTC).strftime("%Y%m%dT%H%M%SZ")
         return self.metrics
@@ -262,17 +283,38 @@ class ContextTrendModel:
             raise NotEnoughDataError(
                 "la serie casi no tiene movimiento de precio (>30% de ruedas sin cambio)"
             )
-        market = (self.market_provider or todays_market_frame)()
+        xgb_trend = _xgb()
+        universe = (self.universe_provider or xgb_trend.todays_universe)()
         # Solo se usan filas hasta la ultima fecha de ``df`` (el contexto es "as of"):
         # asi el backtest con cutoff no mira el futuro.
-        row = build_features(df, market.loc[: df.index[-1]]).iloc[[-1]].to_numpy()
+        own = xgb_trend.build_features(df, universe.market.loc[: df.index[-1]]).iloc[[-1]]
+        row = own.join(xgb_trend.rank_against_peers(own, universe))[_features()].to_numpy()
         return float(_score(self._models, row)[0])
+
+    def day_cuts(self, asof: pd.Timestamp) -> tuple[float, float] | None:
+        """Cortes de P(baja) del ranking de ``asof`` (misma regla que XGBoost:
+        ``xgb_trend.SIGNAL_SHARE`` de cada punta), cacheados."""
+        xgb_trend = _xgb()
+        universe = (self.universe_provider or xgb_trend.todays_universe)()
+        key = (id(universe), pd.Timestamp(asof))
+        cache = self.__dict__.setdefault("_cuts_cache", {})
+        if key not in cache:
+            rows = xgb_trend.peer_rows(universe, pd.Timestamp(asof))
+            scores = _score(self._models, rows[_features()].to_numpy()) if len(rows) else []
+            if len(cache) > 64:
+                cache.clear()
+            cache[key] = xgb_trend.ranking_cuts(scores)
+        return cache[key]
 
     def predict_df(self, df: pd.DataFrame) -> dict:
         p_down = self.probability_down(df)
-        if p_down >= float(self.baja_threshold):
+        cuts = self.day_cuts(df.index[-1])
+        # Con ranking del dia: baja si esta en el 20% con mas P(baja), alza en
+        # el 20% con menos. Sin ranking, los umbrales fijos de entrenamiento.
+        baja_cut, alza_cut = cuts if cuts else (self.baja_threshold, self.alza_threshold)
+        if p_down >= float(baja_cut):
             signal, log_return = "baja", self.baja_move
-        elif p_down <= float(self.alza_threshold):
+        elif p_down <= float(alza_cut):
             signal, log_return = "alza", self.alza_move
         else:
             signal, log_return = "neutral", 0.0  # sin vista: precio proyectado = ultimo cierre
@@ -280,6 +322,11 @@ class ContextTrendModel:
         out["signal"] = signal
         out["probability_down"] = round(p_down, 4)
         out["probability_up"] = round(1 - p_down, 4)
+        out["probability_up_calibrated"] = calibrated_probability(self.calibration, 1 - p_down)
+        down_rate = self.metrics.get("oos_down_rate")
+        out["base_up_rate"] = (self.calibration or {}).get(
+            "base_up", None if down_rate is None else round(1 - float(down_rate), 4)
+        )
         return out
 
     def save(self, path: str | Path) -> None:
@@ -298,7 +345,8 @@ class ContextTrendModel:
                 "alza_threshold": self.alza_threshold,
                 "alza_move": self.alza_move,
                 "baja_move": self.baja_move,
-                "feature_names": FEATURES,
+                "calibration": self.calibration,
+                "feature_names": _features(),
             },
             path,
         )
@@ -306,7 +354,7 @@ class ContextTrendModel:
     @classmethod
     def load(cls, path: str | Path) -> ContextTrendModel:
         blob = joblib.load(Path(path))
-        if blob.get("feature_names") != FEATURES:
+        if blob.get("feature_names") != _features():
             raise StaleArtifactError(
                 "el artefacto 'contexto' se entreno con otras variables: hay que reentrenarlo"
             )
@@ -322,6 +370,7 @@ class ContextTrendModel:
                 baja_move=blob["baja_move"],
             )
             model._models = blob["models"]
+            model.calibration = blob.get("calibration")
             model._apply_signal_edge()
         except (TypeError, KeyError) as exc:
             raise StaleArtifactError(

@@ -48,7 +48,12 @@ from src.errors import ApiMlError, NotEnoughDataError, StaleArtifactError
 from src.fair_value import TREND_FEATURES, trend_features
 from src.feature_labels import feature_help, feature_label, feature_unit
 from src.macro_trend import UNIVERSE
-from src.trend_common import derive_trend_output, weak_signal_sides
+from src.trend_common import (
+    calibrated_probability,
+    derive_trend_output,
+    fit_probability_calibration,
+    weak_signal_sides,
+)
 
 # Tecnicas + contexto de mercado (las del modelo contexto) + distancia a la
 # recta de tendencia del ultimo semestre y año (src.fair_value).
@@ -57,6 +62,14 @@ RANK_FEATURES = [f"r_{name}" for name in FEATURES]
 ALL_FEATURES = FEATURES + RANK_FEATURES
 HALF_LIFE_YEARS = 3.0  # los datos recientes pesan mas al entrenar
 MIN_PEERS = 5  # companias minimas para armar el rango cross-seccional
+# Senal por ranking del dia: "alza" para el 20% de acciones con mayor P(sube)
+# frente a las demas ese mismo dia y "baja" para el 20% con menor. Con un
+# umbral fijo (medido al entrenar) el modelo dejaba de opinar cuando su nivel
+# general cambiaba: en la simulacion 2011-2026 hubo anios con 2% de senales y
+# otros con 98%. Con el ranking opina 37-44% de los dias todos los anios, y las
+# senales siguen acertando mas que lo normal: alza 59,7% vs 56,7%, baja 47,2%
+# vs 43,3% (que el precio baje en 20 ruedas pasa 43% de las veces).
+SIGNAL_SHARE = 0.20
 PEER_MAX_AGE_DAYS = 10  # un par sin datos recientes no entra en el rango
 XGB_PARAMS = {
     "max_depth": 2,
@@ -146,6 +159,29 @@ def rank_against_peers(own: pd.DataFrame, universe: Universe) -> pd.DataFrame:
     return ranked
 
 
+def peer_rows(universe: Universe, asof: pd.Timestamp) -> pd.DataFrame:
+    """Variables (``ALL_FEATURES``) de cada accion del universo en ``asof``."""
+    rows = []
+    for frame in universe.features.values():
+        part = frame.loc[:asof]
+        if not len(part) or (asof - part.index[-1]).days > PEER_MAX_AGE_DAYS:
+            continue
+        own = part.iloc[[-1]]
+        try:
+            rows.append(own.join(rank_against_peers(own, universe))[ALL_FEATURES])
+        except NotEnoughDataError:
+            continue
+    return pd.concat(rows) if rows else pd.DataFrame(columns=ALL_FEATURES)
+
+
+def ranking_cuts(scores: np.ndarray, share: float = SIGNAL_SHARE) -> tuple[float, float] | None:
+    """(corte de arriba, corte de abajo) del puntaje del dia; None si hay pocas acciones."""
+    scores = np.asarray(scores, dtype=float)
+    if len(scores) < MIN_PEERS:
+        return None
+    return float(np.quantile(scores, 1 - share)), float(np.quantile(scores, share))
+
+
 # --------------------------------------------------------------------------- #
 def _fit_ensemble(x: np.ndarray, y: np.ndarray, weights: np.ndarray, cfg: XGBConfig) -> list:
     import xgboost as xgb  # import perezoso
@@ -216,6 +252,8 @@ class XGBTrendModel:
     alza_move: float = 0.0  # retorno log tipico cuando la senal de alza acierta
     baja_move: float = 0.0  # retorno log tipico cuando la senal de baja acierta (negativo)
     universe_provider: Callable[[], Universe] | None = None
+    # P(sube) del modelo -> frecuencia real fuera de muestra (ver fit_probability_calibration).
+    calibration: dict | None = None
     _models: list | None = None
 
     @property
@@ -292,6 +330,7 @@ class XGBTrendModel:
         alza_hits = float(up[is_alza].mean()) if is_alza.any() else float("nan")
         baja_hits = float(1 - up[is_baja].mean()) if is_baja.any() else float("nan")
         base_up = float(up.mean())
+        self.calibration = fit_probability_calibration(p, up)
         # Un lado solo se emite si fuera de muestra le gano a su tasa base: una
         # senal que acierta menos que no opinar no tiene que llegar al usuario.
         alza_off = not alza_hits > base_up
@@ -392,24 +431,72 @@ class XGBTrendModel:
             "probability_up": round(p_up, 4),
             "base_value": round(float(contribs[-1]), 6),
             "contributions": rows,
-            "signal": self.signal_for(p_up),
+            "signal": self.signal_for(p_up, frame.index[-1]),
             # None: ese lado esta apagado (no le gana a lo normal fuera de muestra).
             "alza_threshold": _finite_or_none(self.alza_threshold),
             "baja_threshold": _finite_or_none(self.baja_threshold),
             "base_up_rate": self.metrics.get("oos_up_rate"),
         }
 
-    def signal_for(self, p_up: float) -> str:
-        """La misma regla que ``predict_df``: solo opina en los extremos calibrados."""
+    def day_cuts(self, asof: pd.Timestamp) -> tuple[float, float] | None:
+        """Cortes de P(sube) del ranking de ``asof`` (ver SIGNAL_SHARE), cacheados."""
+        universe = (self.universe_provider or todays_universe)()
+        key = (id(universe), pd.Timestamp(asof))
+        cache = self.__dict__.setdefault("_cuts_cache", {})
+        if key not in cache:
+            rows = peer_rows(universe, pd.Timestamp(asof))
+            scores = _score(self._models, rows.to_numpy()) if len(rows) else np.array([])
+            if len(cache) > 64:
+                cache.clear()
+            cache[key] = ranking_cuts(scores)
+        return cache[key]
+
+    def signal_for(self, p_up: float, asof: pd.Timestamp | None = None) -> str:
+        """La misma regla que ``predict_df``: alza/baja si la accion esta en el
+        20% de arriba/abajo del ranking del dia; sin ranking, los umbrales fijos."""
+        cuts = self.day_cuts(asof) if asof is not None else None
+        if cuts is not None:
+            hi, lo = cuts
+            return "alza" if p_up >= hi else "baja" if p_up <= lo else "neutral"
         if p_up >= float(self.alza_threshold):
             return "alza"
         if p_up <= float(self.baja_threshold):
             return "baja"
         return "neutral"
 
+    def rank_universe(self) -> list[dict]:
+        """P(sube) de todas las acciones del universo del dia, de mayor a menor,
+        con un puntaje de 1 a 10 segun su puesto en ese ranking."""
+        if self._models is None:
+            raise NotEnoughDataError("el modelo no esta entrenado")
+        universe = (self.universe_provider or todays_universe)()
+        filas = []
+        for symbol, frame in universe.features.items():
+            own = frame.iloc[[-1]]
+            try:
+                row = own.join(rank_against_peers(own, universe))[ALL_FEATURES]
+            except NotEnoughDataError:
+                continue
+            p_up = float(_score(self._models, row.to_numpy())[0])
+            filas.append(
+                {
+                    "symbol": symbol,
+                    "as_of": own.index[-1].strftime("%Y-%m-%d"),
+                    "probability_up": round(p_up, 4),
+                    **self.calibrated_fields(p_up),
+                    "signal": self.signal_for(p_up, own.index[-1]),
+                }
+            )
+        filas.sort(key=lambda f: f["probability_up"], reverse=True)
+        n = len(filas)
+        for k, f in enumerate(filas):
+            f["puesto"] = k + 1
+            f["puntaje"] = int(np.ceil(10 * (n - k) / n)) if n else None
+        return filas
+
     def predict_df(self, df: pd.DataFrame) -> dict:
         p_up = self.probability_up(df)
-        signal = self.signal_for(p_up)
+        signal = self.signal_for(p_up, df.index[-1])
         if signal == "alza":
             log_return = self.alza_move
         elif signal == "baja":
@@ -420,7 +507,16 @@ class XGBTrendModel:
         out["signal"] = signal
         out["probability_up"] = round(p_up, 4)
         out["probability_down"] = round(1 - p_up, 4)
+        out.update(self.calibrated_fields(p_up))
         return out
+
+    def calibrated_fields(self, p_up: float) -> dict:
+        """P(sube) calibrada con la historia y que tan seguido sube lo normal."""
+        cal = self.calibration
+        return {
+            "probability_up_calibrated": calibrated_probability(cal, p_up),
+            "base_up_rate": (cal or {}).get("base_up", self.metrics.get("oos_up_rate")),
+        }
 
     # ------------------------------------------------------------------ #
     def save(self, path: str | Path) -> None:
@@ -439,6 +535,7 @@ class XGBTrendModel:
                 "baja_threshold": self.baja_threshold,
                 "alza_move": self.alza_move,
                 "baja_move": self.baja_move,
+                "calibration": self.calibration,
                 "feature_names": ALL_FEATURES,
             },
             path,
@@ -463,6 +560,7 @@ class XGBTrendModel:
                 baja_move=blob["baja_move"],
             )
             model._models = blob["models"]
+            model.calibration = blob.get("calibration")
             model._apply_signal_edge()
         except (TypeError, KeyError) as exc:
             raise StaleArtifactError(

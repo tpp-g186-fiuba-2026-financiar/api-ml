@@ -29,13 +29,15 @@ jobs:
       - name: Reentrenar
         env:
           DATA_SOURCE: yahoo
-        run: python -m src.train_xgb
+        run: |
+          python -m src.train_xgb
+          python -m src.train_xgb --horizon 5 --out models/xgb5.pkl --min-auc 0.5
 
       - name: Commitear el artefacto actualizado
         run: |
           git config user.name "github-actions[bot]"
           git config user.email "github-actions[bot]@users.noreply.github.com"
-          git add -f models/xgb.pkl
+          git add -f models/xgb.pkl models/xgb5.pkl
           if git diff --cached --quiet; then
             echo "sin cambios en el modelo"
           else

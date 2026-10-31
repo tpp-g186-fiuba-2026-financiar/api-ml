@@ -21,12 +21,12 @@ import threading
 from collections.abc import Callable
 from datetime import date
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, runtime_checkable
+from typing import Protocol, runtime_checkable
 
 import numpy as np
 import pandas as pd
 
-from src.compare_snapshot import is_fresh, load_snapshot
+from src.compare_snapshot import fetch_remote_json, is_fresh, load_snapshot, parse_snapshot
 from src.data import MACRO_COLUMN, attach_macro_feature, fetch_history, fetch_macro_series
 from src.data_quality import is_stale
 from src.errors import (
@@ -38,9 +38,6 @@ from src.errors import (
 )
 from src.modal_client import call_modal
 from src.trend_common import backtest_predict_df, derive_trend_output, oos_signal_backtest
-
-if TYPE_CHECKING:
-    from src.panel.servicio import PanelTrendService
 
 
 def _fetch_history_with_macro(symbol: str, days: int) -> pd.DataFrame:
@@ -111,6 +108,9 @@ class TrendService:
                 f"el modelo '{self.name}' no esta entrenado; correr su script de training"
             )
         _refuse_stale(df, symbol)
+        acepta = getattr(self._model, "acepta", None)
+        if acepta is not None and not acepta(symbol):
+            raise NotEnoughDataError(f"{symbol}: el modelo '{self.name}' no predice este activo")
         result = self._model.predict_df(df)
         result["symbol"] = symbol.strip().upper()
         result["model"] = self.name
@@ -365,7 +365,7 @@ class EnsembleTrendService:
 
 
 # contexto y macro son clasificadores de arboles: predecir 12 cortes es barato.
-_LIVE_BACKTEST_MODELS = {"lstm", "xgboost", "contexto", "macro"}
+_LIVE_BACKTEST_MODELS = {"lstm", "xgboost", "xgboost-5", "contexto", "macro"}
 
 
 def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str | None:
@@ -396,16 +396,18 @@ def _pick_best_model(predictions: dict[str, dict], fallback: str | None) -> str 
 class TrendRegistry:
     """Coleccion de modelos de tendencia, con uno marcado como default."""
 
-    def __init__(self, history_days: int, snapshot_path: str | Path | None = None):
+    def __init__(
+        self,
+        history_days: int,
+        snapshot_path: str | Path | None = None,
+        snapshot_url: str | None = None,
+    ):
         self._history_days = history_days
         self._snapshot_path = snapshot_path
+        self._snapshot_url = snapshot_url
         self._services: dict[
             str,
-            TrendService
-            | OnDemandTrendService
-            | RemoteTrendService
-            | EnsembleTrendService
-            | PanelTrendService,
+            TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService,
         ] = {}
         self._default: str | None = None
         # (symbol, dia) -> resultado de compare() ya calculado. Los datos son
@@ -457,34 +459,6 @@ class TrendRegistry:
             self._default = key
         return self
 
-    def register_panel(
-        self,
-        name: str,
-        model_path: str,
-        loader: LoaderFn,
-        *,
-        respaldo: str,
-        proveedor_factory: Callable[[], Callable] | None = None,
-        default: bool = False,
-    ) -> TrendRegistry:
-        """Registra un modelo de panel (predice todo el panel lider junto, ver
-        ``src.panel.servicio``). ``respaldo`` es un modelo ya registrado que
-        responde por los tickers de fuera del panel o si el artefacto no carga."""
-        from src.panel.servicio import PanelTrendService
-
-        key = name.strip().lower()
-        self._services[key] = PanelTrendService(
-            key,
-            model_path,
-            loader,
-            self.resolve(respaldo),
-            self._history_days,
-            proveedor_factory=proveedor_factory,
-        )
-        if default:
-            self._default = key
-        return self
-
     def register_ensemble(
         self, name: str, weights: dict[str, float], *, default: bool = False
     ) -> TrendRegistry:
@@ -519,13 +493,7 @@ class TrendRegistry:
 
     def resolve(
         self, name: str | None
-    ) -> (
-        TrendService
-        | OnDemandTrendService
-        | RemoteTrendService
-        | EnsembleTrendService
-        | PanelTrendService
-    ):
+    ) -> TrendService | OnDemandTrendService | RemoteTrendService | EnsembleTrendService:
         key = (name or self._default or "").strip().lower()
         if key not in self._services:
             available = ", ".join(self._services) or "(ninguno)"
@@ -540,9 +508,9 @@ class TrendRegistry:
         return list(self._services)
 
     def _from_snapshot(self, symbol_key: str) -> dict | None:
-        if not self._snapshot_path:
-            return None
-        snapshot = load_snapshot(self._snapshot_path)
+        snapshot = load_snapshot(self._snapshot_path) if self._snapshot_path else None
+        if (snapshot is None or not is_fresh(snapshot["generated_at"])) and self._snapshot_url:
+            snapshot = parse_snapshot(fetch_remote_json(self._snapshot_url))
         if snapshot is None or not is_fresh(snapshot["generated_at"]):
             return None
         entry = snapshot["symbols"].get(symbol_key)
@@ -643,24 +611,17 @@ def _register_local_models(registry: TrendRegistry) -> None:
     from src.context_trend import ContextTrendModel
     from src.lstm import TrendModel
     from src.macro_trend import MacroTrendModel
-    from src.panel.train_transformer_v2 import proveedor_collector
-    from src.panel.transformer_v2 import TransformerV2Model
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
-    # "transformer" es el Transformer V2 (modelo de panel, src/panel/transformer_v2.py):
-    # predice las acciones del panel lider ordenandolas entre si. El original queda
-    # como "transformer-v1" y responde por los tickers de fuera del panel.
-    registry.register("transformer-v1", settings.transformer_model_path, TransformerTrendModel.load)
-    registry.register_panel(
-        "transformer",
-        settings.transformer_v2_model_path,
-        TransformerV2Model.load,
-        respaldo="transformer-v1",
-        proveedor_factory=proveedor_collector,
-    )
+    # Mismo modelo de panel a 5 ruedas (walk-forward 2016-2026: AUC por mes
+    # 0,546, IC95 [0,526; 0,565]); compite con LSTM/ARIMA, que miran solo el precio.
+    registry.register("xgboost-5", settings.xgb5_model_path, XGBTrendModel.load)
+    # En dolares, clasificacion sube / baja con walk-forward (src/transformer.py);
+    # no predice lo que ya cotiza en dolares (GOLD, OIL, especies D).
+    registry.register("transformer", settings.transformer_model_path, TransformerTrendModel.load)
     registry.register("macro", settings.macro_model_path, MacroTrendModel.load)
     registry.register("contexto", settings.context_model_path, ContextTrendModel.load)
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
@@ -679,7 +640,11 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.arima_trend import translate_modal_arima_response
     from src.config import settings
 
-    registry = TrendRegistry(history_days, snapshot_path=settings.compare_snapshot_path)
+    registry = TrendRegistry(
+        history_days,
+        snapshot_path=settings.compare_snapshot_path,
+        snapshot_url=settings.compare_snapshot_url,
+    )
     if settings.trend_models in ("local", "ambos"):
         _register_local_models(registry)
     if settings.trend_models == "local":

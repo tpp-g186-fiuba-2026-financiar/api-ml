@@ -7,6 +7,7 @@ from fastapi.testclient import TestClient
 
 import src.main as main
 from src.black_litterman.black_litterman import ResultadoBL
+from src.consensus import read_ledger
 from src.errors import (
     DataUnavailableError,
     ModelNotLoadedError,
@@ -296,6 +297,7 @@ def test_predict_volatility_success(client: TestClient, monkeypatch) -> None:
     monkeypatch.setattr(main, "fetch_history", MagicMock(return_value=MagicMock()))
     fake_garch = MagicMock()
     fake_garch.predict_df.return_value = make_volatility_result()
+    fake_garch.contexto.return_value = {"regime": {"level": "alta"}, "backtest": None}
     fake_garch.version = "garch-v3"
     monkeypatch.setattr(main, "garch_volatility_model", fake_garch)
 
@@ -307,6 +309,11 @@ def test_predict_volatility_success(client: TestClient, monkeypatch) -> None:
     assert body["model"] == "garch"
     assert body["model_version"] == "garch-v3"
     assert len(body["daily_volatility_pct"]) == 5
+    assert body["regime"] == {"level": "alta"}
+    fake_garch.predict_df.assert_called_with(fake_garch.predict_df.call_args.args[0], None)
+
+    client.get("/predict/volatility/GGAL", params={"horizon": 20})
+    assert fake_garch.predict_df.call_args.args[1] == 20
 
 
 @pytest.mark.parametrize(
@@ -670,7 +677,7 @@ def test_signals_history_reads_the_ledger(client: TestClient, monkeypatch, tmp_p
             }
         )
     )  # fmt: skip
-    monkeypatch.setattr(main, "LEDGER_PATH", ledger)
+    monkeypatch.setattr(main, "read_ledger", lambda: read_ledger(ledger))
 
     body = client.get("/signals/history").json()
     assert [r["symbol"] for r in body["rows"]] == ["YPFD", "GGAL"]
@@ -688,7 +695,7 @@ def test_signals_history_reads_the_ledger(client: TestClient, monkeypatch, tmp_p
 
 
 def test_signals_history_without_ledger_is_empty(client: TestClient, monkeypatch, tmp_path):
-    monkeypatch.setattr(main, "LEDGER_PATH", tmp_path / "missing.json")
+    monkeypatch.setattr(main, "read_ledger", lambda: read_ledger(tmp_path / "missing.json"))
 
     body = client.get("/signals/history").json()
     assert body["rows"] == []
@@ -727,3 +734,60 @@ def test_models_diagnostics_without_artifacts(client: TestClient, monkeypatch, t
     monkeypatch.setattr(main, "trend_registry", fake_registry)
 
     assert client.get("/models/diagnostics").json() == {"backtest": None, "xgboost": None}
+
+
+def test_signals_track_record(client: TestClient, monkeypatch) -> None:
+    resolved = [
+        {
+            "symbol": "GGAL",
+            "model": "xgboost",
+            "model_version": "v1",
+            "as_of": "2026-09-01",
+            "signal": "alza",
+            "horizon_days": 20,
+            "realized_log_return": 0.02,
+        }
+    ] * 30
+    monkeypatch.setattr(main, "read_ledger", lambda: {"resolved": resolved, "updated_at": "u"})
+    response = client.get("/signals/track-record")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["modelos"][0]["model"] == "xgboost"
+    assert body["modelos"][0]["alza"]["acierto"] == 1.0
+
+
+def test_predict_ranking(client: TestClient, monkeypatch) -> None:
+    fake_model = MagicMock()
+    fake_model.rank_universe.return_value = [
+        {"symbol": "GGAL", "probability_up": 0.7, "signal": "neutral", "puesto": 1, "puntaje": 10}
+    ]
+    fake_model.config.horizon = 20
+    service = MagicMock(is_loaded=True, model=fake_model, version="xgb-x")
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = service
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+    response = client.get("/predict/ranking")
+    assert response.status_code == 200
+    body = response.json()
+    assert body["acciones"][0]["symbol"] == "GGAL" and body["horizon_days"] == 20
+
+
+def test_predict_ranking_sin_modelo_es_503(client: TestClient, monkeypatch) -> None:
+    fake_registry = MagicMock()
+    fake_registry.resolve.return_value = MagicMock(is_loaded=False, model=None)
+    monkeypatch.setattr(main, "trend_registry", fake_registry)
+    assert client.get("/predict/ranking").status_code == 503
+
+
+def test_predict_volatility_sin_contexto_igual_responde(client: TestClient, monkeypatch) -> None:
+    """Si el regimen/backtest falla, el pronostico se devuelve igual."""
+    monkeypatch.setattr(main, "fetch_history", MagicMock(return_value=MagicMock()))
+    fake_garch = MagicMock()
+    fake_garch.predict_df.return_value = make_volatility_result()
+    fake_garch.contexto.side_effect = NotEnoughDataError("pocas ruedas")
+    fake_garch.version = "garch-v3"
+    monkeypatch.setattr(main, "garch_volatility_model", fake_garch)
+
+    body = client.get("/predict/volatility/GGAL").json()
+    assert body["regime"] is None and body["backtest"] is None
+    assert body["cumulative_volatility_pct"] > 0

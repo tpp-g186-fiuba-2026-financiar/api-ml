@@ -18,6 +18,7 @@ Los artefactos van a un directorio propio de la corrida, nunca a ``models/``.
 from __future__ import annotations
 
 import contextlib
+import functools
 import io
 from collections.abc import Callable
 from dataclasses import dataclass, field
@@ -25,7 +26,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.context_trend import LEADERS, ContextConfig, ContextTrendModel, market_frame
+from src.context_trend import ContextConfig, ContextTrendModel
 from src.data import MACRO_COLUMN, attach_macro_feature
 from src.data_quality import drop_stale
 from src.errors import ApiMlError
@@ -36,7 +37,7 @@ from src.simulacion.snapshot import Snapshot
 from src.train_context import DEFAULT_MIN_AUC as CONTEXTO_MIN_AUC
 from src.train_macro import DEFAULT_MIN_AUC
 from src.transformer import TransformerTrainConfig, TransformerTrendModel
-from src.xgb_trend import XGBTrendModel
+from src.xgb_trend import Universe, XGBTrendModel, build_universe
 
 # Minimo de ruedas por ticker para entrar al entrenamiento (``fetch_histories``).
 MIN_RUEDAS_ENTRENAMIENTO = 60
@@ -101,12 +102,24 @@ class ModeloDiario:
         return {"model": self.name, "promoted": promoted, **score}
 
 
+def proveedor_snapshot(snapshot: Snapshot):
+    """CCL del dia y tabla macro (con retrasos) conocidos a cada fecha del snapshot."""
+
+    def proveedor(hasta: pd.Timestamp):
+        macro = snapshot.macro_frame(hasta) if snapshot.macro_raw else None
+        return snapshot.ccl_hasta(hasta), macro
+
+    return proveedor
+
+
 def build_modelos_diarios(
-    artifacts_dir: Path, transformer: dict | None = None
+    artifacts_dir: Path, transformer: dict | None = None, proveedor=None
 ) -> list[ModeloDiario]:
     """Modelos con reentreno diario/semanal. ``transformer`` cambia campos de
     ``TransformerTrainConfig`` para probar una variante (vacio = produccion).
-    Con target relativo el gate del Transformer compara IC en vez de accuracy."""
+    El gate del Transformer usa su walk-forward (con target relativo, IC).
+    ``proveedor`` da el CCL y el riesgo pais al Transformer (ver
+    ``proveedor_snapshot``); sin el, los pide al data-colector."""
     artifacts_dir.mkdir(parents=True, exist_ok=True)
     cambios = transformer or {}
     return [
@@ -114,10 +127,12 @@ def build_modelos_diarios(
         ModeloDiario("xgboost", XGBTrendModel, XGBTrendModel.load, artifacts_dir / "xgb.pkl"),
         ModeloDiario(
             "transformer",
-            lambda: TransformerTrendModel(config=TransformerTrainConfig(**cambios)),
-            TransformerTrendModel.load,
+            lambda: TransformerTrendModel(
+                config=TransformerTrainConfig(**cambios), proveedor=proveedor
+            ),
+            functools.partial(TransformerTrendModel.load, proveedor=proveedor),
             artifacts_dir / "transformer.pt",
-            metrica="ic" if cambios.get("target") == "relativo" else "accuracy",
+            metrica="ic" if cambios.get("target") == "relativo" else "walk_forward",
         ),
     ]
 
@@ -175,8 +190,8 @@ class ModeloMacro:
 
 
 # Ruedas de historia con las que se entrena el contexto (default de
-# ``src.train_context``) y con las que arma el mercado para predecir (default de
-# ``src.context_trend.todays_market_frame``).
+# ``src.train_context``) y con las que arma el universo para predecir (default de
+# ``src.xgb_trend.todays_universe``).
 CONTEXTO_RUEDAS_ENTRENAMIENTO = 4000
 CONTEXTO_RUEDAS_MERCADO = 1500
 
@@ -191,16 +206,16 @@ def historias_contexto(snapshot: Snapshot, hasta: pd.Timestamp) -> dict[str, pd.
     return {s: df for s, df in historias.items() if not df.empty}
 
 
-def mercado_al(snapshot: Snapshot, hasta: pd.Timestamp) -> pd.DataFrame | None:
-    """El mercado con el que predice el contexto al cierre de ``hasta`` (el de los
-    lideres del snapshot); None si no se puede armar."""
-    lideres = {
+def universo_al(snapshot: Snapshot, hasta: pd.Timestamp) -> Universe | None:
+    """El universo (mercado + variables de los pares) con el que predice el
+    contexto al cierre de ``hasta``; None si no se puede armar."""
+    historias = {
         s: snapshot.history(s, hasta, CONTEXTO_RUEDAS_MERCADO)
-        for s in LEADERS
+        for s in UNIVERSE
         if s in snapshot.prices
     }
     try:
-        return market_frame({s: df for s, df in lideres.items() if not df.empty})
+        return build_universe({s: df for s, df in historias.items() if not df.empty})
     except ApiMlError:
         return None
 
@@ -209,24 +224,23 @@ def mercado_al(snapshot: Snapshot, hasta: pd.Timestamp) -> pd.DataFrame | None:
 class ModeloContexto:
     """Modelo ``contexto``: reentreno mensual con umbral minimo de AUC (como el macro).
 
-    En produccion predice con el mercado "de hoy" (``todays_market_frame``, los
-    lideres bajados ese dia); aca, con el de los lideres del snapshot hasta el
-    dia simulado.
+    En produccion predice con el universo "de hoy" (``todays_universe``, las
+    acciones bajadas ese dia); aca, con el del snapshot hasta el dia simulado.
     """
 
     snapshot: Snapshot
     model_path: Path
     min_auc: float = CONTEXTO_MIN_AUC
     vigente: ContextTrendModel | None = None
-    _mercado: pd.DataFrame | None = field(default=None, repr=False)
+    _universo: Universe | None = field(default=None, repr=False)
 
-    def _mercado_hoy(self) -> pd.DataFrame:
-        return self._mercado
+    def _universo_hoy(self) -> Universe | None:
+        return self._universo
 
     def set_today(self, hasta: pd.Timestamp) -> None:
-        self._mercado = mercado_al(self.snapshot, hasta)
+        self._universo = universo_al(self.snapshot, hasta)
         if self.vigente is not None:
-            self.vigente.market_provider = self._mercado_hoy
+            self.vigente.universe_provider = self._universo_hoy
 
     def retrain(self, hasta: pd.Timestamp, force: bool = False) -> dict:
         model = ContextTrendModel(config=ContextConfig())

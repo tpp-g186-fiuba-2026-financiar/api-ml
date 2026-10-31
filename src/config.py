@@ -13,15 +13,26 @@ class Settings(BaseSettings):
     lstm_model_path: str = "models/lstm.pt"
     # Artefacto del modelo XGBoost de tendencia.
     xgb_model_path: str = "models/xgb.pkl"
+    # XGBoost de panel a 5 ruedas: reemplaza a los modelos de 5 ruedas que solo
+    # miran el precio (LSTM: 47,9% de acierto de direccion en vivo).
+    xgb5_model_path: str = "models/xgb5.pkl"
     transformer_model_path: str = "models/transformer.pt"
-    # Artefacto del Transformer V2 (src/panel/transformer_v2.py), que la API sirve como
-    # "transformer" (el original, transformer_model_path, queda como "transformer-v1").
-    transformer_v2_model_path: str = "models/transformer_v2.pt"
     macro_model_path: str = "models/macro.pkl"
     context_model_path: str = "models/contexto.pkl"
     # Comparacion de modelos de cada accion que deja el paper trading diario
     # (src/compare_snapshot.py). Vacio = siempre calcular en vivo.
     compare_snapshot_path: str | None = "models/compare_snapshot.json"
+    # Copias en GitHub de lo que deja el job diario (rama main). El dyno de
+    # Render puede no redeployarse con los commits del bot ([skip ci]): si la
+    # copia local esta vencida, se lee de aca. Vacio = solo la copia local.
+    compare_snapshot_url: str | None = (
+        "https://raw.githubusercontent.com/tpp-g186-fiuba-2026-financiar/api-ml/main/"
+        "models/compare_snapshot.json"
+    )
+    ledger_url: str | None = (
+        "https://raw.githubusercontent.com/tpp-g186-fiuba-2026-financiar/api-ml/main/"
+        "models/paper_trading_ledger.json"
+    )
     # Fuente de datos histtoricos: "yahoo" (directo) o "collector" (data-colector).
     data_source: str = "yahoo"
     # URL base del servicio data-colector. Se usa para el historico si

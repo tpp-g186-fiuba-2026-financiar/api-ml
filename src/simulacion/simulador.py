@@ -67,6 +67,7 @@ from src.simulacion.entrenamiento import (
     build_modelos_diarios,
     histories_at,
     macro_retrain_due,
+    proveedor_snapshot,
     reentreno_due,
 )
 from src.simulacion.estrategias import backtest_sin_neutrales
@@ -132,7 +133,9 @@ class Simulacion:
         self.snapshot = snapshot
         self.out = Path(RESULTADOS_DIR) / config.nombre
         self.artefactos = self.out / "artefactos"
-        self.modelos = build_modelos_diarios(self.artefactos, config.transformer)
+        self.modelos = build_modelos_diarios(
+            self.artefactos, config.transformer, proveedor_snapshot(snapshot)
+        )
         self.macro = ModeloMacro(snapshot, self.artefactos / "macro.pkl")
         self.contexto = ModeloContexto(snapshot, self.artefactos / "contexto.pkl")
         self.arima = ArimaTrendModel()

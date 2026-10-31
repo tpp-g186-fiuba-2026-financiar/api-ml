@@ -2,6 +2,7 @@
 
 import numpy as np
 import pandas as pd
+import pytest
 
 from src.paper_trading import (
     build_summary,
@@ -366,3 +367,53 @@ def test_main_fails_clearly_when_no_prices_can_be_fetched(tmp_path, monkeypatch)
 
     assert ledger.exists()
     assert not snapshot.exists()
+
+
+def test_track_record_compara_seguir_las_senales_contra_comprar_todo() -> None:
+    from src.paper_trading import track_record
+
+    def r(signal, ret, as_of="2026-09-01", model="xgboost", version="v1"):
+        return {
+            "symbol": "GGAL",
+            "model": model,
+            "model_version": version,
+            "as_of": as_of,
+            "signal": signal,
+            "horizon_days": 20,
+            "realized_log_return": ret,
+        }
+
+    resolved = (
+        [r("alza", 0.05)] * 10
+        + [r("neutral", -0.01)] * 10
+        + [r("baja", -0.02, as_of="2026-10-01")] * 5
+        + [r("alza", 0.01, model="lstm-modal", version=f"m{i}") for i in range(25)]
+    )
+    out = track_record({"resolved": resolved, "updated_at": "x"})
+    by = {(m["model"], m["model_version"]): m for m in out["modelos"]}
+
+    xgb = by[("xgboost", "v1")]
+    assert xgb["casos"] == 25
+    assert xgb["alza"]["n"] == 10 and xgb["alza"]["acierto"] == 1.0
+    assert xgb["baja"]["acierto"] == 1.0
+    assert xgb["alza"]["retorno_medio"] == pytest.approx(0.05)
+    # la curva acumula por mes: en octubre no hubo alzas -> seguir = quedarse afuera
+    assert [p["mes"] for p in xgb["curva"]] == ["2026-09", "2026-10"]
+    assert xgb["curva"][-1]["sigue"] == pytest.approx(0.05)
+    # las versiones de Modal se agrupan
+    assert ("lstm-modal", "modal") in by
+
+
+def test_track_record_ignora_grupos_chicos() -> None:
+    from src.paper_trading import track_record
+
+    resolved = [
+        {
+            "model": "x",
+            "model_version": "v",
+            "as_of": "2026-01-01",
+            "signal": "alza",
+            "realized_log_return": 0.01,
+        }
+    ] * 3
+    assert track_record({"resolved": resolved})["modelos"] == []

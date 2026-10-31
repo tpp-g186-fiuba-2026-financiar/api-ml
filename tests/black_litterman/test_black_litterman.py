@@ -827,6 +827,33 @@ class TestRecomendacionAcotada:
         )
 
 
+def test_la_comision_se_reparte_en_el_tiempo_de_tenencia(
+    monkeypatch, usuario_con_cartera, historiales_3_tickers
+):
+    """Retornos y riesgo estan al horizonte de la prediccion: la comision, que
+    se paga una vez, entra al objetivo repartida en RUEDAS_TENENCIA."""
+    import src.black_litterman.black_litterman as bl_mod
+
+    costos = []
+    original = bl_mod.BlackLittermanPrediction.predecir
+
+    def espia(self, **kw):
+        costos.append(kw["costo"])
+        return original(self, **kw)
+
+    monkeypatch.setattr(bl_mod.BlackLittermanPrediction, "predecir", espia)
+    resultado = recomendacion_detallada(
+        usuario_con_cartera,
+        make_predict_function({"GGAL": 0.02, "YPFD": 0.01, "PAMP": 0.03}),
+        tickers=list(historiales_3_tickers),
+        fetch_hist=lambda t, days=None: historiales_3_tickers[t],
+    )
+    esperado = bl_mod.COSTO_OPERACION * resultado.horizonte / bl_mod.RUEDAS_TENENCIA
+    assert costos and all(c == pytest.approx(esperado) for c in costos)
+    # Lo que se informa al usuario es la comision real, no la repartida.
+    assert resultado.costo_operacion == bl_mod.COSTO_OPERACION
+
+
 def test_no_compra_posiciones_testimoniales(
     monkeypatch, usuario_con_cartera, historiales_3_tickers
 ):

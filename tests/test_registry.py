@@ -8,6 +8,7 @@ import src.registry as registry_module
 from src.errors import (
     DataUnavailableError,
     ModelNotLoadedError,
+    NotEnoughDataError,
     StaleArtifactError,
     UnknownModelError,
 )
@@ -258,14 +259,10 @@ def test_build_registry_registers_transformer_modal_only_when_configured(monkeyp
     assert isinstance(registry._services["transformer-modal"], RemoteTrendService)
 
 
-def test_build_registry_sirve_el_v2_como_transformer() -> None:
-    from src.panel.servicio import PanelTrendService
-
+def test_build_registry_sirve_el_transformer_local() -> None:
     registry = registry_module.build_registry(750)
-    servicio = registry.resolve("transformer")
-    assert isinstance(servicio, PanelTrendService)
-    assert servicio.respaldo is registry.resolve("transformer-v1")
-    assert isinstance(registry.resolve("transformer-v1"), TrendService)
+    assert isinstance(registry.resolve("transformer"), TrendService)
+    assert "transformer-v1" not in registry.names()
 
 
 def test_compare_concurrent_requests_for_the_same_ticker_compute_once(monkeypatch) -> None:
@@ -297,3 +294,12 @@ def test_compare_concurrent_requests_for_the_same_ticker_compute_once(monkeypatc
     assert calls == ["GGAL"]
     assert len(results) == 3
     assert all(r is results[0] for r in results)
+
+
+def test_predict_on_rechaza_lo_que_el_modelo_no_acepta() -> None:
+    """Un modelo con ``acepta`` (el Transformer en dolares) no predice esos activos."""
+    service = _loaded_service("transformer", predicted_close=101.0, last_close=100.0)
+    service._model.acepta = lambda symbol: symbol != "ALUAD"
+    assert service.predict_on(_fake_df(), "GGAL")["symbol"] == "GGAL"
+    with pytest.raises(NotEnoughDataError, match="ALUAD"):
+        service.predict_on(_fake_df(), "ALUAD")

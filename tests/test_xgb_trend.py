@@ -126,17 +126,29 @@ def test_predict_df_returns_a_coherent_trend_response(trained, histories) -> Non
         assert out["predicted_close"] == pytest.approx(out["last_close"])
 
 
-def test_signal_follows_calibrated_thresholds(trained, histories) -> None:
+def test_signal_follows_the_daily_ranking(trained, histories) -> None:
+    """Alza/baja segun el puesto de la accion entre las del universo ese dia."""
     df = histories["BBAR"]
     p = trained.probability_up(df)
-    expected = (
-        "alza"
-        if p >= trained.alza_threshold
-        else "baja"
-        if p <= trained.baja_threshold
-        else "neutral"
-    )
+    hi, lo = trained.day_cuts(df.index[-1])
+    expected = "alza" if p >= hi else "baja" if p <= lo else "neutral"
     assert trained.predict_df(df)["signal"] == expected
+
+
+def test_ranking_gives_signals_on_both_sides_every_day(trained) -> None:
+    filas = trained.rank_universe()
+    signals = [f["signal"] for f in filas]
+    assert "alza" in signals and "baja" in signals
+    # El de mas arriba del ranking es alza y el de mas abajo, baja.
+    assert filas[0]["signal"] == "alza" and filas[-1]["signal"] == "baja"
+
+
+def test_ranking_cuts_need_enough_stocks() -> None:
+    from src.xgb_trend import ranking_cuts
+
+    assert ranking_cuts([0.1, 0.2]) is None
+    hi, lo = ranking_cuts(np.linspace(0, 1, 11))
+    assert hi == pytest.approx(0.8) and lo == pytest.approx(0.2)
 
 
 def test_short_or_stale_history_is_refused(trained) -> None:
@@ -169,6 +181,26 @@ def test_save_and_load_roundtrip(trained, histories, universe, tmp_path) -> None
     assert loaded.version == trained.version
     df = histories["CRES"]
     assert loaded.probability_up(df) == pytest.approx(trained.probability_up(df))
+    assert loaded.calibration == trained.calibration
+
+
+def test_prediction_reports_calibrated_probability_and_base_rate(trained, histories) -> None:
+    out = trained.predict_df(histories["CRES"])
+    assert 0 < out["probability_up_calibrated"] < 1
+    assert out["base_up_rate"] == trained.calibration["base_up"]
+    fila = trained.rank_universe()[0]
+    assert "probability_up_calibrated" in fila and "base_up_rate" in fila
+
+
+def test_artifacts_without_calibration_still_predict(trained, histories) -> None:
+    trained_cal = trained.calibration
+    trained.calibration = None
+    try:
+        out = trained.predict_df(histories["CRES"])
+    finally:
+        trained.calibration = trained_cal
+    assert out["probability_up_calibrated"] is None
+    assert out["base_up_rate"] == trained.metrics["oos_up_rate"]
 
 
 def test_load_refuses_v1_artifacts(trained, tmp_path) -> None:
@@ -318,3 +350,13 @@ def test_every_feature_has_a_plain_explanation() -> None:
     assert feature_unit("r_t_ret20") == "rank"
     assert feature_unit("t_death_cross") == "flag"
     assert feature_unit("m_beta60") == "num"
+
+
+def test_rank_universe_orders_every_stock_with_a_score(trained, universe) -> None:
+    filas = trained.rank_universe()
+    assert {f["symbol"] for f in filas} <= set(universe.features)
+    probs = [f["probability_up"] for f in filas]
+    assert probs == sorted(probs, reverse=True)
+    assert [f["puesto"] for f in filas] == list(range(1, len(filas) + 1))
+    assert filas[0]["puntaje"] == 10 and filas[-1]["puntaje"] >= 1
+    assert all(f["signal"] in {"alza", "baja", "neutral"} for f in filas)

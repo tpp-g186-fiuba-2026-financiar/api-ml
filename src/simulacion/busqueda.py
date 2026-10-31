@@ -31,14 +31,9 @@ Planes:
   gap, seleccion), sacando un componente por vez de la version completa.
 - ``hiper``: muestra aleatoria de hiperparametros de la red sobre una
   formulacion base (``--base``).
-- ``v2``: Transformer V2 contra el original (``PLAN_V2``; ``make buscar-transformer-v2``).
-- ``rapido``: ajustes e hiperparametros del V2, una semilla (``PLAN_V2_RAPIDO``;
-  ``make probar-transformer-v2``).
 - ``r2``: ronda 2 del plan de mejora, filtro con modelos baratos: cabeza
   relativa, cabeza de mercado, meta-labeling y dos cabezas (``PLAN_R2``;
   ``make filtro-r2``).
-- ``r2-transformer``: el V2 como cabeza relativa contra el ensamble
-  (``PLAN_R2_TRANSFORMER``; ``make transformer-r2``, GPU).
 - ``config``: configuraciones puntuales (``--configs``), p. ej. para confirmar.
 
 Uso:
@@ -73,8 +68,8 @@ from src.panel.gbm import PanelGBMConfig, PanelGBMModel
 from src.panel.mercado import MercadoConfig, MercadoModel
 from src.panel.meta import MetaReversionConfig, MetaReversionModel
 from src.panel.transformer import PanelTransformerConfig, PanelTransformerModel
-from src.panel.transformer_v2 import CONFIG_ANTERIOR, TransformerV2Config, TransformerV2Model
 from src.simulacion import por_ticker
+from src.simulacion.entrenamiento import proveedor_snapshot
 from src.simulacion.experimento import (
     DIR_EXPERIMENTOS,
     VARIANTES,
@@ -84,7 +79,7 @@ from src.simulacion.experimento import (
 )
 from src.simulacion.limpieza import limpiar as limpiar_snapshot
 from src.simulacion.snapshot import DEFAULT_DIR, Snapshot
-from src.transformer import TransformerTrainConfig, TransformerTrendModel
+from src.transformer import CONFIG_ORIGINAL, TransformerTrainConfig, TransformerTrendModel
 
 PERIODOS_ELECCION = [
     ("2022-07-01", "2022-11-30"),
@@ -136,47 +131,6 @@ PLAN_ABLACION: dict[str, dict] = {
     "completo_sin_panel": _sin("universo"),
     "completo_ic": _COMPLETO | {"seleccion": "ic"},
 }
-# Transformer V2 (``src.panel.transformer_v2``, objetivo: direccion en dolares)
-# contra el original: los defaults y una variante por cada eleccion a validar.
-# Una red por trabajo (``n_semillas=1``): el ensamble lo arman las semillas de
-# la busqueda. La direccion en dolares (y la de la senal selectiva) se mide con
-# ``src.simulacion.direccion``.
-# Con los defaults de entonces (``CONFIG_ANTERIOR``): los de ahora son los de Optuna.
-_V2 = {"modelo": "transformer_v2", "n_semillas": 1, **CONFIG_ANTERIOR}
-PLAN_V2: dict[str, dict] = {
-    "original": {"modelo": "transformer"},
-    "v2": dict(_V2),
-    # Red
-    "v2_w5": _V2 | {"ventana": 5},
-    "v2_w20": _V2 | {"ventana": 20},
-    "v2_sin_cruzada": _V2 | {"capas_cruzadas": 0},
-    # Entrenamiento
-    "v2_sin_reentreno": _V2 | {"reentrenar_completo": False},
-    "v2_combinada": _V2 | {"perdida": "combinada"},
-    "v2_bce": _V2 | {"perdida": "bce"},
-    # Datos y pregunta
-    "v2_macro": _V2 | {"macro": True},
-    "v2_historia": _V2 | {"historia": 1500},
-    "v2_h20": _V2 | {"horizonte": 20},
-    # Las tres que deberian sumar juntas
-    "v2_macro_bce_historia": _V2 | {"macro": True, "perdida": "bce", "historia": 1500},
-}
-# Prueba rapida del V2 (una semilla, ~15 min en GPU): primero los dos ajustes de
-# la senal (centrar, ensamble con la reversion) y despues hiperparametros, todos
-# con la senal centrada. ``make probar-transformer-v2``.
-_V2C = _V2 | {"centrar_senal": True}
-PLAN_V2_RAPIDO: dict[str, dict] = {
-    "v2_base": dict(_V2),
-    "v2_centrado": dict(_V2C),
-    "v2_rev25": _V2C | {"peso_reversion": 0.25},
-    "v2_rev50": _V2C | {"peso_reversion": 0.5},
-    "v2_lr1e3": _V2C | {"learning_rate": 1e-3},
-    "v2_reg_baja": _V2C | {"dropout": 0.1, "weight_decay": 0.01},
-    "v2_d64": _V2C | {"d_model": 64, "nhead": 8, "dim_feedforward": 128},
-    "v2_w5": _V2C | {"ventana": 5},
-    "v2_cruz2": _V2C | {"capas_cruzadas": 2},
-    "v2_combinada": _V2C | {"perdida": "combinada"},
-}
 # Ronda 2 del plan de mejora (``notas/analisis-transformer-v2.md``): filtro con
 # modelos baratos (CPU, minutos) antes de entrenar el Transformer. Cada grupo se
 # mide con su metrica en ``src.simulacion.significancia``: la cabeza relativa
@@ -217,21 +171,6 @@ PLAN_R2: dict[str, dict] = {
         "historia": 2400,
     },
 }
-# Ronda 2, Transformer como cabeza relativa (GPU; lo corre el usuario): el V2 con
-# target sin la media del dia, early stopping por la perdida de validacion y la
-# historia larga, contra el ensamble con la misma historia (CPU, en la misma
-# corrida para que la diferencia sea pareada). ``make transformer-r2``.
-_V2_REL = _V2 | {
-    "target": "sin_media",
-    "seleccion": "perdida",
-    "historia": 1500,
-}
-PLAN_R2_TRANSFORMER: dict[str, dict] = {
-    "ens_h1500": _ENS | {"historia": 1500},
-    "t_rel": dict(_V2_REL),
-    "t_rel_zn05": _V2_REL | {"zona_neutral": 0.5},
-    "t_rel_ic": _V2_REL | {"seleccion": "ic"},
-}
 # Ronda 3: modelos lineales a 20 ruedas (CPU) contra el ensamble a 5. Las reglas
 # sin entrenamiento y la senal selectiva estan en ``src.simulacion.reglas``.
 PLAN_R3: dict[str, dict] = {
@@ -249,18 +188,19 @@ BASELINES = ["reversion", "xgboost", "lstm"]
 REFERENCIAS = ["limpio:absoluto", "limpio:reversion", "limpio:lstm", "limpio:xgboost"]
 
 
-def proveedor_snapshot(snapshot: Snapshot):
-    """CCL del dia y tabla macro (con retrasos) conocidos a cada fecha del snapshot."""
-
-    def proveedor(hasta: pd.Timestamp):
-        macro = snapshot.macro_frame(hasta) if snapshot.macro_raw else None
-        return snapshot.ccl_hasta(hasta), macro
-
-    return proveedor
-
-
 def _transformer(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
+    # Las corridas de la busqueda son variantes del Transformer original.
+    config = CONFIG_ORIGINAL | config
     return TransformerTrendModel(config=TransformerTrainConfig(**config), dispositivo=dispositivo)
+
+
+def _transformer_actual(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
+    """El Transformer de produccion (defaults de ``TransformerTrainConfig``: dolares,
+    clasificacion, walk-forward), con el CCL y el riesgo pais del snapshot."""
+    proveedor = proveedor_snapshot(snapshot) if snapshot is not None else None
+    return TransformerTrendModel(
+        config=TransformerTrainConfig(**config), dispositivo=dispositivo, proveedor=proveedor
+    )
 
 
 def _panel_gbm(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
@@ -282,13 +222,6 @@ def _panel_transformer(config: dict, dispositivo: str, snapshot: Snapshot | None
     proveedor = proveedor_snapshot(snapshot) if snapshot is not None else None
     return PanelTransformerModel(
         PanelTransformerConfig(**config), proveedor=proveedor, dispositivo=dispositivo
-    )
-
-
-def _transformer_v2(config: dict, dispositivo: str, snapshot: Snapshot | None) -> object:
-    proveedor = proveedor_snapshot(snapshot) if snapshot is not None else None
-    return TransformerV2Model(
-        TransformerV2Config(**config), proveedor=proveedor, dispositivo=dispositivo
     )
 
 
@@ -322,10 +255,10 @@ def _dos_cabezas(config: dict, dispositivo: str, snapshot: Snapshot | None) -> o
 # (CCL, macro), siempre cortados a la fecha de cada prediccion.
 MODELOS: dict[str, Callable[[dict, str, Snapshot | None], object]] = {
     "transformer": _transformer,
+    "transformer_actual": _transformer_actual,
     "panel_gbm": _panel_gbm,
     "ensamble_panel": _ensamble_panel,
     "panel_transformer": _panel_transformer,
-    "transformer_v2": _transformer_v2,
     "reversion_panel": lambda config, dispositivo, snapshot: ReversionPanelModel(),
     "mercado": _mercado,
     "meta_reversion": _meta_reversion,
@@ -625,7 +558,7 @@ def main() -> None:
     parser.add_argument("--nombre", required=True)
     parser.add_argument(
         "--plan",
-        choices=["ablacion", "hiper", "v2", "rapido", "r2", "r2-transformer", "r3", "config"],
+        choices=["ablacion", "hiper", "r2", "r3", "config"],
     )
     parser.add_argument("--base", type=json.loads, default={}, help="Formulacion base (hiper).")
     parser.add_argument("--configs", type=json.loads, default={}, help="{nombre: config} (config).")
@@ -648,14 +581,8 @@ def main() -> None:
     if args.plan and not args.resumen:
         if args.plan == "ablacion":
             configs = PLAN_ABLACION
-        elif args.plan == "v2":
-            configs = PLAN_V2
-        elif args.plan == "rapido":
-            configs = PLAN_V2_RAPIDO
         elif args.plan == "r2":
             configs = PLAN_R2
-        elif args.plan == "r2-transformer":
-            configs = PLAN_R2_TRANSFORMER
         elif args.plan == "r3":
             configs = PLAN_R3
         elif args.plan == "hiper":

@@ -45,7 +45,7 @@ def series(values: list[float], start: str = "2026-01-01") -> pd.Series:
 def test_fetch_collector_series_parses_points_sorted_and_deduplicated() -> None:
     body = payload([1600.0, 1610.5, 1620.0])
     body["data"].append(dict(body["data"][0]))  # duplicado: se queda con uno
-    with patch("src.macro_data.requests.post", return_value=response(body)) as post:
+    with patch("src.data.requests.post", return_value=response(body)) as post:
         result = fetch_collector_series("macro/argdatos", "CCL")
 
     assert post.call_args.args[0].endswith("/macro/argdatos/CCL")
@@ -55,16 +55,16 @@ def test_fetch_collector_series_parses_points_sorted_and_deduplicated() -> None:
 
 def test_fetch_collector_series_reports_embedded_errors_and_empty_data() -> None:
     error = {"status": 500, "message": {"error": "Failed to fetch interest rate series"}}
-    with patch("src.macro_data.requests.post", return_value=response(error)):
+    with patch("src.data.requests.post", return_value=response(error)):
         with pytest.raises(DataUnavailableError, match="Failed to fetch"):
             fetch_collector_series("macro/argdatos", "CCL")
-    with patch("src.macro_data.requests.post", return_value=response({"status": 200, "data": []})):
+    with patch("src.data.requests.post", return_value=response({"status": 200, "data": []})):
         with pytest.raises(DataUnavailableError, match="no devolvio datos"):
             fetch_collector_series("macro/argdatos", "CCL")
 
 
 def test_fetch_collector_series_wraps_network_failures() -> None:
-    with patch("src.macro_data.requests.post", side_effect=requests.ConnectionError("caido")):
+    with patch("src.data.requests.post", side_effect=requests.ConnectionError("caido")):
         with pytest.raises(DataUnavailableError, match="no se pudo obtener"):
             fetch_collector_series("interest-rate/ar", "BADLAR")
 
