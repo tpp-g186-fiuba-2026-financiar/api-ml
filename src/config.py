@@ -1,3 +1,5 @@
+from typing import Literal
+
 from pydantic_settings import BaseSettings, SettingsConfigDict
 
 
@@ -59,16 +61,24 @@ class Settings(BaseSettings):
     # como tasa libre de riesgo en Black-Litterman (TNA en %).
     tasa_libre_riesgo_series: str = "BADLAR"
 
+    # Que modelos de tendencia registra la API (ver build_registry):
+    #   "local": solo los artefactos de models/ (lstm, xgboost, transformer, ...).
+    #   "modal": solo los deployados en Modal (*-modal); no carga artefactos.
+    #   "ambos": todos.
+    trend_models: Literal["local", "modal", "ambos"] = "ambos"
+
     # --- Modelos alternativos deployados en Modal (repo `models`) ---
-    # Ninguno configurado por default: hay que pegar la URL de `modal deploy`
-    # (no la de `modal serve`, que es efimera). Si no estan seteadas, esas
-    # alternativas simplemente no aparecen en el registro.
-    modal_lstm_url: str | None = None
-    modal_xgboost_url: str | None = None
-    modal_transformer_url: str | None = None
-    modal_arima_url: str | None = None
-    modal_svm_url: str | None = None
-    modal_garch_url: str | None = None
+    # Default: las URLs de `modal deploy` del workspace historico (el mismo
+    # default que usa el back en src/modal.rs). Se pisan con MODAL_*_URL; una
+    # URL vacia saca ese modelo del registro.
+    modal_lstm_url: str | None = "https://matimorales01--lstm-trend-model-main.modal.run"
+    modal_xgboost_url: str | None = "https://matimorales01--xgboost-trend-model-main.modal.run"
+    modal_transformer_url: str | None = (
+        "https://matimorales01--transformer-trend-model-main.modal.run"
+    )
+    modal_arima_url: str | None = "https://matimorales01--arima-model-main.modal.run"
+    modal_svm_url: str | None = "https://matimorales01--svm-model-main.modal.run"
+    modal_garch_url: str | None = "https://matimorales01--garch-model-main.modal.run"
 
     model_config = SettingsConfigDict(
         env_file=".env",

@@ -601,13 +601,12 @@ class TrendRegistry:
         }
 
 
-def build_registry(history_days: int) -> TrendRegistry:
-    """Arma el registro con todos los modelos disponibles.
+def _register_local_models(registry: TrendRegistry) -> None:
+    """Modelos que corren en este proceso con los artefactos de models/.
 
-    >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` aca. <<<
+    Los imports van aca adentro: con TREND_MODELS=modal no se carga ningun artefacto.
     """
-    from src.arima_trend import HORIZON as ARIMA_HORIZON
-    from src.arima_trend import ArimaTrendModel, translate_modal_arima_response
+    from src.arima_trend import ArimaTrendModel
     from src.config import settings
     from src.context_trend import ContextTrendModel
     from src.lstm import TrendModel
@@ -615,11 +614,6 @@ def build_registry(history_days: int) -> TrendRegistry:
     from src.transformer import TransformerTrendModel
     from src.xgb_trend import XGBTrendModel
 
-    registry = TrendRegistry(
-        history_days,
-        snapshot_path=settings.compare_snapshot_path,
-        snapshot_url=settings.compare_snapshot_url,
-    )
     registry.register("lstm", settings.lstm_model_path, TrendModel.load, default=True)
     registry.register("xgboost", settings.xgb_model_path, XGBTrendModel.load)
     # Mismo modelo de panel a 5 ruedas (walk-forward 2016-2026: AUC por mes
@@ -633,6 +627,28 @@ def build_registry(history_days: int) -> TrendRegistry:
     # ARIMA es por-ticker (no se puede poolear): se ajusta al vuelo, sin artefacto persistido.
     registry.register_on_demand("arima", ArimaTrendModel())
     # Proximos modelos: registry.register("randomforest", settings.rf_model_path, RFTrendModel.load)
+
+
+def build_registry(history_days: int) -> TrendRegistry:
+    """Arma el registro con los modelos que pide ``settings.trend_models``
+    ("local", "modal" o "ambos").
+
+    >>> Para sumar un modelo nuevo, agregar una linea `.register(...)` en
+    `_register_local_models` (o un `register_remote` aca, si corre en Modal). <<<
+    """
+    from src.arima_trend import HORIZON as ARIMA_HORIZON
+    from src.arima_trend import translate_modal_arima_response
+    from src.config import settings
+
+    registry = TrendRegistry(
+        history_days,
+        snapshot_path=settings.compare_snapshot_path,
+        snapshot_url=settings.compare_snapshot_url,
+    )
+    if settings.trend_models in ("local", "ambos"):
+        _register_local_models(registry)
+    if settings.trend_models == "local":
+        return registry
 
     # Ensamble numerico (issue #163, "probar" un promedio pesado entre LSTM/
     # XGBoost/Transformer): se probo con `register_ensemble` (ver clase
@@ -651,8 +667,8 @@ def build_registry(history_days: int) -> TrendRegistry:
     # es default a proposito: se reentrena solo en cada request (no depende
     # de que alguien corra `make train` y suba el artefacto a mano), asi que
     # mientras Modal responda, la prediccion "principal" nunca queda vieja.
-    # Si Modal no esta configurado, este `if` ni se ejecuta y el default
-    # sigue siendo el `lstm` local de arriba -- sin riesgo de romper nada.
+    # Si su URL esta vacia, este `if` ni se ejecuta y el default sigue
+    # siendo el `lstm` local -- sin riesgo de romper nada.
     if settings.modal_lstm_url:
         registry.register_remote("lstm-modal", settings.modal_lstm_url, default=True)
     if settings.modal_xgboost_url:
@@ -666,7 +682,8 @@ def build_registry(history_days: int) -> TrendRegistry:
             "arima-modal",
             settings.modal_arima_url,
             translator=translate_modal_arima_response,
-            extra_params={"predictions": ARIMA_HORIZON, "media_movil": 1},
+            # Modal solo tiene artefactos preentrenados para media_movil=20.
+            extra_params={"predictions": ARIMA_HORIZON, "media_movil": 20},
         )
     if settings.modal_svm_url:
         # svm_model.py (repo `models`, issue #159) es un clasificador binario
